@@ -1,0 +1,30 @@
+# Weights and runtimes — never publish these
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.onnx
+*.dll
+*.exe
+*.bak
+
+# Local launcher state and logs
+.llm-launcher-state.json
+*.log
+runtime-logs/
+measure-logs/
+
+# Secrets
+.env
+.env.*
+credentials.json
+*.pem
+*.key
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.user
