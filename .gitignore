@@ -1,3 +1,8 @@
+# Local agent briefing — machine paths, LAN, hardware map
+AGENTS.local.md
+AGENTS.private.md
+.local/
+
 # Weights and runtimes — never publish these
 *.gguf
 *.safetensors
@@ -7,19 +12,29 @@
 *.dll
 *.exe
 *.bak
+*.hip_fat
 
 # Local launcher state and logs
 .llm-launcher-state.json
 *.log
 runtime-logs/
 measure-logs/
+logs/
 
-# Secrets
+# Secrets and credentials
 .env
 .env.*
 credentials.json
 *.pem
 *.key
+id_rsa
+id_ed25519
+
+# Dependencies and build junk
+node_modules/
+dist/
+build/
+.cache/
 
 # OS / editor
 Thumbs.db
@@ -28,3 +43,4 @@ Desktop.ini
 .vscode/
 .idea/
 *.user
+.cursor/
