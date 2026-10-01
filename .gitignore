@@ -44,3 +44,6 @@ Desktop.ini
 .idea/
 *.user
 .cursor/
+
+# Studio working files (mockups, dev-server registration)
+.studio/

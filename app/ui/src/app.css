@@ -1,0 +1,45 @@
+/* Global reset only. Every visual decision lives in a skin or in the shell's own components. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--k-bg, #0d1117);
+  color: var(--k-ink, #e6e6e6);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tiers (set by the shell on <html data-tier>): no CSS motion while calm or hidden. */
+[data-tier='calm'] *,
+[data-tier='calm'] *::before,
+[data-tier='calm'] *::after,
+[data-tier='off'] *,
+[data-tier='off'] *::before,
+[data-tier='off'] *::after {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

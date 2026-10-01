@@ -1,0 +1,72 @@
+/* Cliff skin: palette, type and shared classes. Everything is namespaced under .cliff so the
+   stylesheet stays inert when another skin is active. */
+.cliff {
+  --basalt: #0f1316;
+  --slate: #1d252a;
+  --slate-2: #222c32;
+  --s1: #2c363c;
+  --s2: #3a464d;
+  --s3: #4a5860;
+  --sky: #5ab6eb;
+  --foam: #dceff8;
+  --amber: #f2a33a;
+  --danger: #e8645a;
+  --muted: #8fa3ae;
+  --rule: #263037;
+  --f-ui: 'IBM Plex Sans Variable', 'IBM Plex Sans', system-ui, sans-serif;
+  --f-data: 'IBM Plex Mono', ui-monospace, monospace;
+  --f-disp: 'Archivo Variable', 'Archivo', system-ui, sans-serif;
+  /* One scale unit: 1px at the 1024x1152 reference window; follows the tighter dimension. */
+  --u: min(calc(100cqi / 1024), calc(100cqh / 1152));
+  /* Mini: 1px at the 960x640 reference panel. */
+  --m: min(calc(100cqi / 960), calc(100cqh / 640));
+}
+
+.cliff .c-lbl {
+  font-family: var(--f-ui);
+  font-weight: 400;
+  font-size: max(12px, calc(var(--u) * 14.5));
+  line-height: 1.25;
+  color: var(--muted);
+  letter-spacing: 0.005em;
+}
+
+.cliff .c-data {
+  font-family: var(--f-data);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.cliff .c-rule {
+  height: 1px;
+  background: var(--rule);
+  flex: none;
+}
+
+.cliff button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.cliff button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.cliff :focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cliff *,
+  .cliff *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -1,0 +1,1 @@
+{"provenance":{"source":"local benchmark summary, Gemma 4 26B-A4B (no session logs)","measured":true,"date":"2026-08-20"},"decodeTpsAt128k":76.43,"decodeTpsAt32k":91.76,"committedGiBAt32k":12.684,"committedGiBAt128k":13.202,"loadTotalS":[13.6,5.4,12]}
