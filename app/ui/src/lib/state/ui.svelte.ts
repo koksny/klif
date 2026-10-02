@@ -53,8 +53,16 @@ class UiState {
   /** shot=1: deterministic frame for screenshots (no dev bar, no persistence, frozen player). */
   readonly shot: boolean = this.params.shot;
 
+  /**
+   * Panel mode of the desktop app (view model: host.panel.active): the window sits on the small status
+   * screen, so the layout is mini whatever the viewport says. Set by the player from every native view
+   * model; it stays false in a browser, where panel mode is just the `sizeMode` override.
+   */
+  panelActive = $state(false);
+
   /** Size class the skin renders at. */
   size: SizeClass = $derived.by(() => {
+    if (this.panelActive) return 'mini';
     if (this.sizeMode !== 'auto') return this.sizeMode;
     return this.vw > this.vh && this.vh <= 700 ? 'mini' : 'full';
   });
@@ -96,9 +104,10 @@ class UiState {
     this.sizeMode = mode;
   }
 
-  toggleSize() {
+  /** F3 in a browser, and panel mode there. `announce` = say which layout it switched to (a toast). */
+  toggleSize(announce = true) {
     this.sizeMode = this.size === 'full' ? 'mini' : 'full';
-    this.toast(`Size: ${this.sizeMode}`);
+    if (announce) this.toast(`Size: ${this.sizeMode}`);
   }
 
   toggleConsole(open?: boolean) {

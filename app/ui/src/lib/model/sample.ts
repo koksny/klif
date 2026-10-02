@@ -162,7 +162,7 @@ export const SAMPLE_VM: ViewModel = {
   },
   system: { ramUsedGiB: 31.2, ramTotalGiB: 93.6, ramType: 'DDR5', cpuName: '9950X3D', cpuPct: 6 },
   lastSession: null,
-  host: { kind: 'browser', frameless: false, maximized: false, appVersion: '0.2.0' },
+  host: { kind: 'browser', frameless: false, maximized: false, appVersion: '0.2.0', panel: { available: true, active: false, target: '960x640' } },
   console: [
     'srv  load_model: loading model GSQ-RCO IQ3_S',
     'main: server is listening on :7030',

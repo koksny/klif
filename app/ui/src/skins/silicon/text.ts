@@ -15,6 +15,8 @@ export function availabilityText(a: Availability): string {
       return 'script missing';
     case 'unsupported':
       return 'unsupported';
+    case 'busy':
+      return 'port busy';
   }
 }
 

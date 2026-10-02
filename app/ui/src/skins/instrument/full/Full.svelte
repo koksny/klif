@@ -4,6 +4,7 @@
   //   idle            -> Idle (fit preview, launch)
   //   live LLM        -> LiveLlm (approved live panel; prefill takes the hero while a prompt is processed)
   //   everything else -> Session (starting / loading, live image, fault)
+  import { onMount, tick } from 'svelte';
   import type { Actions, ViewModel } from '../../../lib/model/types';
   import { fmtClock } from '../../../lib/model/format';
   import { PHASE_LABEL, modelLine, phaseOf, pointerSlot, slotById } from '../theme';
@@ -31,6 +32,39 @@
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
   const frameless = $derived(vm.host?.frameless ?? false);
   const runLabel = $derived(ptrSlot?.label ?? s?.slot.toUpperCase() ?? '');
+  // Panel mode (read-only mini layout on the small status screen): always offered when a target exists.
+  const panelAvailable = $derived(vm.host?.panel?.available ?? false);
+  const panelActive = $derived(vm.host?.panel?.active ?? false);
+  const panelTip = $derived(
+    panelActive
+      ? 'Leave panel mode'
+      : `Panel mode: show on the small screen${vm.host?.panel?.target ? ` (${vm.host.panel.target})` : ''}`,
+  );
+  // The button carries a PANEL label while the header has room for it. When the brand tagline would be
+  // clipped (frameless window controls, long phase names, narrow windows) it drops to the bare glyph;
+  // title and aria-label stay. Re-measured whenever the header width, phase or fonts change.
+  let hdrW = $state(0);
+  let fontsTick = $state(0);
+  let tagEl = $state<HTMLElement>();
+  let compactPm = $state(false);
+  onMount(() => {
+    const bump = () => fontsTick++;
+    document.fonts?.addEventListener('loadingdone', bump);
+    void document.fonts?.ready.then(bump);
+    return () => document.fonts?.removeEventListener('loadingdone', bump);
+  });
+  $effect(() => {
+    void hdrW;
+    void fontsTick;
+    void phase;
+    void frameless;
+    void panelAvailable;
+    void panelActive;
+    compactPm = false;
+    void tick().then(() => {
+      if (tagEl && tagEl.scrollWidth > tagEl.clientWidth + 1) compactPm = true;
+    });
+  });
 
   function back() {
     if (typeof actions.dismiss === 'function') actions.dismiss();
@@ -38,12 +72,19 @@
   }
 </script>
 
+{#snippet panelBtn()}
+  <button class="pm" class:bare={compactPm} type="button" onclick={() => actions.togglePanel?.()} title={panelTip} aria-label={panelTip}>
+    <Icon name="screen" size="calc(24 * var(--u))" />
+    {#if !compactPm}<span class="pl">{panelActive ? 'WINDOW' : 'PANEL'}</span>{/if}
+  </button>
+{/snippet}
+
 <div class="full">
-  <header class="hdr" data-tauri-drag-region>
+  <header class="hdr" data-tauri-drag-region bind:clientWidth={hdrW}>
     <div class="brand" data-tauri-drag-region>
       <span class="mk"><Mark /></span>
       <span class="word">KLIF</span>
-      <span class="tag">Koksny.com LOCAL INFERENCE FORNICATOR</span>
+      <span class="tag" bind:this={tagEl}>Koksny.com LOCAL INFERENCE FORNICATOR</span>
     </div>
     <div class="status" data-tauri-drag-region>
       <Led on={phase !== 'idle'} tone={phase === 'fault' ? 'orange' : 'cyan'} size="calc(15 * var(--u))" />
@@ -54,12 +95,18 @@
       {/if}
       {#if frameless}
         <span class="vsep wsep"></span>
-        <WinCtl
-          maximized={vm.host?.maximized ?? false}
-          onmin={() => actions.minimize?.()}
-          onmax={() => actions.toggleMaximize?.()}
-          onclose={() => actions.closeWindow?.()}
-        />
+        <div class="grp">
+          {#if panelAvailable}{@render panelBtn()}{/if}
+          <WinCtl
+            maximized={vm.host?.maximized ?? false}
+            onmin={() => actions.minimize?.()}
+            onmax={() => actions.toggleMaximize?.()}
+            onclose={() => actions.closeWindow?.()}
+          />
+        </div>
+      {:else if panelAvailable}
+        <span class="vsep"></span>
+        {@render panelBtn()}
       {/if}
     </div>
   </header>
@@ -212,6 +259,49 @@
   }
   .wsep {
     margin-left: calc(4 * var(--u));
+  }
+  /* frameless: the panel button joins the window controls as one cluster */
+  .grp {
+    display: flex;
+    align-items: center;
+    gap: calc(4 * var(--u));
+  }
+  /* panel-mode button: a window-control-style key with a printed label */
+  .pm {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(8 * var(--u));
+    height: calc(40 * var(--u));
+    padding: 0 calc(11 * var(--u)) 0 calc(9 * var(--u));
+    border: 1px solid rgba(237, 230, 214, 0.2);
+    border-radius: calc(4 * var(--u));
+    background: transparent;
+    color: rgba(237, 230, 214, 0.86);
+    cursor: pointer;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .pm.bare {
+    width: calc(44 * var(--u));
+    padding: 0;
+    justify-content: center;
+  }
+  .pm :global(.ic) {
+    stroke-width: 1.5;
+  }
+  .pm:hover {
+    background: rgba(237, 230, 214, 0.08);
+    border-color: rgba(237, 230, 214, 0.34);
+    color: var(--cream);
+  }
+  .pm:active {
+    background: rgba(0, 0, 0, 0.25);
+  }
+  .pl {
+    font-weight: 500;
+    font-size: calc(15 * var(--u));
+    letter-spacing: 0.08em;
+    line-height: 1;
   }
   .ph {
     font-weight: 400;

@@ -2,7 +2,8 @@
   // Mini panel: a 3.5" 960x640 screen read from a metre away. Read-only, huge type, smallest
   // text 30 px (at k = 1). Everything is laid out on a 960x640 design grid scaled by --k.
   // Rows: brand/phase · model · big readout · line or trace · cliff (+ side gauge) · bottom strip.
-  import type { ViewModel } from '../../lib/model/types';
+  import { onDestroy } from 'svelte';
+  import type { Actions, ViewModel } from '../../lib/model/types';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
   import Scope from './Scope.svelte';
   import Radar from './Radar.svelte';
@@ -10,9 +11,21 @@
   import FitCliff from './FitCliff.svelte';
   import Timeline from './Timeline.svelte';
   import Jobs from './Jobs.svelte';
-  import { AVAIL_TEXT, clamp, fmtAgo, fmtDur, fmtSPerIt, loadSpanS } from './geom';
+  import { AVAIL_TEXT, clamp, fmtAgo, fmtDur, fmtSPerIt, gpuSleep, loadSpanS } from './geom';
 
-  let { vm, k }: { vm: ViewModel; k: number } = $props();
+  let { vm, actions, k }: { vm: ViewModel; actions: Actions; k: number } = $props();
+
+  // Panel mode is the only reason this read-only layout has a control: a "back to window" pill that
+  // is invisible until the panel is hovered, tapped or keyboard-focused.
+  const canLeave = $derived(!!vm.host?.panel?.available && !!vm.host?.panel?.active);
+  let tapped = $state(false);
+  let tapTimer: ReturnType<typeof setTimeout> | undefined;
+  function reveal() {
+    tapped = true;
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => (tapped = false), 4000);
+  }
+  onDestroy(() => clearTimeout(tapTimer));
 
   const s = $derived(vm.session);
   const llm = $derived(s && s.phase === 'live' ? s.llm : null);
@@ -29,6 +42,11 @@
     fault: { word: 'FAULT', tone: 'danger' },
   };
   const st = $derived(s ? PHASE[s.phase] : { word: 'IDLE', tone: 'muted' });
+
+  /** GPU dormant (vm.vram.dormant): asleep, or waking while its VRAM is restored from system RAM. */
+  const gpu = $derived(
+    gpuSleep(vm.vram, (!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating')),
+  );
 
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? llm.context.usedTokens / llm.context.totalTokens : 0);
   const sweep = $derived.by(() => {
@@ -68,10 +86,25 @@
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
 </script>
 
-<div class="mini">
+<svelte:window onpointerdown={canLeave ? reveal : undefined} />
+
+<div class="mini" class:tapped>
+  {#if canLeave}
+    <button class="back" title="Leave panel mode" aria-label="Leave panel mode" onclick={() => actions.togglePanel?.()}>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="1.75" y="2.75" width="12.5" height="10.5" />
+        <path d="M1.75 6H14.25" />
+      </svg>
+      <span>WINDOW</span>
+    </button>
+  {/if}
   <div class="top">
     <span class="brand">KLIF</span>
-    <span class="phase {st.tone}">{st.word}</span>
+    {#if gpu}
+      <span class="phases"><span class="phase amber sleepw {gpu.state}">{gpu.state === 'waking' ? 'WAKING' : 'ASLEEP'}</span><span class="phase {st.tone}">{st.word}</span></span>
+    {:else}
+      <span class="phase {st.tone}">{st.word}</span>
+    {/if}
   </div>
 
   {#if !s}
@@ -104,14 +137,14 @@
         <span class="num amber">{Math.floor(pfFrac * 100)}<span class="of">%</span></span><span class="unit amber">prefill</span>
       </div>
       <div class="trace pfl">
-        <span class="pft">{fmtInt(pf.tps)} tok/s · {pf.etaS > 0 ? `eta ${fmtSeconds(pf.etaS)}` : 'finishing'}</span>
+        <span class="pft">{fmtInt(pf.tps)} tok/s · {gpu && pf.doneTokens === 0 ? 'waiting for the GPU' : pf.etaS > 0 ? `eta ${fmtSeconds(pf.etaS)}` : 'finishing'}</span>
         <span class="pbar amber"><span class="pfill" style="transform:scaleX({pfFrac.toFixed(4)})"></span></span>
       </div>
     {:else if llm}
       <div class="readout" class:dim={llm.activity !== 'decode'}>
         <span class="num">{fmtTps(llm.decodeTps)}</span><span class="unit">tok/s</span>
       </div>
-      <div class="trace"><Scope history={llm.decodeHistory} variant="mini" /></div>
+      <div class="trace"><Scope history={llm.decodeHistory} variant="mini" dim={!!gpu} /></div>
     {:else if img}
       <div class="readout">
         {#if img.activity === 'generating'}
@@ -152,11 +185,26 @@
           {k}
           spanS={booting ? loadSpanS(s.loading?.elapsedS ?? s.uptimeS) : 300}
           markAgoS={fault ? fault.sinceS : null}
+          {gpu}
         />
-        <div class="gib" class:low={booting || !!fault} class:tight={vramTight}>
-          {fmtGiB(vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB
-          {#if spill > 0}<span class="spill">+{spill} MiB spill</span>{/if}
-        </div>
+        {#if gpu}
+          <!-- dormant GPU: the headline of the whole panel, big enough to read from a metre away -->
+          <div class="gsl {gpu.state}">
+            <div class="gsl1">GPU {gpu.state === 'waking' ? 'WAKING' : 'ASLEEP'}</div>
+            <div class="gsl2">{fmtGiB(gpu.pagedOutGiB)} GiB paged out</div>
+            {#if gpu.state === 'waking'}
+              <div class="gsl3">
+                <span class="gbar" role="img" aria-label="Restored {Math.round(gpu.restoredFrac * 100)}%"><span class="gfill" style="transform:scaleX({gpu.restoredFrac.toFixed(4)})"></span></span>
+                <span class="gpc">{Math.round(gpu.restoredFrac * 100)}%</span>
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="gib" class:low={booting || !!fault} class:tight={vramTight}>
+            {fmtGiB(vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB
+            {#if spill > 0}<span class="spill">+{spill} MiB spill</span>{/if}
+          </div>
+        {/if}
       </div>
       {#if llm}
         <div class="radar">
@@ -233,6 +281,65 @@
       linear-gradient(to bottom, rgba(18, 48, 58, 0.42) 1px, transparent 1px);
     background-size: calc(48px * var(--k)) calc(48px * var(--k));
   }
+  /* back to window: top row, centred between the brand and the phase word (nothing lives there) */
+  .back {
+    position: absolute;
+    z-index: 2;
+    top: calc(12px * var(--k));
+    left: 50%;
+    transform: translateX(-50%);
+    height: calc(54px * var(--k));
+    display: inline-flex;
+    align-items: center;
+    gap: calc(14px * var(--k));
+    padding: 0 calc(24px * var(--k)) 0 calc(18px * var(--k));
+    border-radius: 6px;
+    background: rgba(3, 9, 12, 0.9);
+    box-shadow:
+      inset 0 0 0 1px var(--ph-rule),
+      0 0 14px rgba(5, 9, 11, 0.9);
+    color: var(--ph-brand);
+    font-size: calc(30px * var(--k));
+    line-height: 1;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+  }
+  .mini:hover .back,
+  .mini.tapped .back,
+  .back:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .back svg {
+    width: calc(32px * var(--k));
+    height: calc(32px * var(--k));
+    overflow: visible;
+  }
+  .back path,
+  .back rect {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+  .back:hover {
+    color: var(--ph-hot);
+    background: rgba(18, 48, 58, 0.92);
+    box-shadow:
+      inset 0 0 0 1px var(--ph-brand),
+      0 0 14px rgba(5, 9, 11, 0.9);
+  }
+  .back:hover svg {
+    filter: drop-shadow(0 0 3px rgba(127, 227, 255, 0.7));
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .back {
+      transition: none;
+    }
+  }
   .top {
     display: flex;
     justify-content: space-between;
@@ -271,6 +378,12 @@
   .phase.muted {
     color: var(--ph-muted);
     text-shadow: none;
+  }
+  /* dormant GPU: ASLEEP / WAKING next to the server's own phase word */
+  .phases {
+    display: flex;
+    align-items: baseline;
+    gap: calc(34px * var(--k));
   }
   .model {
     align-self: center;
@@ -487,6 +600,69 @@
     -webkit-text-stroke: calc(10px * var(--k)) var(--ph-glass);
     paint-order: stroke fill;
     text-shadow: 0 0 14px rgba(127, 227, 255, 0.35);
+  }
+  /* dormant GPU headline over the cliff: stroked in glass so the traces never cut the glyphs */
+  .gsl {
+    position: absolute;
+    left: 0;
+    right: 6%;
+    top: calc(40px * var(--k));
+    display: grid;
+    justify-items: center;
+    gap: calc(8px * var(--k));
+    pointer-events: none;
+    text-align: center;
+    -webkit-text-stroke: calc(7px * var(--k)) var(--ph-glass);
+    paint-order: stroke fill;
+  }
+  .gsl1 {
+    font-family: var(--ph-display);
+    font-stretch: 112%;
+    font-weight: 420;
+    font-size: calc(78px * var(--k));
+    line-height: 1;
+    letter-spacing: 0.05em;
+    color: var(--ph-amber);
+    text-shadow: 0 0 16px rgba(232, 176, 74, 0.5);
+    white-space: nowrap;
+  }
+  .gsl2 {
+    -webkit-text-stroke-width: calc(5px * var(--k));
+    font-size: calc(42px * var(--k));
+    line-height: 1;
+    letter-spacing: 0.03em;
+    color: #f3d9a4;
+    white-space: nowrap;
+  }
+  .gsl3 {
+    display: flex;
+    align-items: center;
+    gap: calc(18px * var(--k));
+    width: 66%;
+    -webkit-text-stroke: 0;
+  }
+  .gbar {
+    position: relative;
+    flex: 1;
+    height: calc(18px * var(--k));
+    border: 1px solid rgba(232, 176, 74, 0.6);
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(5, 9, 11, 0.8);
+  }
+  .gfill {
+    position: absolute;
+    inset: 0;
+    transform-origin: left center;
+    background: linear-gradient(90deg, rgba(232, 176, 74, 0.55), var(--ph-amber));
+    box-shadow: 0 0 12px rgba(232, 176, 74, 0.55);
+    transition: transform 0.45s ease-out;
+  }
+  .gpc {
+    font-size: calc(36px * var(--k));
+    line-height: 1;
+    color: #f3d9a4;
+    text-shadow: 0 0 8px rgba(232, 176, 74, 0.45);
   }
   .spill {
     display: block;

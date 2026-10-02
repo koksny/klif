@@ -21,11 +21,13 @@
     jobFill?: number | null;
     /** Full only: what one tile means right now, one string per callout line. */
     caption?: string[];
+    /** GPU dormant (vram.dormant): GiB of the session's allocations paged out to system RAM, else null. */
+    pagedOutGiB?: number | null;
     /** Extra CSS transform scale applied by an ancestor (mini stage), for a crisp backing store. */
     pxScale?: number;
     label?: string;
   }
-  let { variant, llm, live, usedGiB, totalGiB, cacheFrac, jobFill = null, caption = [], pxScale = 1, label = '' }: Props = $props();
+  let { variant, llm, live, usedGiB, totalGiB, cacheFrac, jobFill = null, caption = [], pagedOutGiB = null, pxScale = 1, label = '' }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let cssW = $state(0);
@@ -37,6 +39,8 @@
   const geom = $derived(GEOM[variant]);
   const perBlock = $derived(totalGiB > 0 ? totalGiB / 8 : 0);
   const captionKey = $derived(caption.join('|'));
+  /** The linework only depends on whether the GPU is dormant; the amount is drawn with the data. */
+  const dormant = $derived(pagedOutGiB !== null);
 
   let staticLayer: HTMLCanvasElement | null = null;
   let pen: Pen | null = null;
@@ -65,7 +69,7 @@
     if (!sctx) return;
     sctx.clearRect(0, 0, cw, ch);
     staticPen = new Pen(sctx, s, ox, oy, dpr);
-    drawStatic(staticPen, geom, { perBlockGiB: perBlock, caption });
+    drawStatic(staticPen, geom, { perBlockGiB: perBlock, caption, dormant });
   }
 
   function draw(now: number) {
@@ -79,6 +83,7 @@
       perBlockGiB: perBlock,
       cacheFrac,
       glow: (t) => stream.brightness(t, now),
+      pagedOutGiB,
     });
   }
 
@@ -122,6 +127,7 @@
     void fontsReady;
     void perBlock;
     void captionKey;
+    void dormant;
     void geom;
     if (!mounted) return;
     untrack(() => {
@@ -147,6 +153,7 @@
   $effect(() => {
     void usedGiB;
     void cacheFrac;
+    void pagedOutGiB;
     if (mounted) untrack(() => (!unsub || !framesFlowing()) && draw(performance.now()));
   });
 </script>

@@ -12,13 +12,17 @@ export type SlotId = 'high' | 'medium' | 'low' | 'krea';
 
 export type SlotKind = 'llm' | 'image';
 
-/** Catalog availability of the model assigned to a slot (mirrors the launcher's precedence). */
+/**
+ * Catalog availability of the model assigned to a slot (mirrors the launcher's precedence).
+ * 'busy' = the slot's port is held by a process KLIF does not own.
+ */
 export type Availability =
   | 'ready'
   | 'unsupported'
   | 'script-missing'
   | 'model-missing'
-  | 'build-required';
+  | 'build-required'
+  | 'busy';
 
 export type Backend = 'HIP' | 'Vulkan' | 'CPU';
 
@@ -56,8 +60,56 @@ export interface Slot {
   kind: SlotKind;
   model: ModelRef;
   availability: Availability;
+  /** One plain sentence when availability !== 'ready', e.g. "Model file not found". */
+  reason?: string;
   /** Expected VRAM layers if launched with the current recipe (for the "will it fit" preview). */
   expectedVram?: VramLayer[];
+  /** What is launched for this slot. Changed with Actions.setRecipe (the Tune drawer). */
+  recipe?: Recipe;
+  /** The choices the Tune drawer may offer for this slot, from the catalog. */
+  options?: RecipeOptions;
+}
+
+/** The launch recipe of a slot. Values are catalog values; display text lives in ModelRef. */
+export interface Recipe {
+  /** Catalog card id, e.g. "qwen-gsq". */
+  cardId: string;
+  backend: Backend;
+  /** Catalog hardware value, e.g. "9070", "Dual", "9950X3D". */
+  hardware: string;
+  /** LLM context in tokens. */
+  ctxTokens?: number;
+  /** Image output size, e.g. "512x768". */
+  imageSize?: string;
+  kvType?: 'q4_0' | 'q8_0';
+  promptCacheMiB?: number;
+  port?: number;
+  vision?: boolean;
+  /** Reasoning mode, e.g. "Thinking" / "Instruct", only where the card supports it. */
+  mode?: string;
+}
+
+export interface RecipeChoice<T> {
+  value: T;
+  label: string;
+  availability: Availability;
+  reason?: string;
+}
+
+export interface RecipeOptions {
+  /** Models that may sit behind this slot (cards), with their availability. */
+  cards: (RecipeChoice<string> & { name: string; quant: string })[];
+  backends: RecipeChoice<Backend>[];
+  hardware: RecipeChoice<string>[];
+  contexts?: RecipeChoice<number>[];
+  imageSizes?: RecipeChoice<string>[];
+  kvTypes?: ('q4_0' | 'q8_0')[];
+  /** Prompt cache sizes, already capped where the catalog caps them. */
+  promptCacheMiB?: number[];
+  ports?: number[];
+  /** True when the current card supports the vision projector. */
+  vision?: boolean;
+  modes?: string[];
 }
 
 /** Lifecycle of the one running session. */
@@ -237,6 +289,21 @@ export interface GpuMemory {
   baselineGiB: number;
   /** Headroom below which the UI may warn (configured, not measured). */
   warnBelowGiB: number;
+  /**
+   * The inference GPU powered down while a model is loaded (e.g. AMD ULPS / device state D3): the
+   * session's allocations still exist but are paged out to system RAM, and the next request pays a
+   * wake-up delay while they are restored. While dormant, `layers` show the session's ALLOCATIONS
+   * (so they may sum to more than `usedGiB`, which stays the resident amount); skins draw them as
+   * paged out (ghosted), never as if they were resident.
+   */
+  dormant?: {
+    /** Session allocations not resident in VRAM right now. */
+    pagedOutGiB: number;
+    /** Seconds since the GPU went dormant. */
+    sinceS: number;
+    /** Device power state if known, e.g. "D3". */
+    powerState?: string;
+  } | null;
 }
 
 export interface SystemStats {
@@ -257,6 +324,18 @@ export interface HostInfo {
   maximized: boolean;
   /** "0.2.0" */
   appVersion: string;
+  /**
+   * Panel mode = the read-only mini layout on the small status screen (e.g. a 3.5" 960x640 monitor).
+   * In the desktop app, entering it moves the window onto that screen and fills it; leaving restores
+   * the previous window. In a browser it just switches the layout.
+   */
+  panel: {
+    /** True when a small screen to move to was found (desktop app) or always in a browser. */
+    available: boolean;
+    active: boolean;
+    /** "960x640" or the monitor's name, for the button tooltip. */
+    target?: string;
+  };
 }
 
 export interface ViewModel {
@@ -288,9 +367,16 @@ export interface Actions {
   openTune(slot?: SlotId): void;
   /** Leave a fault (or finished) session and return to the idle launcher. */
   dismiss(): void;
+  /** Change a slot's launch recipe (Tune drawer). A running session keeps its recipe until restart. */
+  setRecipe(slot: SlotId, patch: Partial<Recipe>): void;
   /** Window chrome; only meaningful when vm.host.frameless. Skins mark their header with
    *  data-tauri-drag-region so the window can be dragged by it. */
   minimize(): void;
   toggleMaximize(): void;
   closeWindow(): void;
+  /**
+   * Enter/leave panel mode (see HostInfo.panel). Full-size skins show a button for it next to their
+   * window controls; the mini layout shows a small "back" control only on hover/tap.
+   */
+  togglePanel(): void;
 }

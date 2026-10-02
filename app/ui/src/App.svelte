@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The KLIF shell: mock player, skin host, shared utility surfaces (console, tune, toast, dev bar),
-  // tier driver and shortcuts. Skins only ever see SkinProps {vm, actions, size}.
+  // The KLIF shell: player (native core in Tauri, mock in a browser), skin host, shared utility surfaces
+  // (console, tune, toast, dev bar), tier driver and shortcuts. Skins only ever see SkinProps {vm, actions, size}.
   import { onMount } from 'svelte';
   import ConsoleDrawer from './lib/shell/ConsoleDrawer.svelte';
   import DevBar from './lib/shell/DevBar.svelte';
@@ -32,7 +32,7 @@
     };
   });
 
-  // Frameless host (?frameless=1 now, the Tauri window later): mirrored for CSS, the skin draws its own chrome.
+  // Frameless host (?frameless=1 in a browser, the Tauri window): mirrored for CSS, the skin draws its own chrome.
   $effect(() => {
     const root = document.documentElement;
     if (player.vm.host.frameless) root.dataset.frameless = '1';
@@ -50,13 +50,20 @@
 </script>
 
 <div class="stage" data-size={ui.size} class:framed={ui.miniFramed}>
-  <div class="frame" style={ui.miniFramed ? `transform: translate(-50%, -50%) scale(${scale})` : ''}>
-    <SkinHost skinId={ui.skinId} vm={player.vm} actions={player.actions} size={ui.size} />
-    {#if ui.size === 'full'}
-      {#if ui.consoleOpen}<ConsoleDrawer />{/if}
-      {#if ui.tuneOpen}<TuneDrawer />{/if}
-    {/if}
-  </div>
+  {#if player.ready}
+    <div class="frame" style={ui.miniFramed ? `transform: translate(-50%, -50%) scale(${scale})` : ''}>
+      <SkinHost skinId={ui.skinId} vm={player.vm} actions={player.actions} size={ui.size} />
+      {#if ui.size === 'full'}
+        {#if ui.consoleOpen}<ConsoleDrawer />{/if}
+        {#if ui.tuneOpen}<TuneDrawer />{/if}
+      {/if}
+    </div>
+  {:else}
+    <!-- Native host before the core's first view model: no invented numbers, just the window. -->
+    <div class="waiting" data-tauri-drag-region="deep">
+      <p>{player.nativeError ? `KLIF core unavailable: ${player.nativeError}` : 'Connecting to the KLIF core'}</p>
+    </div>
+  {/if}
   {#if ui.size === 'full'}<Toast />{/if}
   {#if ui.devbar && !ui.shot}<DevBar />{/if}
 </div>
@@ -81,5 +88,17 @@
     height: 640px;
     outline: 1px solid var(--k-line, #2e2e2e);
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  }
+  .waiting {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+  }
+  .waiting p {
+    margin: 0;
+    color: var(--k-muted, #8a8a8a);
+    font: 500 13px/1.3 var(--k-font-ui, system-ui, sans-serif);
+    letter-spacing: 0.04em;
   }
 </style>

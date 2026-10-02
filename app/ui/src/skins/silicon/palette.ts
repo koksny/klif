@@ -22,6 +22,7 @@ export const C = {
   muted: '#7C8F9E',
   label: '#86C3E6',
   red: '#FF5A36',
+  amber: '#F2B33A',
 } as const;
 
 export const FONT_DATA = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace';

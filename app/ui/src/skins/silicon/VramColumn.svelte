@@ -9,8 +9,12 @@
   //             stacked on top as hatched dashed ghosts, dimensioned as "fits · N GiB spare".
   //   fault   - the measured (emptied) composition, the level held just before the fault as a red
   //             dashed ghost, and the collapsed allocation drawn below the floor.
+  //   dormant - the GPU is powered down (vram.dormant): vram.layers are the session allocations, drawn
+  //             as hatched dashed outlines (not filled: they are paged out to system RAM); the resident
+  //             amount (usedGiB) is the only solid fill and rises while the GPU wakes.
   import type { GpuMemory, VramLayer, VramLayerId } from '../../lib/model/types';
   import { fmtGiB } from '../../lib/model/format';
+  import type { Sleep } from './sleep.svelte';
 
   interface Props {
     vram: GpuMemory;
@@ -24,8 +28,12 @@
     previewBaseGiB?: number;
     /** Fault: GiB in use just before the fault (null = unknown or nothing was loaded). */
     faultGiB?: number | null;
+    /** GPU dormant: what is paged out and what is resident. */
+    sleep?: Sleep | null;
+    /** Dormant and restoring: the resident fill is rising. */
+    waking?: boolean;
   }
-  let { vram, u, ramTotalGiB, ramType, preview = null, previewBaseGiB = 0, faultGiB = null }: Props = $props();
+  let { vram, u, ramTotalGiB, ramType, preview = null, previewBaseGiB = 0, faultGiB = null, sleep = null, waking = false }: Props = $props();
 
   let w = $state(0);
   let h = $state(0);
@@ -58,6 +66,8 @@
     fill: string;
     hatch: boolean;
     ghost: boolean;
+    /** Paged-out allocation (dormant): hatched dashed outline, no fill. */
+    dorm: boolean;
   }
 
   const g = $derived.by(() => {
@@ -66,14 +76,22 @@
     const scale = (ground - topY) / total;
     const yAt = (gib: number) => ground - gib * scale;
     const strata: Stratum[] = [];
-    // Measured layers: clipped at the edge (spill shows what went over).
+    const dorm = !!sleep && !preview;
+    // Measured layers: clipped at the edge (spill shows what went over). Dormant: the allocations.
     let cum = 0;
     for (const l of vram.layers) {
       const gib = Math.max(0, l.gib);
       const y1 = yAt(Math.min(total, cum));
       cum += gib;
       const y0 = yAt(Math.min(total, cum));
-      strata.push({ id: l.id, label: l.label, gib, y0, y1, mid: (y0 + y1) / 2, ...FILL[l.id], ghost: false });
+      strata.push({ id: l.id, label: l.label, gib, y0, y1, mid: (y0 + y1) / 2, ...FILL[l.id], ghost: false, dorm });
+    }
+    // Dormant without a layer breakdown: one outline for everything the session holds.
+    if (dorm && sleep && strata.length === 0 && sleep.residentGiB + sleep.pagedOutGiB > 0) {
+      const gib = sleep.residentGiB + sleep.pagedOutGiB;
+      cum = gib;
+      const y0 = yAt(Math.min(total, gib));
+      strata.push({ id: 'other', label: 'allocated', gib, y0, y1: ground, mid: (y0 + ground) / 2, ...FILL.other, ghost: false, dorm });
     }
     const used = vram.usedGiB;
     // Preview ghosts: stacked from the baseline, allowed to rise above the edge (drawn as over-limit).
@@ -90,7 +108,7 @@
           y0 = overTop;
           clipped = true;
         }
-        strata.push({ id: l.id, label: l.label, gib, y0, y1, mid: (y0 + y1) / 2, ...FILL[l.id], ghost: true });
+        strata.push({ id: l.id, label: l.label, gib, y0, y1, mid: (y0 + y1) / 2, ...FILL[l.id], ghost: true, dorm: false });
       }
     }
     // Labels: top layer first, at least 21 apart, first below the gap callout.
@@ -110,10 +128,20 @@
       limit = ly[i] - 21;
     }
     const usedTop = yAt(Math.min(total, used));
-    // The gap that is dimensioned: free above the measured fill, or spare above the preview.
-    const gapTopGiB = preview ? pTop : used;
+    // The gap that is dimensioned: free above the measured fill, or spare above the preview. Dormant:
+    // the allocations still hold their place, so the free part is what sits above the whole stack.
+    const gapTopGiB = preview ? pTop : dorm ? Math.max(used, cum) : used;
     const gapBottom = yAt(Math.min(total, gapTopGiB));
-    return { total, used, ground, scale, strata, ly, usedTop, pTop, clipped, gapTopGiB, gapBottom, gapPx: gapBottom - topY, yAt };
+
+    // Dormant: the resident fill, and where the in-column labels go (all at true scale).
+    const resPx = Math.max(0, ground - usedTop);
+    const allocTop = yAt(Math.min(total, Math.max(used, cum)));
+    const spanPx = Math.max(0, usedTop - allocTop);
+    const resInside = resPx >= 46;
+    const resCap = resInside ? usedTop + 17 : usedTop - 23;
+    const resVal = resInside ? usedTop + 33 : usedTop - 7;
+    const pagedY = spanPx >= (resInside ? 52 : 116) ? (allocTop + usedTop) / 2 - 2 : null;
+    return { total, used, ground, scale, strata, ly, usedTop, pTop, clipped, gapTopGiB, gapBottom, gapPx: gapBottom - topY, yAt, dorm, resPx, resCap, resVal, pagedY };
   });
 
   const free = $derived(vram.totalGiB - g.gapTopGiB);
@@ -209,7 +237,9 @@
       height="100%"
       aria-label={preview
         ? `VRAM fit preview: ${fmtGiB(g.pTop)} of ${fmtGiB(vram.totalGiB)} GiB expected, ${gapText}`
-        : `VRAM section: ${fmtGiB(g.used)} of ${fmtGiB(vram.totalGiB)} GiB used`}
+        : sleep
+          ? `VRAM section, GPU ${waking ? 'waking' : 'asleep'}: ${fmtGiB(sleep.pagedOutGiB)} GiB paged out to system RAM, ${fmtGiB(sleep.residentGiB)} of ${fmtGiB(vram.totalGiB)} GiB resident`
+          : `VRAM section: ${fmtGiB(g.used)} of ${fmtGiB(vram.totalGiB)} GiB used`}
     >
       <defs>
         <pattern id="si-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -241,7 +271,10 @@
       <!-- strata (measured solid; preview as hatched ghosts) -->
       {#each g.strata as s, i (s.id + i + (s.ghost ? 'g' : ''))}
         {#if s.y1 - s.y0 > 0.05}
-          {#if s.ghost}
+          {#if s.dorm}
+            <rect x={colX + 1} y={s.y0} width={colW - 2} height={s.y1 - s.y0} fill="url(#si-hatch-ghost)" />
+            <rect x={colX + 1} y={s.y0} width={colW - 2} height={s.y1 - s.y0} class="hair pv" />
+          {:else if s.ghost}
             <rect x={colX + 2} y={s.y0} width={colW - 4} height={s.y1 - s.y0} fill={s.fill} opacity="0.22" />
             <rect x={colX + 2} y={s.y0} width={colW - 4} height={s.y1 - s.y0} fill="url(#si-hatch-ghost)" />
             <line x1={colX + 2} x2={colR - 2} y1={s.y0} y2={s.y0} class="hair" stroke="#5AB6EB" stroke-dasharray="4 3" />
@@ -252,6 +285,13 @@
           {/if}
         {/if}
       {/each}
+
+      <!-- dormant: the resident part is the only solid fill; amber edge while it is being restored -->
+      {#if sleep && g.resPx > 0.4}
+        <rect x={colX} y={g.usedTop} width={colW} height={g.resPx} fill="#2275A8" />
+        <rect x={colX} y={g.usedTop} width={colW} height={g.resPx} fill="url(#si-hatch)" />
+        <line x1={colX} x2={colR} y1={g.usedTop} y2={g.usedTop} class="hair" class:wedge={waking} stroke={waking ? '#F2B33A' : 'rgba(200,232,250,0.55)'} />
+      {/if}
 
       <!-- preview outline (dashed), and the over-limit part in red -->
       {#if preview && g.pTop > previewBaseGiB}
@@ -272,17 +312,28 @@
       <!-- the cliff edge: total capacity, the limit -->
       <line x1={colX - 6} x2={colR + 6} y1={topY} y2={topY} class="hair" stroke="#FF5A36" stroke-dasharray="5 3" />
 
+      <!-- dormant: what is paged out (middle of the outline stack) and what is resident (at the fill) -->
+      {#if sleep}
+        {@const cx = colX + colW / 2}
+        {#if g.pagedY !== null}
+          <text x={cx} y={g.pagedY} class="gl amb halo" text-anchor="middle">PAGED OUT</text>
+          <text x={cx} y={g.pagedY + 17} class="gl v halo" text-anchor="middle">{fmtGiB(sleep.pagedOutGiB)} GiB</text>
+        {/if}
+        <text x={cx} y={g.resCap} class="gl halo" class:amb={waking} text-anchor="middle">{waking ? 'RESTORING' : 'RESIDENT'}</text>
+        <text x={cx} y={g.resVal} class="gl v halo" text-anchor="middle">{fmtGiB(sleep.residentGiB)} GiB</text>
+      {/if}
+
       <!-- leaders -->
       {#each g.strata as s, i (s.id + 'l' + i + (s.ghost ? 'g' : ''))}
         {#if s.y1 - s.y0 > 0.05}
           {@const y = g.ly[i]}
-          {#if s.ghost}
+          {#if s.ghost || s.dorm}
             <circle cx={colR - 8} cy={s.mid} r="2.6" fill="#0C1318" stroke="#9CD3F2" class="hair" />
           {:else}
             <circle cx={colR - 8} cy={s.mid} r="2.6" fill="#F4FAFF" />
           {/if}
           <path d="M{colR - 8},{s.mid} L{colR + 16},{y - 4} H{colR + 26}" class="hair" stroke="#C9DDEA" fill="none" />
-          <text x={colR + 30} y={y} class="lbl" class:sm={s.label.length > 10} class:gh={s.ghost}>{s.label} {s.ghost ? ghostNum(s.gib) : s.gib.toFixed(1)}</text>
+          <text x={colR + 30} y={y} class="lbl" class:sm={s.label.length > 10} class:gh={s.ghost || s.dorm}>{s.label} {s.ghost || s.dorm ? ghostNum(s.gib) : s.gib.toFixed(1)}</text>
         {/if}
       {/each}
 
@@ -348,7 +399,20 @@
       <line x1="4" x2={dw - 4} y1={g.ground + 56} y2={g.ground + 56} class="hair" stroke="#4E6779" />
       <rect x={colX} y={g.ground + 60} width={dw - colX - 14} height="44" fill="url(#si-hatch-dim)" stroke="#4E6779" stroke-dasharray="4 3" class="hair" />
       <text x={colX + 8} y={g.ground + 77} class="cap">SYSTEM RAM{ramTotalGiB ? ` ${ramTotalGiB.toFixed(1)} GiB` : ''}{ramType ? ` ${ramType}` : ''}</text>
-      <text x={colX + 8} y={g.ground + 93} class="cap dimc">NOT TO SCALE</text>
+      <text x={colX + 8} y={g.ground + 93} class="cap dimc">NOT TO SCALE{#if sleep}<tspan class="amb"> · HOLDS {fmtGiB(sleep.pagedOutGiB)} GiB</tspan>{/if}</text>
+      <!-- dormant: where the paged-out allocations went (VRAM to RAM), reversed while they are restored -->
+      {#if sleep}
+        {@const yTop = g.ground - 24}
+        {@const yBot = g.ground + 82}
+        <path d="M{colX - 1},{yTop} H13 V{yBot} H{colX - 1}" class="hair mv" fill="none" />
+        {#if waking}
+          <circle cx={colX - 3} cy={yBot} r="2.4" fill="#F2B33A" />
+          <path d={arrow(colX - 1, yTop, 'right', 0.85)} fill="#F2B33A" />
+        {:else}
+          <circle cx={colX - 3} cy={yTop} r="2.4" fill="#F2B33A" />
+          <path d={arrow(colX - 1, yBot, 'right', 0.85)} fill="#F2B33A" />
+        {/if}
+      {/if}
 
       <!-- fault: the allocation collapsed through the floor -->
       {#if rubble}
@@ -444,6 +508,23 @@
   }
   .gl.red {
     fill: #ff7a5c;
+  }
+  .gl.amb,
+  .amb {
+    fill: #f2b33a;
+  }
+  .halo {
+    paint-order: stroke;
+    stroke: #0c1318;
+    stroke-width: 4px;
+    stroke-linejoin: round;
+  }
+  .wedge {
+    stroke-width: 2.4;
+  }
+  .mv {
+    stroke: #f2b33a;
+    stroke-dasharray: 4 3;
   }
   .gl.v.red {
     fill: #ffd6cc;

@@ -1,0 +1,45 @@
+# KLIF configuration template. Copy to .local/klif.toml (dev, gitignored) or %APPDATA%\KLIF\klif.toml
+# and fill in your machine's values. Never commit a filled-in copy.
+
+[launcher]
+# The PowerShell launcher that owns the model catalog (cards, profiles, presets).
+script = 'D:\path\to\workshop\Launch-LLM.ps1'
+gui_script = 'D:\path\to\workshop\Launch-LLM.Gui.ps1'
+# Optional: the old launcher's state file (API key and runs to adopt are read from it, read-only).
+state_file = 'D:\path\to\workshop\.llm-launcher-state.json'
+# Optional overrides:
+# exporter = 'scripts\Export-KlifCatalog.ps1'
+# logs_dir = 'D:\path\to\runtime-logs'
+
+[net]
+# Where your LLM starters bind their servers (loopback by default).
+llm_host = "127.0.0.1"
+image_host = "127.0.0.1"
+
+[gpu]
+# PCI "VEN:DEV" of the inference GPU and of the GPU the UI should render on.
+# inference = "1002:7550"   # example: an RDNA4 16 GiB card
+# ui = "1002:731F"          # example: a second card that drives the displays
+# inference_name = "RX 9070 XT"
+
+[ui]
+frameless = true
+# Panel mode = the read-only mini layout on a small status screen (a 3.5" 960x640 monitor, say). The
+# window's button / F3 / the tray's "Panel mode" move KLIF onto that monitor and fill it; leaving brings
+# the previous window back. Which monitor: a resolution ("960x640") or part of the monitor's device name
+# ("DISPLAY3"). Unset = automatic: with 2+ monitors, the smallest one if it is at most 1280x800.
+# panel_monitor = "960x640"
+
+[telemetry]
+warn_below_gib = 0.15
+verbose_llama_logs = true
+
+# Tier defaults. Each tier starts from a launcher preset or a card id, plus optional overrides.
+[tiers.high]
+preset = "qwen-moe"
+[tiers.medium]
+preset = "qwen-dense"
+[tiers.low]
+preset = "gemma-tavern"
+[tiers.krea]
+preset = "krea"

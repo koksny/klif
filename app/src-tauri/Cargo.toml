@@ -1,0 +1,56 @@
+[package]
+name = "klif"
+version = "0.2.0"
+description = "KLIF desktop shell: Tauri 2 window, tray and native transport for the KLIF core"
+edition = "2021"
+license = "MIT"
+rust-version = "1.90"
+publish = false
+
+# Its own workspace (Tauri convention): not a member of the root workspace, depends on the core by path.
+[workspace]
+
+[features]
+# Serve sample data (a port of app/ui/src/lib/model/sample.ts) instead of the real engine, so the shell
+# runs end to end before the engine exists. Never starts anything.
+stub-engine = []
+# Release builds MUST enable this (scripts/Build-Release.ps1 does): without it tauri::is_dev() stays true
+# and the window loads tauri.conf.json's devUrl instead of the UI embedded from frontendDist. The Tauri CLI
+# adds the same feature itself; a plain `cargo build --release` does not. Debug / `cargo run` leave it off.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+klif-core = { path = "../../crates/klif-core" }
+klif-common = { path = "../../crates/klif-common" }
+klif-telemetry = { path = "../../crates/klif-telemetry" }
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.5"
+webview2-com = "0.39"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+# 0.62 is what tauri / wry / webview2-com use, so the COM and HWND types unify.
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_System_Performance",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# The shipped exe: fully optimised, no debug info, one codegen unit. Only the release profile of THIS
+# workspace applies to the klif-* crates it depends on by path.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+debug = false

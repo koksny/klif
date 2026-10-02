@@ -1,49 +1,45 @@
 <script lang="ts">
-  // Side sheet to tune the selected slot: model, quant, backend, context, KV type, prompt cache, port,
-  // vision, mode. Changes update the mock slot's ModelRef immediately; a running session keeps the
-  // settings it started with until it is restarted. Themed purely by the --k-* variables.
+  // Side sheet to tune what a slot launches. Data-driven: it shows slot.recipe with the choices in
+  // slot.options (both from the core's catalog) and sends every change as actions.setRecipe(slot, patch).
+  // A running session keeps the recipe it started with until it is restarted. Themed by the --k-* variables.
   import { fly, fade } from 'svelte/transition';
-  import { BACKENDS, catalogByKind, catalogFor, fitLayers, modelFromCatalog, PROMPT_CACHE_MIB } from '../mock/catalog';
   import { fmtCtx } from '../model/format';
-  import type { ModelRef, Slot, SlotId } from '../model/types';
+  import type { Availability, Recipe, RecipeChoice, Slot, SlotId } from '../model/types';
   import { player } from '../state/player.svelte';
   import { ui } from '../state/ui.svelte';
+  import { fitLayers } from './fit';
 
   const slot = $derived<Slot>(player.vm.slots.find((s) => s.id === ui.tuneSlot) ?? player.vm.slots[0]);
   const m = $derived(slot.model);
-  const cat = $derived(catalogFor(m.name));
+  const recipe = $derived(slot.recipe);
+  const opts = $derived(slot.options);
   const isLlm = $derived(slot.kind === 'llm');
-  const extras = $derived(player.extras[slot.id]);
   const session = $derived(player.vm.session);
   const running = $derived(session !== null && session.phase !== 'fault');
   const runningThis = $derived(running && session?.slot === slot.id);
+  const otherRunning = $derived(running && !runningThis);
+  const ready = $derived(slot.availability === 'ready');
 
-  function patch(p: Partial<ModelRef>) {
-    const next: ModelRef = { ...m, ...p };
-    // Quant drives the on-disk weights size.
-    if (p.quant !== undefined) {
-      const q = cat?.quants.find((x) => x.quant === p.quant);
-      if (q) next.weightsGiB = q.weightsGiB;
-    }
-    player.applyModel(slot.id, next);
+  const AVAIL_TEXT: Record<Availability, string> = {
+    ready: 'ready',
+    unsupported: 'not available',
+    'script-missing': 'starter missing',
+    'model-missing': 'model missing',
+    'build-required': 'build required',
+    busy: 'port busy',
+  };
+
+  function set(patch: Partial<Recipe>) {
+    player.actions.setRecipe(slot.id, patch);
   }
 
-  function pickModel(name: string) {
-    const c = catalogFor(name);
-    if (c) player.applyModel(slot.id, modelFromCatalog(c, m));
+  /** Option text with the reason it cannot launch, when it cannot. */
+  function choiceText<T>(c: RecipeChoice<T>): string {
+    return c.availability === 'ready' ? c.label : `${c.label} (${AVAIL_TEXT[c.availability]})`;
   }
 
-  function pickSpec(v: string) {
-    patch({ specMode: v === 'off' ? undefined : v });
-  }
-
-  function pickMode(v: string) {
-    patch({ mode: v === 'auto' ? undefined : v });
-  }
-
-  function setPort(raw: string) {
-    const n = Math.round(Number(raw));
-    if (Number.isFinite(n)) player.setExtras(slot.id, { port: Math.min(65535, Math.max(1024, n)) });
+  function cacheText(mib: number): string {
+    return mib === 0 ? 'off' : `${mib >= 1024 ? `${mib / 1024} GiB` : `${mib} MiB`} in RAM`;
   }
 
   // ---- "will it fit" preview: baseline (already in use) + the slot's expected layers, after the loader's trim ----
@@ -69,11 +65,19 @@
     ui.closeTune();
   }
 
-  const otherRunning = $derived(running && !runningThis);
   const slotsList = $derived(player.vm.slots);
   function pickSlot(id: SlotId) {
     ui.tuneSlot = id;
   }
+
+  // The current values may be missing from the offered lists (e.g. a capped cache): show them anyway.
+  // No list offered = not tunable (e.g. an image starter that pins its own port).
+  function withCurrent(v: number[] | undefined, cur: number | undefined): number[] {
+    if (!v?.length) return [];
+    return cur !== undefined && !v.includes(cur) ? [...v, cur].sort((a, b) => a - b) : v;
+  }
+  const cacheValues = $derived(withCurrent(opts?.promptCacheMiB, recipe?.promptCacheMiB));
+  const portValues = $derived(withCurrent(opts?.ports, recipe?.port));
 </script>
 
 <div class="scrim" role="presentation" onclick={close} transition:fade|global={{ duration: 160 }}></div>
@@ -112,120 +116,154 @@
       <p class="fitnote">{fitText}</p>
     </section>
 
-    <label class="field">
-      <span>Model</span>
-      <select value={m.name} onchange={(e) => pickModel(e.currentTarget.value)}>
-        {#each catalogByKind(slot.kind) as c (c.name)}
-          <option value={c.name}>{c.name}</option>
-        {/each}
-      </select>
-    </label>
-
-    <label class="field">
-      <span>Quant</span>
-      <select value={m.quant} onchange={(e) => patch({ quant: e.currentTarget.value })}>
-        {#each cat?.quants ?? [] as q (q.quant)}
-          <option value={q.quant}>{q.quant} · {q.weightsGiB.toFixed(1)} GiB</option>
-        {/each}
-      </select>
-    </label>
-
-    <div class="field">
-      <span id="lbl-backend">Backend</span>
-      <div class="seg3" role="radiogroup" aria-labelledby="lbl-backend">
-        {#each BACKENDS as b (b)}
-          <button type="button" role="radio" aria-checked={m.backend === b} class:on={m.backend === b} onclick={() => patch({ backend: b })}>{b}</button>
-        {/each}
-      </div>
-    </div>
-
-    {#if isLlm}
+    {#if !recipe || !opts}
+      <p class="note">The core offers no launch settings for this slot.</p>
+    {:else}
       <label class="field">
-        <span>Context</span>
-        <select value={m.ctxTokens} onchange={(e) => patch({ ctxTokens: Number(e.currentTarget.value) })}>
-          {#each cat?.ctxOptions ?? [] as c (c)}
-            <option value={c}>{fmtCtx(c)} tokens</option>
+        <span>Model</span>
+        <select value={recipe.cardId} onchange={(e) => set({ cardId: e.currentTarget.value })}>
+          {#each opts.cards as c (c.value)}
+            <option value={c.value} title={c.reason ?? ''}>{choiceText(c)}</option>
           {/each}
         </select>
       </label>
 
       <div class="field">
-        <span id="lbl-kv">KV cache</span>
-        <div class="seg3" role="radiogroup" aria-labelledby="lbl-kv">
-          {#each ['q4_0', 'q8_0'] as k (k)}
-            <button type="button" role="radio" aria-checked={m.kvType === k} class:on={m.kvType === k} onclick={() => patch({ kvType: k })}>{k}</button>
+        <span id="lbl-backend">Backend</span>
+        <div class="seg3" role="radiogroup" aria-labelledby="lbl-backend">
+          {#each opts.backends as b (b.value)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={recipe.backend === b.value}
+              class:on={recipe.backend === b.value}
+              class:na={b.availability !== 'ready'}
+              title={b.reason ?? (b.availability === 'ready' ? '' : AVAIL_TEXT[b.availability])}
+              onclick={() => set({ backend: b.value })}>{b.label}</button
+            >
           {/each}
         </div>
       </div>
 
       <label class="field">
-        <span>Speculative</span>
-        <select value={m.specMode ?? 'off'} onchange={(e) => pickSpec(e.currentTarget.value)}>
-          {#each cat?.specModes ?? ['off'] as s (s)}
-            <option value={s}>{s}</option>
+        <span>Hardware</span>
+        <select value={recipe.hardware} onchange={(e) => set({ hardware: e.currentTarget.value })}>
+          {#each opts.hardware as h (h.value)}
+            <option value={h.value} title={h.reason ?? ''}>{choiceText(h)}</option>
           {/each}
         </select>
       </label>
 
-      <label class="field">
-        <span>Mode</span>
-        <select value={m.mode ?? 'auto'} onchange={(e) => pickMode(e.currentTarget.value)}>
-          <option value="auto">auto</option>
-          {#each cat?.modes ?? [] as md (md)}
-            <option value={md}>{md}</option>
-          {/each}
-        </select>
-      </label>
+      {#if isLlm}
+        {#if opts.contexts?.length}
+          <label class="field">
+            <span>Context</span>
+            <select value={recipe.ctxTokens} onchange={(e) => set({ ctxTokens: Number(e.currentTarget.value) })}>
+              {#each opts.contexts as c (c.value)}
+                <option value={c.value}>{choiceText(c)}</option>
+              {/each}
+              {#if recipe.ctxTokens !== undefined && !opts.contexts.some((c) => c.value === recipe.ctxTokens)}
+                <option value={recipe.ctxTokens}>{fmtCtx(recipe.ctxTokens)} tokens</option>
+              {/if}
+            </select>
+          </label>
+        {/if}
 
-      {#if cat?.hasVision}
-        <div class="field">
-          <span id="lbl-vision">Vision</span>
-          <button
-            type="button"
-            class="switch"
-            role="switch"
-            aria-checked={!!m.vision}
-            aria-labelledby="lbl-vision"
-            class:on={!!m.vision}
-            onclick={() => patch({ vision: !m.vision })}
-          >
-            <i></i>{m.vision ? 'projector loaded' : 'off'}
-          </button>
-        </div>
+        {#if opts.kvTypes?.length}
+          <div class="field">
+            <span id="lbl-kv">KV cache</span>
+            <div class="seg3" role="radiogroup" aria-labelledby="lbl-kv">
+              {#each opts.kvTypes as k (k)}
+                <button type="button" role="radio" aria-checked={recipe.kvType === k} class:on={recipe.kvType === k} onclick={() => set({ kvType: k })}>{k}</button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if opts.modes?.length}
+          <label class="field">
+            <span>Mode</span>
+            <select value={recipe.mode ?? opts.modes[0]} onchange={(e) => set({ mode: e.currentTarget.value })}>
+              {#each opts.modes as md (md)}
+                <option value={md}>{md}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
+        {#if opts.vision}
+          <div class="field">
+            <span id="lbl-vision">Vision</span>
+            <button
+              type="button"
+              class="switch"
+              role="switch"
+              aria-checked={!!recipe.vision}
+              aria-labelledby="lbl-vision"
+              class:on={!!recipe.vision}
+              onclick={() => set({ vision: !recipe.vision })}
+            >
+              <i></i>{recipe.vision ? 'projector loaded' : 'off'}
+            </button>
+          </div>
+        {/if}
+
+        {#if cacheValues.length}
+          <label class="field">
+            <span>Prompt cache</span>
+            <select value={recipe.promptCacheMiB} onchange={(e) => set({ promptCacheMiB: Number(e.currentTarget.value) })}>
+              {#each cacheValues as c (c)}
+                <option value={c}>{cacheText(c)}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
+        {#if m.specMode}
+          <div class="field">
+            <span>Speculative</span>
+            <span class="ro">{m.specMode} <small>(set by the starter)</small></span>
+          </div>
+        {/if}
+      {:else if opts.imageSizes?.length}
+        <label class="field">
+          <span>Image size</span>
+          <select value={recipe.imageSize} onchange={(e) => set({ imageSize: e.currentTarget.value })}>
+            {#each opts.imageSizes as s (s.value)}
+              <option value={s.value}>{choiceText(s)}</option>
+            {/each}
+          </select>
+        </label>
       {/if}
 
-      <label class="field">
-        <span>Prompt cache</span>
-        <select value={extras.promptCacheMiB} onchange={(e) => player.setExtras(slot.id, { promptCacheMiB: Number(e.currentTarget.value) })}>
-          {#each PROMPT_CACHE_MIB as c (c)}
-            <option value={c}>{c === 0 ? 'off' : `${c / 1024} GiB in RAM`}</option>
-          {/each}
-        </select>
-      </label>
-    {:else}
-      <label class="field">
-        <span>Image size</span>
-        <select value={m.imageSize} onchange={(e) => patch({ imageSize: e.currentTarget.value })}>
-          {#each cat?.imageSizes ?? [] as s (s)}
-            <option value={s}>{s}</option>
-          {/each}
-        </select>
-      </label>
+      {#if portValues.length}
+        <label class="field">
+          <span>Port</span>
+          <select value={recipe.port} onchange={(e) => set({ port: Number(e.currentTarget.value) })}>
+            {#each portValues as p (p)}
+              <option value={p}>{p}</option>
+            {/each}
+          </select>
+        </label>
+      {:else if recipe.port !== undefined}
+        <div class="field">
+          <span>Port</span>
+          <span class="ro">{recipe.port} <small>(fixed by the starter)</small></span>
+        </div>
+      {/if}
     {/if}
-
-    <label class="field">
-      <span>Port</span>
-      <input type="number" inputmode="numeric" min="1024" max="65535" value={extras.port} onchange={(e) => setPort(e.currentTarget.value)} />
-    </label>
   </div>
 
   <footer>
     {#if runningThis}
       <p>This session keeps its current settings until it restarts.</p>
-      <button type="button" class="primary" onclick={() => player.actions.restart()}>Restart to apply</button>
+      <button type="button" class="primary" disabled={!ready} onclick={() => player.actions.restart()}>Restart to apply</button>
     {:else if otherRunning}
       <p>Another slot is running. Stop it to launch this one.</p>
       <button type="button" class="primary" disabled>Launch</button>
+    {:else if !ready}
+      <p class="blocked">Cannot launch: {slot.reason ?? AVAIL_TEXT[slot.availability]}</p>
+      <button type="button" class="primary" disabled>Launch {slot.label.toLowerCase()}</button>
     {:else}
       <p>Applies on the next launch.</p>
       <button type="button" class="primary" onclick={() => player.actions.launch(slot.id)}>Launch {slot.label.toLowerCase()}</button>
@@ -310,8 +348,16 @@
     font: 500 12px/1.2 var(--k-font-ui, system-ui, sans-serif);
     letter-spacing: 0.04em;
   }
-  select,
-  input[type='number'] {
+  .field > span.ro {
+    color: var(--k-ink, #e6e6e6);
+    font: 500 13px/1.2 var(--k-font-data, ui-monospace, monospace);
+    letter-spacing: 0;
+  }
+  .ro small {
+    color: var(--k-muted, #8a8a8a);
+    font: 500 11px/1.2 var(--k-font-ui, system-ui, sans-serif);
+  }
+  select {
     width: 100%;
     min-width: 0;
     font: 500 13px/1.2 var(--k-font-ui, system-ui, sans-serif);
@@ -321,11 +367,7 @@
     border-radius: var(--k-radius, 6px);
     padding: 8px 10px;
   }
-  input[type='number'] {
-    font-family: var(--k-font-data, ui-monospace, monospace);
-  }
   select:focus-visible,
-  input:focus-visible,
   button:focus-visible {
     outline: 2px solid var(--k-accent, #5ab6eb);
     outline-offset: 1px;
@@ -359,6 +401,14 @@
   .seg3 button {
     flex: 1;
     font-family: var(--k-font-data, ui-monospace, monospace);
+  }
+  .seg3 button.na:not(.on) {
+    border-style: dashed;
+    color: var(--k-muted, #8a8a8a);
+  }
+  .seg3 button.na.on {
+    background: color-mix(in srgb, var(--k-warn, #f2a33a) 70%, var(--k-surface, #141414));
+    border-color: var(--k-warn, #f2a33a);
   }
   .switch {
     display: inline-flex;
@@ -455,7 +505,8 @@
     padding-top: 6px;
     margin-top: 2px;
   }
-  .fitnote {
+  .fitnote,
+  .note {
     margin: 10px 0 0;
     font: 500 12px/1.35 var(--k-font-ui, system-ui, sans-serif);
     color: var(--k-muted, #8a8a8a);
@@ -470,6 +521,9 @@
     margin: 0;
     color: var(--k-muted, #8a8a8a);
     font: 500 12px/1.35 var(--k-font-ui, system-ui, sans-serif);
+  }
+  footer p.blocked {
+    color: var(--k-warn, #f2a33a);
   }
   .primary {
     background: var(--k-accent, #5ab6eb);

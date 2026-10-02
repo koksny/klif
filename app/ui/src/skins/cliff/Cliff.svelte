@@ -10,6 +10,7 @@
   import { fmtGiB, fmtInt } from '../../lib/model/format';
   import { getTier, onFrame, onTier } from '../../lib/render/scheduler';
   import { bezierPathD, buildGeom, yOfGiB } from './geometry';
+  import { gpuDetail, gpuStatus, type GpuView } from './power';
   import {
     DEBRIS_S,
     debrisRocks,
@@ -40,6 +41,8 @@
     /** fault: VRAM the failure released (GiB); the amount of debris follows it, none if nothing was held. */
     releasedGiB?: number;
     kicker?: string;
+    /** GPU dormant (vm.vram.dormant): `layers` are the session's ALLOCATIONS, drawn as ghosts above the resident part. */
+    gpu?: GpuView | null;
   }
 
   let {
@@ -55,6 +58,7 @@
     faultSinceS,
     releasedGiB = 0,
     kicker = 'VRAM cliff',
+    gpu = null,
   }: Props = $props();
 
   let w = $state(0);
@@ -68,6 +72,8 @@
   const full = $derived(variant === 'full');
   const fit = $derived(mode === 'fit');
   const fault = $derived(mode === 'fault');
+  /** The GPU is asleep (or waking): the strata are ghosts and only the resident bottom is solid rock. */
+  const dorm = $derived(!!gpu && mode === 'live');
   /** fit: the measured baseline sits under the expected strata as one solid band. */
   const nBase = $derived(fit && baseGiB > 0.004 ? 1 : 0);
   const stackLayers = $derived<VramLayer[]>(
@@ -76,8 +82,8 @@
   const sidePad = $derived(Math.max(16, w * 0.0235));
   const lipTop = $derived(full ? Math.round(titleH + Math.max(8, h * 0.02)) : Math.round(h * 0.531));
   const stacked = $derived(sumGiB(stackLayers));
-  /** Headroom: measured free VRAM, or the spare a fit preview predicts. */
-  const free = $derived(fit ? totalGiB - stacked : Math.max(0, totalGiB - usedGiB));
+  /** Headroom: measured free VRAM, or the spare a fit preview predicts (dormant: what the allocations leave). */
+  const free = $derived(fit ? totalGiB - stacked : dorm ? Math.max(0, totalGiB - stacked) : Math.max(0, totalGiB - usedGiB));
   const warn = $derived(fit ? free < 0 : free < warnBelowGiB);
   const spilling = $derived(!fit && spillMiB > 0);
 
@@ -86,8 +92,15 @@
   );
   const tall = $derived(!!g && (tallHeadroom(g) || fault));
 
+  /** Dormant: GiB resident (the solid bottom of the rock) and how much of the session the sea holds. */
+  const solidGiB = $derived(dorm && gpu ? Math.min(stacked, gpu.residentGiB) : 0);
+  const ramK = $derived(dorm && gpu && stacked > 0 ? Math.min(1, Math.max(0, gpu.pagedOutGiB / stacked)) : 0);
+  /** The restore front: the top of the resident rock. */
+  const frontY = $derived(g ? g.baseY - solidGiB * g.ppg : 0);
+
   const paintKey = $derived(
     `${w}x${h}@${dpr}|${variant}|${mode}|${nBase}|${warn}|${lipTop}|${totalGiB.toFixed(2)}|` +
+      (dorm ? `dorm:${Math.round(solidGiB * (g?.ppg ?? 0))}:${ramK.toFixed(2)}|` : '') +
       stackLayers.map((l) => `${l.id}:${l.gib.toFixed(2)}`).join(','),
   );
 
@@ -104,7 +117,13 @@
       const ctx = c.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      paintScene(ctx, g, getRockTexture(g.W, g.H, dpr), { mode, warn, nBase, overGiB: fit ? Math.max(0, stacked - totalGiB) : 0 }, dpr);
+      paintScene(
+        ctx,
+        g,
+        getRockTexture(g.W, g.H, dpr),
+        { mode, warn, nBase, overGiB: fit ? Math.max(0, stacked - totalGiB) : 0, dormant: dorm ? { solidGiB, ramK } : null },
+        dpr,
+      );
     });
   });
 
@@ -213,12 +232,53 @@
   }
 
   const freeText = $derived(fmtGiB(Math.abs(free)));
-  const freeUnit = $derived(fit ? (free >= 0 ? 'GiB spare' : 'GiB over') : 'GiB free');
+  const freeUnit = $derived(fit || dorm ? (free >= 0 ? 'GiB spare' : 'GiB over') : 'GiB free');
   const freePrefix = $derived(fit ? (free >= 0 ? 'fits · ' : 'does not fit · ') : '');
+
+  /** Dormant, full: the lip label says where the rock is right now (system RAM), one row above the headroom label. */
+  const dlab = $derived.by(() => {
+    if (!g || !full || !dorm || !gpu) return null;
+    const prefix = gpu.phase === 'waking' ? 'restoring · ' : gpu.phase === 'sleeping' ? 'paging out · ' : 'paged out · ';
+    const value = fmtGiB(gpu.pagedOutGiB);
+    let unit = gpu.phase === 'waking' ? 'GiB still in RAM' : 'GiB in RAM';
+    const room = w - sidePad - (g.lipX + 14);
+    const est = (u: string) => (prefix.length + value.length + u.length + 1) * fsL * 0.52;
+    // A narrow window shortens the label before it gives up the right-hand side of the lip.
+    if (est(unit) > room && est('GiB') <= room) unit = 'GiB';
+    const ly = Math.max(fsL * 0.8, g.lipY - fsL * (tall ? 2.6 : 2.35));
+    const right = est(unit) <= room;
+    return {
+      prefix,
+      value,
+      unit,
+      ly,
+      right,
+      tx: right ? g.lipX + 12 : g.lipX - 14,
+      px: tall ? g.lipX : g.lipX - 4,
+      py: tall ? g.lipY : (g.lipY + g.rockY) / 2,
+    };
+  });
+
+  /** Dormant: the resident rock grows bottom-up while the GPU wakes; chevrons mark the restore front. */
+  const front = $derived.by(() => {
+    if (!g || !dorm || !gpu || gpu.phase === 'asleep') return null;
+    const restoring = gpu.phase === 'waking';
+    // Mini: out at the cliff edge, clear of the words on the rock.
+    const x = full ? Math.max(lx + 190, g.lipX * 0.42) : g.lipX - 28;
+    const s = full ? 7 : 11;
+    const y = frontY - (full ? 10 : 14);
+    // Only while the front is a visible way below the surface and above the foot.
+    if (frontY < g.rockY + s * 2.2 || frontY > g.baseY - 4) return { chev: null, label: null as string | null };
+    const pct = Math.round(gpu.frac * 100);
+    const label = full ? `${fmtGiB(gpu.residentGiB)} GiB resident · ${pct}%` : null;
+    // The chevrons stay clear of the label that ends at the lip.
+    const cx = label ? Math.max(lx + 70, Math.min(x, g.lipX - 16 - label.length * fsS * 0.6 - 26)) : x;
+    return { chev: restoring ? { x: cx, y, s } : null, label };
+  });
 
   /** Thin headroom: a pin in the free band with a leader up to the label above the lip. */
   const callout = $derived.by(() => {
-    if (!g || !full || tall) return null;
+    if (!g || !full || tall || dorm) return null;
     const px = g.lipX - 4;
     const py = (g.lipY + g.rockY) / 2;
     const ly = g.lipY - fsL * 1.05;
@@ -308,10 +368,41 @@
     return { x: w * 0.026, y };
   });
 
+  /** Dormant, mini: the state in words large enough to read from a metre, on the (ghost) rock. */
+  const mdorm = $derived.by(() => {
+    if (!g || full || !dorm || !gpu) return null;
+    const waking = gpu.phase === 'waking';
+    const a = Math.max(30, h * 0.1);
+    const b = Math.max(30, h * 0.06);
+    const c = Math.max(30, h * 0.052);
+    const x = w * 0.026;
+    // One block, a little above the middle of the rock zone (under the lip, clear of the foot).
+    const block = a * 0.72 + b * 1.4 + c * 1.45;
+    const top = g.lipY + Math.max(h * 0.02, (g.baseY - g.lipY - block) * 0.3);
+    const yA = top + a * 0.72;
+    const yB = yA + b * 1.4;
+    const yC = yB + c * 1.45;
+    return {
+      x,
+      a,
+      b,
+      c,
+      yA,
+      yB,
+      yC,
+      title: gpuStatus(gpu),
+      value: fmtGiB(gpu.pagedOutGiB),
+      unit: waking ? 'GiB still paged out' : 'GiB paged out',
+      res: `${fmtGiB(gpu.residentGiB)} / ${totalGiB.toFixed(2)} GiB resident`,
+      pct: waking ? `${Math.round(gpu.frac * 100)}%` : null,
+    };
+  });
+
   const aria = $derived(
-    `${fit ? 'Expected VRAM' : 'VRAM'} on ${device}: ${(fit ? stacked : usedGiB).toFixed(2)} of ${totalGiB.toFixed(2)} GiB. ` +
+    `${fit ? 'Expected VRAM' : 'VRAM'} on ${device}: ${(fit ? stacked : usedGiB).toFixed(2)} of ${totalGiB.toFixed(2)} GiB${dorm ? ' resident' : ''}. ` +
       stackLayers.map((l) => `${l.label} ${fmtLayer(l.gib)}`).join(', ') +
-      `. ${freePrefix}${freeText} ${freeUnit}. Spill to shared memory ${fmtInt(spillMiB)} MiB.`,
+      `. ${freePrefix}${freeText} ${freeUnit}. Spill to shared memory ${fmtInt(spillMiB)} MiB.` +
+      (dorm && gpu ? ` ${gpuStatus(gpu)}: ${gpuDetail(gpu)}; ${fmtGiB(gpu.pagedOutGiB)} GiB of the session is in system RAM.` : ''),
   );
 </script>
 
@@ -333,6 +424,13 @@
         <path
           class="grow"
           d="M{grow.x - grow.s} {grow.y} l{grow.s} {-grow.s} l{grow.s} {grow.s} M{grow.x - grow.s} {grow.y + grow.s * 0.95} l{grow.s} {-grow.s} l{grow.s} {grow.s}"
+        />
+      {/if}
+      {#if front?.chev}
+        {@const c = front.chev}
+        <path
+          class="grow rise"
+          d="M{c.x - c.s} {c.y} l{c.s} {-c.s} l{c.s} {c.s} M{c.x - c.s} {c.y + c.s * 0.95} l{c.s} {-c.s} l{c.s} {c.s}"
         />
       {/if}
       {#if full}
@@ -373,9 +471,34 @@
           >
         {/if}
 
+        <!-- dormant: where the rock is right now (system RAM), at the lip -->
+        {#if dlab}
+          {#if !tall}
+            <path
+              class="callout"
+              d="M{dlab.px} {dlab.py.toFixed(1)} V{dlab.ly.toFixed(1)} H{dlab.right ? g.lipX + 8 : g.lipX - 10}"
+            />
+            <circle class="pin" cx={dlab.px} cy={dlab.py} r="3.4" />
+          {/if}
+          <text
+            class="free dlab"
+            x={dlab.tx}
+            y={dlab.ly}
+            dy="0.36em"
+            text-anchor={dlab.right ? 'start' : 'end'}
+            style:font-size="{fsL}px"
+            ><tspan class="fp">{dlab.prefix}</tspan><tspan class="fv">{dlab.value}</tspan><tspan class="fu" dx="0.3em"
+              >{dlab.unit}</tspan
+            ></text
+          >
+        {/if}
+
         <!-- tall headroom: capacity pin at the lip + dimension arrow down to the rock -->
         {#if dim}
-          <path class="callout cap" d="M{g.lipX} {g.lipY - 4} V{dim.ly.toFixed(1)} H{g.lipX + 8}" />
+          <path
+            class="callout cap"
+            d="M{g.lipX} {g.lipY - 4} V{(dlab ? dlab.ly : dim.ly).toFixed(1)} H{g.lipX + 8}"
+          />
           <circle class="pin cap" cx={g.lipX} cy={g.lipY} r="4" />
           <text class="capt" x={g.lipX + 12} y={dim.ly} dy="0.36em" style:font-size="{fsL}px">{dim.cap}</text>
           <path class="dim" d="M{dim.ax} {dim.y0} V{dim.y1}" />
@@ -388,6 +511,11 @@
               ></text
             >
           {/if}
+        {/if}
+
+        <!-- dormant: the restore front -->
+        {#if front?.label}
+          <text class="flab" x={g.lipX - 16} y={frontY - fsL * 0.7} text-anchor="end" style:font-size="{fsS}px">{front.label}</text>
         {/if}
 
         <!-- loupe: the last GiB under the lip, magnified at a stated scale -->
@@ -411,7 +539,7 @@
           >
           {#each loupeInfo.slices as sl, i (i)}
             <text class="lsl" class:lfree={sl.free} x={L.x + 9} y={sl.y} dy="0.36em" style:font-size="{loupeInfo.fs}px"
-              >{#if sl.free}<tspan class="v">{sl.value}</tspan><tspan dx="0.35em">GiB free</tspan>{:else}<tspan
+              >{#if sl.free}<tspan class="v">{sl.value}</tspan><tspan dx="0.35em">GiB {dorm ? 'spare' : 'free'}</tspan>{:else}<tspan
                   >{sl.text}</tspan
                 ><tspan class="v" dx="0.45em">{sl.value}</tspan>{/if}</text
             >
@@ -420,7 +548,7 @@
 
         <!-- the sea is system RAM; spill goes over the edge into it -->
         {#if seaLabel}
-          <text class="sea" x={seaLabel.x} y={seaLabel.y} text-anchor="end" style:font-size="{fsL * 1.05}px">System RAM</text>
+          <text class="sea" class:lit={dorm} x={seaLabel.x} y={seaLabel.y} text-anchor="end" style:font-size="{fsL * 1.05}px">System RAM</text>
         {/if}
         {#if spillLabel}
           {#if !spilling}<path class="chan" d={spillLabel.d} />{/if}
@@ -444,7 +572,7 @@
           <path class="mark" d="M{g.lipX - 9} {g.lipY - 22} H{g.lipX + 9} L{g.lipX} {g.lipY - 9} Z" />
           <text class="mfree" x={g.lipX + 18} y={g.lipY - 13} style:font-size="{Math.max(30, h * 0.05)}px"
             ><tspan class="fv">{freeText}</tspan><tspan class="fu" dx="0.25em"
-              >{fit ? (free >= 0 ? 'GiB spare' : 'GiB over') : 'GiB free'}</tspan
+              >{fit || dorm ? (free >= 0 ? 'GiB spare' : 'GiB over') : 'GiB free'}</tspan
             ></text
           >
         {/if}
@@ -454,7 +582,15 @@
             >expected if launched</text
           >
         {/if}
-        {#if miniUse}
+        {#if mdorm}
+          <text class="mgpu" x={mdorm.x} y={mdorm.yA} style:font-size="{mdorm.a}px">{mdorm.title}</text>
+          <text class="mpaged" x={mdorm.x + 2} y={mdorm.yB} style:font-size="{mdorm.b}px"
+            ><tspan class="v">{mdorm.value}</tspan><tspan class="u" dx="0.3em">{mdorm.unit}</tspan></text
+          >
+          <text class="mres" x={mdorm.x + 2} y={mdorm.yC} style:font-size="{mdorm.c}px"
+            >{mdorm.res}{#if mdorm.pct}<tspan class="p" dx="0.5em">{mdorm.pct}</tspan>{/if}</text
+          >
+        {:else if miniUse}
           <text class="muse" x={miniUse.x} y={miniUse.y} style:font-size="{Math.max(30, h * 0.084)}px"
             >{(fit ? stacked : usedGiB).toFixed(2)} / {totalGiB.toFixed(2)} GiB</text
           >
@@ -473,7 +609,7 @@
       <div class="kicker">{kicker}</div>
       <div class="ttl">
         <span>{device}</span><span class="sep">·</span><span class="num">{(fit ? stacked : usedGiB).toFixed(2)} / {totalGiB.toFixed(2)} GiB</span
-        >{#if fit}<span class="exp">expected</span>{/if}
+        >{#if fit}<span class="exp">expected</span>{/if}{#if dorm}<span class="exp">resident</span>{/if}
       </div>
     </div>
   {/if}
@@ -666,6 +802,33 @@
     stroke: none;
     letter-spacing: 0.02em;
   }
+  /* dormant: the sea holds the model */
+  .sea.lit {
+    fill: #bfe4f6;
+    fill-opacity: 1;
+  }
+  .flab {
+    fill: var(--sky);
+    font-family: var(--f-data);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    stroke: rgba(12, 16, 19, 0.85);
+  }
+  /* the restore front's chevrons rise, slowly (still under reduced motion: cliff.css switches animation off) */
+  .rise {
+    animation: rise 1.6s ease-in-out infinite;
+  }
+  @keyframes rise {
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: translateY(2px);
+    }
+    50% {
+      opacity: 1;
+      transform: translateY(-4px);
+    }
+  }
   .chan {
     fill: none;
     stroke: rgba(220, 239, 248, 0.7);
@@ -711,6 +874,37 @@
     fill: #9fb2bc;
     stroke: rgba(12, 16, 19, 0.7);
     stroke-width: 4px;
+  }
+  .mgpu {
+    font-family: var(--f-disp);
+    font-stretch: 112%;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    fill: var(--amber);
+    stroke: rgba(12, 16, 19, 0.85);
+    stroke-width: 5px;
+  }
+  .mpaged {
+    font-weight: 500;
+    stroke: rgba(12, 16, 19, 0.85);
+    stroke-width: 4px;
+  }
+  .mpaged .v {
+    font-family: var(--f-data);
+    fill: var(--foam);
+  }
+  .mpaged .u {
+    fill: var(--sky);
+  }
+  .mres {
+    font-family: var(--f-data);
+    font-weight: 500;
+    fill: #b9cad3;
+    stroke: rgba(12, 16, 19, 0.8);
+    stroke-width: 4px;
+  }
+  .mres .p {
+    fill: var(--sky);
   }
   .mspill {
     fill: var(--amber);

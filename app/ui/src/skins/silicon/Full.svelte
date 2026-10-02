@@ -6,6 +6,8 @@
   //   live-llm  - decode speed (or prefill progress while prefilling), rows, request timeline
   //   live-img  - diffusion progress, last image / images, recent jobs
   //   fault     - fault panel, emptied column with the collapsed allocation, failed request marked
+  //   dormant   - (live, vram.dormant set) the GPU is asleep or waking: GDDR6 blocks and the section show
+  //               the paged-out allocations as hatched dashed outlines, tiles dark, amber status
   import type { Actions, Slot, ViewModel } from '../../lib/model/types';
   import { fmtClock, fmtFixed, fmtGiB, fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../lib/model/format';
   import DieCanvas from './DieCanvas.svelte';
@@ -15,11 +17,13 @@
   import JobsChart from './JobsChart.svelte';
   import WinCtl from './WinCtl.svelte';
   import { held } from './held.svelte';
+  import { useSleep } from './sleep.svelte';
   import {
     availabilityText,
     baselineOf,
     detailFraction,
     fmtAgo,
+    fmtDur,
     fmtEta,
     lastSessionParts,
     modelLine,
@@ -61,8 +65,19 @@
                 ? 'live-img'
                 : 'other',
   );
-  const tone = $derived(view === 'loading' ? 'amber' : view === 'fault' ? 'fault' : view === 'live-llm' || view === 'live-img' || view === 'other' ? 'live' : 'off');
+  // GPU dormant (live session, vm.vram.dormant set): asleep between requests, or waking while the VRAM is restored.
+  const sleep = useSleep(() => vm);
+  const dz = $derived(phase === 'live' ? sleep.info : null);
+  const waking = $derived(!!dz && sleep.waking);
+  const tone = $derived(
+    dz || view === 'loading' ? 'amber' : view === 'fault' ? 'fault' : view === 'live-llm' || view === 'live-img' || view === 'other' ? 'live' : 'off',
+  );
   const frameless = $derived(!!vm.host?.frameless);
+  // Panel mode (the read-only mini layout on the small screen): the button is always offered when a target exists.
+  const panel = $derived(vm.host?.panel?.available ? vm.host.panel : null);
+  const panelTip = $derived(`Panel mode: show on the small screen${panel?.target ? ` (${panel.target})` : ''}`);
+  // Narrow window: the label gives way to the glyph so the header never wraps.
+  const compactHdr = $derived(w < 700);
 
   // LLM: during prefill the hero is the prefill progress, never a bright 0.0 tok/s.
   const prefillActive = $derived(!!llm?.prefill && llm.activity === 'prefill');
@@ -138,6 +153,17 @@
   const phaseLabel = $derived(
     phase === 'idle' ? 'IDLE' : phase === 'live' ? 'LIVE' : phase === 'fault' ? 'FAULT' : phase === 'stopping' ? 'STOPPING' : phase === 'loading' ? 'LOADING' : 'STARTING',
   );
+  // Header chip and drawing title block while the GPU is powered down.
+  const statusLabel = $derived(dz ? (waking ? 'GPU WAKING' : 'GPU ASLEEP') : phaseLabel);
+  const titleWord = $derived(dz ? (waking ? 'WAKING' : 'DORMANT') : phaseLabel);
+  // Die title suffix: power state and how long, or how far the restore has got.
+  const dieState = $derived.by(() => {
+    if (!dz) return '';
+    const ps = dz.powerState ? `${dz.powerState} · ` : '';
+    return waking ? `WAKING${dz.powerState ? ` FROM ${dz.powerState}` : ''} · ${Math.round(dz.restoredFrac * 100)}% RESTORED` : `${ps}ASLEEP ${fmtDur(dz.sinceS)}`;
+  });
+  // A request waiting for the restore: nothing has been prefilled yet.
+  const waitingForGpu = $derived(!!dz && prefillActive && (llm?.prefill?.doneTokens ?? 0) === 0);
   const dwg = $derived(vm.vram.device.replace(/^RX\s*/i, '').trim().replace(/\s+/g, '-'));
   // Drawing revision = the app's major.minor (host.appVersion "0.2.0" -> "0.2").
   const rev = $derived((vm.host?.appVersion ?? '').split('.').slice(0, 2).join('.') || '—');
@@ -171,8 +197,8 @@
       </div>
     </div>
     <div class="status" data-tauri-drag-region>
-      <span class="dot {tone}"></span>
-      <span class="phase {tone}">{phaseLabel}</span>
+      <span class="dot {tone}" class:pulse={waking}></span>
+      <span class="phase {tone}">{statusLabel}</span>
       {#if s}
         <span class="vsep"></span>
         {#if view === 'loading'}
@@ -183,6 +209,13 @@
       {:else if vm.host?.appVersion}
         <span class="vsep"></span>
         <span class="uptime ver">v{vm.host.appVersion}</span>
+      {/if}
+      {#if panel}
+        <span class="vsep"></span>
+        <button class="pbtn" class:on={panel.active} class:compact={compactHdr} onclick={() => actions.togglePanel?.()} title={panelTip} aria-label={panelTip} aria-pressed={panel.active}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="12.5" rx="1" /><path d="M8.5 20.5h7M12 16.5v4" /><path d="M14 9.5h5v4h-5z" /></svg>
+          <span class="pl">PANEL</span>
+        </button>
       {/if}
     </div>
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
@@ -283,10 +316,14 @@
       <section class="speed panel pf">
         <div class="sp-l">
           <div class="lbl ink">PREFILL PROGRESS</div>
-          <div class="hero pct"><b>{Math.floor(preFrac * 100)}</b><span class="unit">%</span></div>
+          <div class="hero pct" class:faded={waitingForGpu}><b>{Math.floor(preFrac * 100)}</b><span class="unit">%</span></div>
         </div>
         <div class="sp-r pfr">
-          <div class="cap">prompt processing <span class="dimcap">· 1 segment = 1/64 of the prompt, as on the die</span></div>
+          {#if waitingForGpu && dz}
+            <div class="cap"><span class="amb">waiting for the GPU to wake</span> <span class="dimcap">· {fmtGiB(dz.pagedOutGiB)} GiB still in system RAM</span></div>
+          {:else}
+            <div class="cap">prompt processing <span class="dimcap">· 1 segment = 1/64 of the prompt, as on the die</span></div>
+          {/if}
           <div class="segs" role="img" aria-label="Prefill {Math.floor(preFrac * 100)} percent">
             {#each Array.from({ length: 64 }, (_, k) => k) as k (k)}<i class:on={k < preSegs}></i>{/each}
           </div>
@@ -300,8 +337,8 @@
     {:else}
       <section class="speed panel">
         <div class="sp-l">
-          <div class="lbl ink">DECODE SPEED</div>
-          <div class="hero"><b>{fmtTps(tps.current)}</b><span class="unit">tok/s</span></div>
+          <div class="lbl ink">{dz ? 'LAST DECODE SPEED' : 'DECODE SPEED'}</div>
+          <div class="hero" class:faded={!!dz}><b>{fmtTps(tps.current)}</b><span class="unit">tok/s</span></div>
         </div>
         <div class="sp-r">
           <div class="cap">5-minute history <span class="dimcap">· grid 10 tok/s × 30 s</span></div>
@@ -416,7 +453,7 @@
   <!-- The drawing: die + VRAM section -->
   <section class="draw panel">
     <div class="die-wrap">
-      <div class="dtitle">{vm.vram.device} GPU DIE (TOP VIEW)</div>
+      <div class="dtitle">{vm.vram.device} GPU DIE (TOP VIEW){#if dz}<span class="amb">&nbsp;· {dieState}</span>{/if}</div>
       <div class="die-canvas">
         <DieCanvas
           variant="full"
@@ -427,7 +464,10 @@
           cacheFrac={liveLlm ? cacheFrac : null}
           jobFill={imgFill}
           caption={dieCaption}
-          label="GPU die: compute-unit tiles show the token stream ({dieCaption.join(' ')}); 8 GDDR6 blocks show VRAM used; the cache block shows prompt-cache reuse"
+          pagedOutGiB={dz ? dz.pagedOutGiB : null}
+          label={dz
+            ? `GPU die, GPU ${waking ? 'waking' : 'asleep'}: compute-unit tiles dark; 8 GDDR6 blocks show ${fmtGiB(dz.residentGiB)} GiB resident and ${fmtGiB(dz.pagedOutGiB)} GiB paged out to system RAM as hatched outlines`
+            : `GPU die: compute-unit tiles show the token stream (${dieCaption.join(' ')}); 8 GDDR6 blocks show VRAM used; the cache block shows prompt-cache reuse`}
         />
       </div>
     </div>
@@ -435,6 +475,8 @@
       <div class="chdr">
         {#if preview}
           <span><span class="fp">FIT PREVIEW</span> · <b class:red={previewTop > vm.vram.totalGiB}>{fmtGiB(previewTop)}</b> / {fmtGiB(vm.vram.totalGiB)} GiB</span>
+        {:else if dz}
+          <span><span class="fp amb">RESIDENT</span> · <b>{fmtGiB(vm.vram.usedGiB)}</b> / {fmtGiB(vm.vram.totalGiB)} GiB</span>
         {:else}
           <span>{vm.vram.device} · <b class:amber={lowFree && vm.vram.spillMiB <= 0} class:red={vm.vram.spillMiB > 0}>{fmtGiB(vm.vram.usedGiB)}</b> / {fmtGiB(vm.vram.totalGiB)} GiB</span>
         {/if}
@@ -448,6 +490,8 @@
           {preview}
           previewBaseGiB={previewBase}
           {faultGiB}
+          sleep={dz}
+          {waking}
         />
       </div>
     </div>
@@ -490,7 +534,7 @@
       <span class="m2"><Meter value={vm.system.cpuPct / 100} /></span>
     </div>
     <div class="cell tb-cell">
-      <span class="titleblock" class:long={phaseLabel.length > 5}>KLIF · DWG {dwg} · {phaseLabel} · REV {rev}</span>
+      <span class="titleblock" class:long={titleWord.length > 5}>KLIF · DWG {dwg} · {titleWord} · REV {rev}</span>
     </div>
   </section>
 
@@ -734,6 +778,14 @@
   .dot.amber {
     background: var(--amber);
   }
+  .dot.pulse {
+    animation: si-pulse 1s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.pulse {
+      animation: none;
+    }
+  }
   .dot.fault {
     background: var(--red);
   }
@@ -768,6 +820,50 @@
   .uptime.ver {
     color: var(--muted);
     letter-spacing: 0.04em;
+  }
+  /* Panel-mode button: same hairline chip as the control row, glyph + a short mono label. */
+  .pbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--u) * 9);
+    height: calc(var(--u) * 34);
+    padding: 0 calc(var(--u) * 14) 0 calc(var(--u) * 11);
+    border: 1px solid #3a4d5b;
+    border-radius: calc(var(--u) * 3);
+    background: #0b1116;
+    color: var(--label);
+    font-family: 'Iosevka', 'JetBrains Mono Variable', monospace;
+    font-weight: 500;
+    font-size: max(10.5px, calc(var(--u) * 14.5));
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    flex: none;
+  }
+  .pbtn:hover {
+    border-color: #6a8aa0;
+    color: var(--hot);
+  }
+  .pbtn.on {
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+  .pbtn svg {
+    width: calc(var(--u) * 20);
+    height: calc(var(--u) * 20);
+    min-width: 14px;
+    min-height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+  .pbtn.compact {
+    padding: 0 calc(var(--u) * 10);
+  }
+  .pbtn.compact .pl {
+    display: none;
   }
 
   /* Idle: tier cards */
@@ -1035,6 +1131,14 @@
   .hero.dimh b,
   .hero.dimh .unit {
     color: #5f7280;
+  }
+  /* GPU asleep: the last figure, not a live one. */
+  .hero.faded b,
+  .hero.faded .unit {
+    color: #7f93a1;
+  }
+  .amb {
+    color: var(--amber);
   }
   .hero.dh {
     gap: calc(var(--u) * 13);
@@ -1574,6 +1678,9 @@
     font-weight: 500;
     letter-spacing: 0.06em;
     color: var(--label);
+  }
+  .chdr .fp.amb {
+    color: var(--amber);
   }
   .col-body {
     min-height: 0;

@@ -2,7 +2,7 @@
   // Screen-printed line icons (24 x 24 grid).
   type Name =
     | 'ram' | 'cpu' | 'restart' | 'open' | 'console' | 'stop' | 'play' | 'tune' | 'chev'
-    | 'lock' | 'warn' | 'log' | 'back' | 'min' | 'max' | 'restore' | 'close';
+    | 'lock' | 'warn' | 'log' | 'back' | 'min' | 'max' | 'restore' | 'close' | 'screen' | 'window';
   let { name, size = '1em' }: { name: Name; size?: string } = $props();
 </script>
 
@@ -52,6 +52,12 @@
     <path d="M5.5 8.5h10v10h-10z M8.5 8.5V5.5h10v10h-3" />
   {:else if name === 'close'}
     <path d="M5.5 5.5l13 13 M18.5 5.5l-13 13" />
+  {:else if name === 'screen'}
+    <path d="M3 5h18v11.5H3z M9 20h6 M12 16.5V20" />
+    <path d="M6.5 9h6 M6.5 12.5h3.5" />
+  {:else if name === 'window'}
+    <path d="M3.5 5h17v14h-17z M3.5 9.5h17" />
+    <path d="M6.4 7.25h.01 M9 7.25h.01" />
   {/if}
 </svg>
 

@@ -1,6 +1,8 @@
-// Global shortcuts: Ctrl+1..4 / Alt+1..4 and F2 (Shift+F2 backwards) switch skins, F3 toggles the size
-// class, backquote toggles the dev bar, Escape closes drawers.
+// Global shortcuts: Ctrl+1..4 / Alt+1..4 and F2 (Shift+F2 backwards) switch skins, F3 is panel mode (the
+// desktop app moves the window onto the small status screen; a browser only switches the layout between
+// mini and full), backquote toggles the dev bar, Escape closes drawers.
 import { SKINS } from '../../skins/registry';
+import { player } from '../state/player.svelte';
 import { ui } from '../state/ui.svelte';
 
 function isTyping(t: EventTarget | null): boolean {
@@ -22,7 +24,8 @@ export function installKeys(): () => void {
     }
     if (e.key === 'F3') {
       e.preventDefault();
-      ui.toggleSize();
+      if (player.native && player.vm.host.panel.available) player.actions.togglePanel();
+      else ui.toggleSize();
       return;
     }
     // Alt+digit is an alias: a normal browser tab swallows Ctrl+digit before the page sees it.

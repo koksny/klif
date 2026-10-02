@@ -159,6 +159,12 @@ export interface PaintOpts {
   nBase: number;
   /** fit: expected GiB beyond the edge (drawn above the lip, so every band keeps its true height). */
   overGiB?: number;
+  /**
+   * live, GPU dormant: the bands are the session's ALLOCATIONS and are drawn as ghosts (the rock is not in
+   * VRAM right now); only the bottom `solidGiB` (what is resident) is solid. `ramK` 0..1: how much of the
+   * session the sea (system RAM) holds right now, which lights it a little.
+   */
+  dormant?: { solidGiB: number; ramK: number } | null;
 }
 
 /** Headroom tall enough to read as open air: the lip becomes a dashed capacity line, the glow moves
@@ -422,6 +428,85 @@ function scenery(g: Geom, scale: number): HTMLCanvasElement {
   return c;
 }
 
+/** GPU dormant: the sea holds the model now, so it is lit a little (scenery sea, brightened in place). */
+function seaGlow(ctx: CanvasRenderingContext2D, g: Geom, k: number) {
+  const { W, waterY, baseY, seaX } = g;
+  const depth = baseY - waterY;
+  if (depth <= 2 || k <= 0) return;
+  const grad = ctx.createLinearGradient(0, waterY, 0, baseY);
+  grad.addColorStop(0, `rgba(96,190,240,${(0.105 * k).toFixed(3)})`);
+  grad.addColorStop(1, `rgba(60,150,205,${(0.055 * k).toFixed(3)})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(seaX, waterY, W - seaX, depth);
+  ctx.fillStyle = `rgba(150,214,245,${(0.4 * k).toFixed(3)})`;
+  ctx.fillRect(seaX, waterY, W - seaX, 1);
+}
+
+/**
+ * GPU dormant: the cross-section is a ghost of the session (same treatment as the idle fit preview:
+ * the chart shows through, texture faded to ~25%, dashed outlines), and only the bottom `solidGiB` of it
+ * (what is resident in VRAM) is solid rock. The solid part grows bottom-up while the GPU wakes.
+ */
+function dormantSection(ctx: CanvasRenderingContext2D, g: Geom, tex: HTMLCanvasElement, solidY: number, lipRgb: string) {
+  const { W, H, lipY, baseY, rockY } = g;
+  // The sea is scenery behind the cliff: keep it out of the ghosted section.
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillRect(g.seaX - 1, g.waterY - 1, W - g.seaX + 1, baseY - g.waterY + 1);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(24,32,38,0.62)';
+  ctx.fillRect(0, lipY, W, baseY - lipY);
+  ctx.globalAlpha = 0.25;
+  ctx.drawImage(tex, 0, 0, W, H);
+  ctx.globalAlpha = 1;
+  if (rockY - lipY > 0.05) {
+    if (tallHeadroom(g)) {
+      const air = ctx.createLinearGradient(0, lipY, 0, rockY);
+      air.addColorStop(0, `rgba(${lipRgb},0.16)`);
+      air.addColorStop(1, `rgba(${lipRgb},0.03)`);
+      ctx.fillStyle = air;
+    } else ctx.fillStyle = `rgba(${lipRgb},0.12)`;
+    ctx.fillRect(0, lipY, W, rockY - lipY);
+  }
+  // Ghost strata: dashed outlines, only above what is resident.
+  ctx.setLineDash([5, 4]);
+  ctx.lineWidth = 1;
+  for (const b of g.bands) {
+    const bot = Math.min(b.yBot, solidY);
+    if (bot <= b.yTop + 0.5) continue;
+    ctx.fillStyle = 'rgba(220,239,248,0.05)';
+    ctx.fillRect(0, b.yTop, W, bot - b.yTop);
+    ctx.strokeStyle = 'rgba(220,239,248,0.55)';
+    ctx.strokeRect(-2, Math.round(b.yTop) + 0.5, W + 4, Math.max(1, bot - Math.round(b.yTop)));
+  }
+  ctx.setLineDash([]);
+  // Resident rock: solid strata, texture and seams from the foot up to the restore front.
+  if (baseY - solidY >= 0.75) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, solidY, W, baseY - solidY);
+    ctx.clip();
+    for (const b of g.bands) {
+      ctx.fillStyle = LAYER_COLOR[b.id] ?? C.s2;
+      ctx.fillRect(0, b.yTop, W, b.yBot - b.yTop);
+    }
+    ctx.drawImage(tex, 0, 0, W, H);
+    const sh = ctx.createLinearGradient(0, solidY, 0, baseY);
+    sh.addColorStop(0, 'rgba(220,239,248,0.05)');
+    sh.addColorStop(0.5, 'rgba(5,8,10,0)');
+    sh.addColorStop(1, 'rgba(5,8,10,0.3)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, solidY, W, baseY - solidY);
+    for (const b of g.bands) {
+      if (b.yTop <= solidY + 0.5) continue;
+      seam(ctx, b.yTop, 0, W, 0.32, g.variant === 'mini');
+    }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(220,239,248,0.55)';
+    ctx.fillRect(0, Math.round(solidY), W, 1);
+  }
+}
+
 export function paintScene(
   ctx: CanvasRenderingContext2D,
   g: Geom,
@@ -434,16 +519,23 @@ export function paintScene(
   const fault = o.mode === 'fault';
   const tall = tallHeadroom(g);
   const full = g.variant === 'full';
+  /** GPU dormant (live only): ghost strata over a solid resident part of height solidGiB. */
+  const dorm = !fit && !fault && !!o.dormant;
+  const solidGiB = dorm ? Math.max(0, Math.min(g.stackTop, o.dormant!.solidGiB)) : 0;
+  const solidY = baseY - solidGiB * g.ppg;
   ctx.clearRect(0, 0, W, H);
   const lipColor = o.warn ? C.amber : C.sky;
   const lipRgb = o.warn ? '242,163,58' : '90,182,235';
   ctx.drawImage(scenery(g, scale), 0, 0, W, H);
+  if (dorm) seaGlow(ctx, g, o.dormant!.ramK);
 
   // ---- cross-section (data): strata clipped by the section silhouette.
   const sec = sectionPath(g);
   ctx.save();
   ctx.clip(sec);
-  if (fit) {
+  if (dorm) {
+    dormantSection(ctx, g, tex, solidY, lipRgb);
+  } else if (fit) {
     // Fit preview: the cliff is a ghost (the chart contours show through it, nothing is loaded);
     // measured baseline solid, expected layers as dashed outlines.
     // (the sea is scenery behind the cliff: keep it out of the ghosted section)
@@ -585,88 +677,128 @@ export function paintScene(
 
   // ---- the face (scenery outside the section; strata continue as ledges). After a fault the whole
   // emptied shell keeps its face, dimmed; otherwise the face only exists where there is rock.
-  const dim = fit ? 0.32 : fault ? 0.5 : 1;
+  // GPU dormant: the whole face is a ghost (the fit preview's), with the real face again from the restore
+  // front down (fromY), so the face and the section stay one rock.
+  type FaceKind = 'live' | 'fit' | 'fault';
   const faceTop = fault ? lipY : rockY;
-  const face = facePath(g, faceTop);
-  ctx.save();
-  ctx.clip(face);
-  ctx.fillStyle = fit ? '#161d21' : fault ? '#1b2429' : '#2b3943';
-  ctx.fillRect(lipX - 30, faceTop, W - lipX + 30, baseY - faceTop);
-  faceFacets(ctx, g, faceTop, dim);
-  ctx.save();
-  ctx.globalAlpha = fit ? 0.25 : fault ? 0.3 : 0.42;
-  ctx.drawImage(tex, 0, 0, W, H);
-  ctx.restore();
-  // Depth: lit under the lip, darker towards the foot.
-  const fg = ctx.createLinearGradient(0, faceTop, 0, baseY);
-  fg.addColorStop(0, fault ? 'rgba(240,248,252,0.04)' : 'rgba(240,248,252,0.10)');
-  fg.addColorStop(0.3, 'rgba(0,0,0,0)');
-  fg.addColorStop(1, 'rgba(3,8,12,0.45)');
-  ctx.fillStyle = fg;
-  ctx.fillRect(lipX - 30, faceTop, W - lipX + 30, baseY - faceTop);
-  // Ledges where the stepped face juts out (scenery).
-  for (let y = Math.max(1, Math.ceil(faceTop) + 2); y <= baseY; y++) {
-    const d = g.outer[y] - g.outer[y - 1];
-    if (d < 2.5) continue;
-    ctx.fillStyle = `rgba(225,238,245,${dim < 1 ? 0.07 : 0.2})`;
-    ctx.fillRect(g.inner[y], y, g.outer[y] - g.inner[y], 1);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(g.inner[y], y - 2, g.outer[y - 1] - g.inner[y], 2);
-  }
-  if (!fit) {
-    for (const b of g.bands) {
-      if (b.yTop <= rockY + 0.5) continue;
-      const y = Math.round(b.yTop);
-      const yi = Math.min(baseY, Math.max(0, y));
-      ctx.fillStyle = 'rgba(220,239,248,0.22)';
-      ctx.fillRect(g.inner[yi], y - 1, g.outer[yi] - g.inner[yi] + 2, 1);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(g.inner[yi], y, g.outer[yi] - g.inner[yi] + 2, 2);
+  const paintFace = (kind: FaceKind, fromY: number | null) => {
+    const kFit = kind === 'fit';
+    const kFault = kind === 'fault';
+    const dim = kFit ? 0.32 : kFault ? 0.5 : 1;
+    ctx.save();
+    if (fromY !== null) {
+      ctx.beginPath();
+      ctx.rect(0, fromY, W, baseY - fromY);
+      ctx.clip();
     }
-  }
-  if (fault) faultCracks(ctx, g);
-  ctx.restore();
+    ctx.clip(facePath(g, faceTop));
+    ctx.fillStyle = kFit ? '#161d21' : kFault ? '#1b2429' : '#2b3943';
+    ctx.fillRect(lipX - 30, faceTop, W - lipX + 30, baseY - faceTop);
+    faceFacets(ctx, g, faceTop, dim);
+    ctx.save();
+    ctx.globalAlpha = kFit ? 0.25 : kFault ? 0.3 : 0.42;
+    ctx.drawImage(tex, 0, 0, W, H);
+    ctx.restore();
+    // Depth: lit under the lip, darker towards the foot.
+    const fg = ctx.createLinearGradient(0, faceTop, 0, baseY);
+    fg.addColorStop(0, kFault ? 'rgba(240,248,252,0.04)' : 'rgba(240,248,252,0.10)');
+    fg.addColorStop(0.3, 'rgba(0,0,0,0)');
+    fg.addColorStop(1, 'rgba(3,8,12,0.45)');
+    ctx.fillStyle = fg;
+    ctx.fillRect(lipX - 30, faceTop, W - lipX + 30, baseY - faceTop);
+    // Ledges where the stepped face juts out (scenery).
+    for (let y = Math.max(1, Math.ceil(faceTop) + 2); y <= baseY; y++) {
+      const d = g.outer[y] - g.outer[y - 1];
+      if (d < 2.5) continue;
+      ctx.fillStyle = `rgba(225,238,245,${dim < 1 ? 0.07 : 0.2})`;
+      ctx.fillRect(g.inner[y], y, g.outer[y] - g.inner[y], 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(g.inner[y], y - 2, g.outer[y - 1] - g.inner[y], 2);
+    }
+    if (!kFit) {
+      for (const b of g.bands) {
+        if (b.yTop <= rockY + 0.5) continue;
+        const y = Math.round(b.yTop);
+        const yi = Math.min(baseY, Math.max(0, y));
+        ctx.fillStyle = 'rgba(220,239,248,0.22)';
+        ctx.fillRect(g.inner[yi], y - 1, g.outer[yi] - g.inner[yi] + 2, 1);
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(g.inner[yi], y, g.outer[yi] - g.inner[yi] + 2, 2);
+      }
+    }
+    if (kFault) faultCracks(ctx, g);
+    ctx.restore();
+  };
 
-  // Fit preview: the expected layer boundaries carry on across the face as dashed ledges.
-  if (fit) {
+  // Edges: lit section edge, darker outer silhouette.
+  const edgeTop = Math.max(Math.ceil(lipY), Math.floor(faceTop));
+  const paintEdges = (dimmed: boolean, fromY: number | null) => {
+    ctx.save();
+    if (fromY !== null) {
+      ctx.beginPath();
+      ctx.rect(0, fromY, W, baseY - fromY);
+      ctx.clip();
+    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = dimmed ? 'rgba(220,239,248,0.18)' : 'rgba(220,239,248,0.35)';
+    ctx.beginPath();
+    for (let y = edgeTop; y <= baseY; y += 2) {
+      if (y === edgeTop) ctx.moveTo(g.inner[y], y);
+      else ctx.lineTo(g.inner[y], y);
+    }
+    ctx.stroke();
+    // Outer silhouette: a lit rim near the lip that fades into shadow towards the foot.
+    const rim = ctx.createLinearGradient(0, faceTop, 0, baseY);
+    rim.addColorStop(0, dimmed ? 'rgba(220,239,248,0.16)' : 'rgba(225,238,245,0.5)');
+    rim.addColorStop(0.55, 'rgba(225,238,245,0.12)');
+    rim.addColorStop(1, 'rgba(0,0,0,0.4)');
+    ctx.strokeStyle = rim;
+    ctx.beginPath();
+    for (let y = edgeTop; y <= baseY; y += 2) {
+      if (y === edgeTop) ctx.moveTo(g.outer[y], y);
+      else ctx.lineTo(g.outer[y], y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // Fit preview / GPU dormant: the layer boundaries carry on across the face as dashed ledges.
+  const paintLedges = (bands: Geom['bands'], belowY: number) => {
     ctx.save();
     ctx.setLineDash([4, 4]);
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(220,239,248,0.4)';
-    for (const b of g.bands.slice(o.nBase)) {
+    for (const b of bands) {
       const y = Math.round(b.yTop) + 0.5;
       const yi = Math.min(baseY, Math.max(0, Math.round(b.yTop)));
-      if (y < rockY - 0.5) continue;
+      if (y < rockY - 0.5 || y >= belowY - 0.5) continue;
       ctx.beginPath();
       ctx.moveTo(g.inner[yi], y);
       ctx.lineTo(g.outer[yi] + 2, y);
       ctx.stroke();
     }
     ctx.restore();
-  }
+  };
 
-  // Edges: lit section edge, darker outer silhouette.
-  const edgeTop = Math.max(Math.ceil(lipY), Math.floor(faceTop));
+  if (dorm) {
+    paintFace('fit', null);
+    paintLedges(g.bands, solidY);
+    paintEdges(true, null);
+    if (baseY - solidY >= 0.75) {
+      paintFace('live', solidY);
+      paintEdges(false, solidY);
+      // The restore front carries across the face.
+      const yf = Math.round(solidY);
+      const yi = Math.min(baseY, Math.max(0, yf));
+      ctx.fillStyle = 'rgba(220,239,248,0.4)';
+      ctx.fillRect(g.inner[yi], yf, g.outer[yi] - g.inner[yi] + 2, 1);
+    }
+  } else {
+    paintFace(fit ? 'fit' : fault ? 'fault' : 'live', null);
+    if (fit) paintLedges(g.bands.slice(o.nBase), Infinity);
+    paintEdges(fit || fault, null);
+  }
   ctx.lineWidth = 1;
-  ctx.strokeStyle = dim < 1 ? 'rgba(220,239,248,0.18)' : 'rgba(220,239,248,0.35)';
-  ctx.beginPath();
-  for (let y = edgeTop; y <= baseY; y += 2) {
-    if (y === edgeTop) ctx.moveTo(g.inner[y], y);
-    else ctx.lineTo(g.inner[y], y);
-  }
-  ctx.stroke();
-  // Outer silhouette: a lit rim near the lip that fades into shadow towards the foot.
-  const rim = ctx.createLinearGradient(0, faceTop, 0, baseY);
-  rim.addColorStop(0, dim < 1 ? 'rgba(220,239,248,0.16)' : 'rgba(225,238,245,0.5)');
-  rim.addColorStop(0.55, 'rgba(225,238,245,0.12)');
-  rim.addColorStop(1, 'rgba(0,0,0,0.4)');
-  ctx.strokeStyle = rim;
-  ctx.beginPath();
-  for (let y = edgeTop; y <= baseY; y += 2) {
-    if (y === edgeTop) ctx.moveTo(g.outer[y], y);
-    else ctx.lineTo(g.outer[y], y);
-  }
-  ctx.stroke();
 
   // Headroom silhouette above the rock: the lip is fixed at total.
   if (!fault && rockY - lipY > 5) {
@@ -687,8 +819,9 @@ export function paintScene(
     ctx.restore();
   }
 
-  if (tall || fault || fit) {
-    // The lip is a capacity line (dashed): nothing reaches it (fit: nothing is loaded yet).
+  if (tall || fault || fit || dorm) {
+    // The lip is a capacity line (dashed): nothing reaches it (fit: nothing is loaded yet; dormant:
+    // the session is not in VRAM right now).
     ctx.save();
     ctx.setLineDash(full ? [6, 5] : [8, 6]);
     ctx.lineWidth = full ? 1.2 : 2;
@@ -698,17 +831,19 @@ export function paintScene(
     ctx.lineTo(lipX, lipY + 0.5);
     ctx.stroke();
     ctx.restore();
-    // ...and the glow sits on the surface of the material.
-    if (!fit) {
-      const yi = Math.min(baseY, Math.max(0, Math.round(rockY)));
+    // ...and the glow sits on the surface of the material (dormant: on the restore front, once some
+    // of the rock is resident; a fully paged-out session has no surface to light).
+    const glowY = dorm ? solidY : rockY;
+    if (!fit && (!dorm || (baseY - solidY >= 1 && solidGiB < g.stackTop - 0.004))) {
+      const yi = Math.min(baseY, Math.max(0, Math.round(glowY)));
       ctx.save();
       ctx.shadowColor = C.sky;
       ctx.shadowBlur = full ? 10 : 14;
       ctx.fillStyle = C.sky;
       const th = full ? 2 : 3;
-      ctx.fillRect(0, rockY - th / 2, g.inner[yi] + 1, th);
+      ctx.fillRect(0, glowY - th / 2, g.inner[yi] + 1, th);
       ctx.shadowBlur = 3;
-      ctx.fillRect(0, rockY - th / 2, g.inner[yi] + 1, th);
+      ctx.fillRect(0, glowY - th / 2, g.inner[yi] + 1, th);
       ctx.restore();
     }
   } else {
@@ -881,19 +1016,40 @@ function paintLoupe(ctx: CanvasRenderingContext2D, g: Geom, tex: HTMLCanvasEleme
   ctx.fillStyle = '#0c1114';
   ctx.fillRect(L.x, L.y, L.w, L.h);
   const top = Math.max(g.stackTop, L.lo);
+  // GPU dormant: the bands are ghosts above what is resident (solid up to `solid` GiB, bottom-up).
+  const dorm = !!o.dormant;
+  const solid = dorm ? o.dormant!.solidGiB : Infinity;
   if (top < L.hi) {
-    ctx.fillStyle = freeFill(g.rockY - g.lipY, o.warn);
+    if (dorm) {
+      ctx.fillStyle = `rgba(${o.warn ? '242,163,58' : '90,182,235'},0.12)`;
+    } else ctx.fillStyle = freeFill(g.rockY - g.lipY, o.warn);
     ctx.fillRect(L.x, yL(L.hi), L.w, yL(top) - yL(L.hi));
   }
-  const rockTop = yL(top);
+  if (dorm) {
+    ctx.save();
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    for (const b of g.bands) {
+      const hi = Math.min(b.hi, L.hi);
+      const lo = Math.max(b.lo, L.lo, Math.min(solid, b.hi));
+      if (hi <= lo + 1e-6) continue;
+      ctx.fillStyle = 'rgba(220,239,248,0.05)';
+      ctx.fillRect(L.x, yL(hi), L.w, yL(lo) - yL(hi));
+      ctx.strokeStyle = 'rgba(220,239,248,0.5)';
+      ctx.strokeRect(L.x - 2, Math.round(yL(hi)) + 0.5, L.w + 4, Math.max(1, yL(lo) - Math.round(yL(hi))));
+    }
+    ctx.restore();
+  }
+  // Solid part of the loupe window: everything when awake, the resident bottom when dormant.
+  const rockTop = dorm ? yL(Math.min(top, Math.max(L.lo, solid))) : yL(top);
   for (const b of g.bands) {
-    const hi = Math.min(b.hi, L.hi);
+    const hi = Math.min(b.hi, L.hi, solid);
     const lo = Math.max(b.lo, L.lo);
     if (hi <= lo) continue;
     ctx.fillStyle = LAYER_COLOR[b.id] ?? C.s2;
     ctx.fillRect(L.x, yL(hi), L.w, yL(lo) - yL(hi));
   }
-  if (rockTop < L.y + L.h) {
+  if (rockTop < L.y + L.h && !(dorm && solid <= L.lo)) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(L.x, rockTop, L.w, L.y + L.h - rockTop);

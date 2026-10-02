@@ -2,9 +2,12 @@
   // LIVE body for an LLM session: drum odometer + history, LED meters, VRAM cliff dial, context dial,
   // speculative decoding, system, request timeline. While a prompt is being processed the hero row
   // reads the prefill instead (percent on the drum, tok/s and time left beside it), never "0.0 tok/s".
+  // GPU dormant (vm.vram.dormant): while nothing runs ("asleep") the hero keeps the last reading dimmed
+  // and the LED bars go dark; when a request is waiting on the restore ("waking") the prefill hero's bar
+  // becomes the restore progress (amber, GiB resident again) and its line says what is being waited for.
   import type { LlmLive, ViewModel } from '../../../lib/model/types';
-  import { fmtInt, fmtTps } from '../../../lib/model/format';
-  import { fmtLeft, frac, sessionSpanS, sessionVram } from '../theme';
+  import { fmtGiB, fmtInt, fmtTps } from '../../../lib/model/format';
+  import { fmtLeft, frac, sessionSpanS, sessionVram, sleepOf } from '../theme';
   import Drum from '../parts/Drum.svelte';
   import HistoryTrace from '../parts/HistoryTrace.svelte';
   import LedBar from '../parts/LedBar.svelte';
@@ -46,6 +49,11 @@
   const narrowLead = $derived(peak < 99.95);
 
   const prefilling = $derived(llm.activity === 'prefill' && !!pf && pf.tokens > 0);
+  const sleep = $derived(sleepOf(vm.vram));
+  // Dormant and idle: nothing can run, every reading on the panel is the last one.
+  const quiet = $derived(!!sleep && llm.activity === 'idle');
+  // Dormant with a request in: it waits for the memory to come back.
+  const waking = $derived(!!sleep && prefilling);
   const pfFrac = $derived(pf ? frac(pf.doneTokens, pf.tokens) : 0);
 
   let ctxW = $state(0);
@@ -53,7 +61,7 @@
   const dialPx = $derived(Math.max(60, Math.min(ctxH - 24, ctxW * 0.42)));
 </script>
 
-<section class="panel decode">
+<section class="panel decode" class:quiet>
   {#if prefilling && pf}
     <span class="lbl big">PREFILL</span>
     <div class="drum" style="--cells:{3 - 0.38}"><Drum value={pfFrac * 100} intDigits={3} narrowLead={pfFrac < 0.9995} /></div>
@@ -64,8 +72,13 @@
         <span class="pfv">{Math.round(pf.tps)} <small>tok/s</small></span>
         <span class="pfl">{left(pf.etaS)} <small>left</small></span>
       </div>
-      <div class="pfbar"><LedBar fraction={pfFrac} segments={28} label="Prompt processed" /></div>
-      <span class="pft">{kTok(pf.doneTokens)} / {kTok(pf.tokens)} tok processed{pf.cachedTokens ? ` · ${kTok(pf.cachedTokens)} from cache` : ''} · {left(pf.elapsedS)} so far</span>
+      {#if waking && sleep}
+        <div class="pfbar"><LedBar fraction={sleep.restored} segments={28} tone="amber" label="GPU memory restored" /></div>
+        <span class="pft"><b class="amb">waiting for the GPU</b> · {fmtGiB(sleep.usedGiB)} GiB restored, {fmtGiB(sleep.pagedGiB)} to go · {left(pf.elapsedS)} so far</span>
+      {:else}
+        <div class="pfbar"><LedBar fraction={pfFrac} segments={28} label="Prompt processed" /></div>
+        <span class="pft">{kTok(pf.doneTokens)} / {kTok(pf.tokens)} tok processed{pf.cachedTokens ? ` · ${kTok(pf.cachedTokens)} from cache` : ''} · {left(pf.elapsedS)} so far</span>
+      {/if}
     </div>
   {:else}
     <span class="lbl big">DECODE</span>
@@ -73,19 +86,19 @@
     <span class="unit">tok/s</span>
     <span class="vsep"></span>
     <div class="hist">
-      <span class="htitle">{histLabel}</span>
+      <span class="htitle">{histLabel}{#if quiet}<span class="amb">&nbsp;· GPU asleep, last reading</span>{/if}</span>
       <div class="trace"><HistoryTrace data={llm.decodeHistory} /></div>
     </div>
   {/if}
 </section>
 
-<section class="panel leds">
+<section class="panel leds" class:quiet>
   <span class="lbl big">PREFILL</span>
-  <div class="segs"><LedBar fraction={pf ? frac(pf.doneTokens, pf.tokens) : 0} segments={10} label="Prefill progress" /></div>
+  <div class="segs"><LedBar fraction={pf ? frac(pf.doneTokens, pf.tokens) : 0} segments={10} label="Prefill progress" dark={quiet} /></div>
   <span class="txt">{prefillText}</span>
   <span class="vsep"></span>
   <span class="lbl big">DECODE</span>
-  <div class="segs d"><LedBar fraction={prefilling ? 0 : frac(llm.decodeTps, peak)} segments={11} label="Decode speed relative to the 5-minute peak" /></div>
+  <div class="segs d"><LedBar fraction={prefilling ? 0 : frac(llm.decodeTps, peak)} segments={11} label="Decode speed relative to the 5-minute peak" dark={quiet} /></div>
   {#if prefilling}
     <!-- nothing decodes while the prompt is processed: no "0.0" reading, the last speed only if there is one -->
     <span class="txt quiet">waits for prefill{llm.decodeTps > 0 ? ` · last ${fmtTps(llm.decodeTps)} tok/s` : ''}</span>
@@ -110,12 +123,12 @@
         <span class="v" style="font-size: calc({ctxFont} * var(--u))"><b>{fmtInt(ctx.usedTokens)} / {fmtInt(ctx.totalTokens)} tokens</b> <b>· {ctxPct}%</b></span>
       </div>
     </section>
-    <section class="panel spec">
+    <section class="panel spec" class:quiet>
       <div class="shead">
         <Led on={!!llm.spec && llm.activity === 'decode'} size="calc(22 * var(--u))" title="drafting now" />
         <span class="h2">SPECULATIVE DECODING</span>
       </div>
-      <div class="ssegs"><LedBar fraction={llm.spec ? llm.spec.acceptancePct / 100 : 0} segments={16} label="Draft acceptance" /></div>
+      <div class="ssegs"><LedBar fraction={llm.spec ? llm.spec.acceptancePct / 100 : 0} segments={16} label="Draft acceptance" dark={quiet} /></div>
       <span class="stxt">
         {#if llm.spec}{Math.round(llm.spec.acceptancePct)}% accepted · {llm.spec.mode}{:else}off for this model{/if}
       </span>
@@ -247,6 +260,20 @@
   }
   .txt.quiet {
     color: var(--muted);
+  }
+  .amb {
+    font-weight: 500;
+    color: var(--amber);
+  }
+  /* GPU asleep: the last readings stay, dimmed; the bars are dark (see LedBar dark) */
+  .decode.quiet .drum,
+  .decode.quiet .unit,
+  .decode.quiet .trace {
+    opacity: 0.38;
+  }
+  .leds.quiet .txt,
+  .spec.quiet .stxt {
+    opacity: 0.55;
   }
 
   /* LED meter row */

@@ -1,5 +1,5 @@
 // Small geometry and text helpers shared by the Phosphor widgets.
-import type { ModelRef } from '../../lib/model/types';
+import type { GpuMemory, ModelRef } from '../../lib/model/types';
 import { fmtCtx } from '../../lib/model/format';
 
 export type Pt = [number, number];
@@ -146,4 +146,38 @@ export function fmtSpan(seconds: number): string {
  */
 export function loadSpanS(elapsedS: number): number {
   return Math.min(300, Math.max(30, Math.ceil((elapsedS + 10) / 30) * 30));
+}
+
+/** The inference GPU is powered down while a model is loaded (vm.vram.dormant), as the skin reads it. */
+export interface GpuSleep {
+  /** 'asleep' = VRAM paged out (or draining out); 'waking' = it is coming back from system RAM. */
+  state: 'asleep' | 'waking';
+  pagedOutGiB: number;
+  sinceS: number;
+  powerState?: string;
+  /** Resident + paged out: the level the VRAM trace returns to once everything is restored. */
+  committedGiB: number;
+  /** Share (0..1) of the committed memory that is resident again. */
+  restoredFrac: number;
+}
+
+/**
+ * Reads GpuMemory.dormant. It is 'waking' while the resident amount is climbing (or a request is
+ * already waiting on the GPU) and 'asleep' otherwise. Null while the GPU is awake.
+ */
+export function gpuSleep(vram: GpuMemory, requestWaiting = false): GpuSleep | null {
+  const d = vram.dormant;
+  if (!d) return null;
+  const h = vram.history;
+  const ref = h.length > 3 ? h[h.length - 4] : vram.usedGiB;
+  const rising = vram.usedGiB - ref > 0.3;
+  const committed = vram.usedGiB + Math.max(0, d.pagedOutGiB);
+  return {
+    state: rising || requestWaiting ? 'waking' : 'asleep',
+    pagedOutGiB: Math.max(0, d.pagedOutGiB),
+    sinceS: d.sinceS,
+    powerState: d.powerState,
+    committedGiB: committed,
+    restoredFrac: committed > 0 ? clamp(vram.usedGiB / committed, 0, 1) : 0,
+  };
 }

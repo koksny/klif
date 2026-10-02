@@ -34,7 +34,7 @@
   style="--k:{k}; --tex:{tex ? `url(${tex})` : 'none'}"
 >
   {#if size === 'mini'}
-    <Mini {vm} />
+    <Mini {vm} {actions} />
   {:else}
     <Full {vm} {actions} />
   {/if}

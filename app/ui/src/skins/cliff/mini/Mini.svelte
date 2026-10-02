@@ -2,14 +2,16 @@
   // Mini panel (960x640 at ~330 ppi, read from 1 m). Read-only, smallest text >= 30 px.
   // One composition for every state: wordmark + status on top, the tier/model line, one hero number,
   // one sub line, and the VRAM cliff across the lower half.
-  import type { ViewModel } from '../../../lib/model/types';
+  // Read-only apart from one corner control: "back to window", invisible until the panel is hovered.
+  import type { Actions, ViewModel } from '../../../lib/model/types';
   import { fmtInt, fmtSeconds, fmtTps } from '../../../lib/model/format';
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
+  import type { GpuView } from '../power';
   import Swell from '../Swell.svelte';
   import { availabilityText, fmtAgo, fmtSpan, releasedGiB, selectedSlot, sessionSlot, statusOf, viewState } from '../util';
 
-  let { vm }: { vm: ViewModel } = $props();
+  let { vm, actions, gpu = null }: { vm: ViewModel; actions: Actions; gpu?: GpuView | null } = $props();
 
   const s = $derived(vm.session);
   const view = $derived(viewState(vm));
@@ -38,6 +40,9 @@
   const last = $derived(vm.lastSession ?? null);
   const lastLabel = $derived(last ? (vm.slots.find((x) => x.id === last.slot)?.label ?? last.model.name) : '');
   const f = $derived(s?.fault ?? null);
+  const canLeave = $derived(!!vm.host?.panel?.available);
+  /** GPU asleep and nothing in flight: the hero is the last request's number, so it is dimmed. */
+  const stale = $derived(!!gpu && gpu.phase === 'asleep' && (s?.llm ? s.llm.activity === 'idle' : s?.image?.activity === 'idle'));
   const R = 70;
   const CIRC = 2 * Math.PI * R;
 </script>
@@ -61,7 +66,7 @@
   </div>
 {/snippet}
 
-<div class="mini">
+<div class="mini" class:stale>
   <div class="cliff-wrap">
     <Cliff
       variant="mini"
@@ -75,11 +80,21 @@
       {baseGiB}
       faultSinceS={f?.sinceS}
       releasedGiB={releasedGiB(vm)}
+      {gpu}
     />
   </div>
 
   <div class="word">KLIF</div>
-  <div class="status {st.tone}">{#key vm.now}<i class="dot"></i>{/key}<span>{st.text}</span></div>
+  <div class="tr">
+    {#if canLeave}
+      <!-- fades in on hover/focus of the panel; out of the flow, so the status stays exactly where it was -->
+      <button class="back" title="Leave panel mode" aria-label="Leave panel mode" onclick={() => actions.togglePanel?.()}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3v4.5H3M12.5 3v4.5H17M7.5 17v-4.5H3M12.5 17v-4.5H17" /></svg>
+        <span>Window</span>
+      </button>
+    {/if}
+    <div class="status {st.tone}">{#key vm.now}<i class="dot"></i>{/key}<span>{st.text}</span></div>
+  </div>
 
   {#if view === 'llm' && s?.llm}
     <div class="model">{s.model.name}</div>
@@ -153,6 +168,12 @@
     position: absolute;
     inset: 0;
   }
+  /* GPU asleep, nothing in flight: last request's numbers are history, not a reading */
+  .stale .hero,
+  .stale .swell,
+  .stale .ring {
+    opacity: 0.5;
+  }
   .word {
     position: absolute;
     left: calc(var(--m) * 26);
@@ -164,10 +185,12 @@
     letter-spacing: 0.16em;
     color: var(--sky);
   }
-  .status {
+  .tr {
     position: absolute;
     right: calc(var(--m) * 24);
     top: calc(var(--m) * 16);
+  }
+  .status {
     display: flex;
     align-items: center;
     gap: calc(var(--m) * 16);
@@ -177,6 +200,50 @@
     font-size: max(30px, calc(var(--m) * 30));
     letter-spacing: 0.07em;
     color: var(--sky);
+  }
+  /* "back to window": hidden (and not clickable) until the panel is hovered or the button is focused */
+  .back {
+    position: absolute;
+    right: 100%;
+    top: 50%;
+    margin-right: calc(var(--m) * 22);
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--m) * 12);
+    height: calc(var(--m) * 54);
+    padding: 0 calc(var(--m) * 20) 0 calc(var(--m) * 16);
+    border-radius: calc(var(--m) * 12);
+    border: calc(var(--m) * 2) solid rgba(220, 239, 248, 0.3);
+    background: rgba(29, 37, 42, 0.92);
+    color: var(--foam);
+    font-family: var(--f-ui);
+    font-weight: 500;
+    font-size: max(30px, calc(var(--m) * 30));
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease-out;
+  }
+  .mini:hover .back,
+  .back:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .back:hover {
+    background: rgba(44, 54, 60, 0.96);
+    border-color: var(--sky);
+  }
+  .back svg {
+    width: calc(var(--m) * 30);
+    height: calc(var(--m) * 30);
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .dot {
     width: calc(var(--m) * 24);

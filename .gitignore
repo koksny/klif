@@ -47,3 +47,7 @@ Desktop.ini
 
 # Studio working files (mockups, dev-server registration)
 .studio/
+
+# Rust build output
+target/
+app/src-tauri/gen/

@@ -22,6 +22,22 @@ export interface LlmSimConfig {
   big?: BigPrefill | null;
   /** Rate of the first progress log: batch size in tokens (1024 for the 27B profile, 8192 for Flash-Next). */
   logEveryTokens: number;
+  /**
+   * Scripted cadence instead of the replayed gaps: short requests only, one arrival every ~periodS, on a
+   * server that is already warm (no empty-cache first prompt). Used by the dormant-GPU scenarios.
+   */
+  paced?: PacedCfg | null;
+}
+
+export interface PacedCfg {
+  /** Seconds between request ARRIVALS (the wake-up wait counts towards it). */
+  periodS: number;
+  /** Seeded +/- jitter on each period. */
+  jitterS: number;
+  /** The first request arrives this long after the session goes live. */
+  firstInS: number;
+  maxNewTokens: number;
+  maxGenTokens: number;
 }
 
 interface Req {
@@ -47,6 +63,10 @@ interface Req {
   loggedDecodeT: number;
   genAtLastLog: number;
   gaps: number;
+  /** Seconds the request waited with no progress because the GPU was asleep (restore in flight). */
+  waitT: number;
+  /** Session-local time at which the request arrived. */
+  arriveT: number;
 }
 
 const HIST = 300;
@@ -59,6 +79,11 @@ export class LlmSim {
   totals = { requests: 0, promptTokens: 0, generatedTokens: 0 };
   /** Average decode speed of every finished request this session (for the last-session summary). */
   private rates: number[] = [];
+  /**
+   * Set by the engine: true while the GPU cannot run kernels (it is asleep or restoring). A request that
+   * is in prefill then makes no progress at all (0 tok/s) until this turns false.
+   */
+  blocked: (() => boolean) | null = null;
 
   private cfg: LlmSimConfig;
   private rng: Rng;
@@ -80,6 +105,8 @@ export class LlmSim {
   private prefillCurve: number[] = [];
   private ctxUsed = 0;
   private bigPending: BigPrefill | null;
+  /** Simulated seconds this sim has run (paced arrivals are measured on it). */
+  private age = 0;
 
   constructor(cfg: LlmSimConfig, rng: Rng, log: ConsoleBuf, clock: () => { epoch: number; sessionT: number }) {
     this.cfg = cfg;
@@ -94,6 +121,10 @@ export class LlmSim {
     this.bigPending = cfg.big ?? null;
     this.idleLeft = this.bigPending ? 2.5 : rng.range(0.6, 2.4);
     this.prefillCurve = buildCurve(cfg.ramp);
+    if (cfg.paced) {
+      this.pool = pacedPool(cfg, cfg.paced, this.pool, rng);
+      this.idleLeft = Math.max(0.2, cfg.paced.firstInS);
+    }
   }
 
   // ----- state -> view model --------------------------------------------------------------------
@@ -103,12 +134,13 @@ export class LlmSim {
     let prefill: LlmLive['prefill'] = null;
     if (r) {
       const active = this.activity === 'prefill';
-      const elapsed = active ? r.pT : r.prefillS;
+      // Time a request spends waiting for a sleeping GPU counts as prefill time, as the server logs it.
+      const elapsed = (active ? r.pT : r.prefillS) + r.waitT;
       prefill = {
         tokens: r.newTokens,
         doneTokens: active ? Math.round(r.doneNew) : r.newTokens,
         cachedTokens: r.cached,
-        tps: round1(active ? r.doneNew / Math.max(0.5, r.pT) : r.newTokens / Math.max(0.05, r.prefillS)),
+        tps: round1(active ? r.doneNew / Math.max(0.5, elapsed) : r.newTokens / Math.max(0.05, elapsed)),
         elapsedS: round1(elapsed),
         etaS: active ? round1(Math.max(0, r.prefillS - r.pT)) : 0,
       };
@@ -152,16 +184,20 @@ export class LlmSim {
     let left = dt;
     let guard = 0;
     while (left > 1e-6 && guard++ < 64) {
+      const was = left;
       if (this.activity === 'idle') {
         const use = Math.min(left, this.idleLeft);
         this.idleLeft -= use;
         this.sample(0, use);
         left -= use;
+        this.age += use;
         if (this.idleLeft <= 1e-9) this.startRequest();
       } else if (this.activity === 'prefill') {
         left = this.stepPrefill(left);
+        this.age += was - left;
       } else {
         left = this.stepDecode(left);
+        this.age += was - left;
       }
     }
   }
@@ -209,7 +245,7 @@ export class LlmSim {
     } else {
       const tp = this.nextTuple();
       r = this.makeReq(taskId, tp);
-      if (this.nextId === 2) {
+      if (this.nextId === 2 && !cfg.paced) {
         // A freshly started server has an empty prompt cache: the first prompt is processed in full.
         r.newTokens += r.cached;
         r.cached = 0;
@@ -226,6 +262,7 @@ export class LlmSim {
         r.gen = 8;
       }
     }
+    r.arriveT = this.age;
     this.req = r;
     this.activity = 'prefill';
     const c = this.clock();
@@ -257,6 +294,8 @@ export class LlmSim {
       loggedDecodeT: 0,
       genAtLastLog: 0,
       gaps: tp.gapS,
+      waitT: 0,
+      arriveT: 0,
     };
   }
 
@@ -281,6 +320,12 @@ export class LlmSim {
 
   private stepPrefill(dt: number): number {
     const r = this.req!;
+    // A sleeping GPU runs nothing: the request waits (0 tok/s) while the driver restores the VRAM.
+    if (this.blocked?.()) {
+      r.waitT += dt;
+      this.sample(0, dt);
+      return 0;
+    }
     const use = Math.min(dt, r.prefillS - r.pT);
     r.pT += use;
     r.doneNew = Math.min(r.newTokens, this.prefillTokensAt(r, r.pT));
@@ -295,7 +340,7 @@ export class LlmSim {
         llamaLine(
           c.sessionT,
           'I',
-          `slot print_timing: id  0 | task ${r.taskId} | prompt processing, n_tokens = ${padNum(n, 6)}, progress = ${(n / total).toFixed(2)}, t = ${padNum(r.pT, 6, 2)} s / ${(r.loggedNew / Math.max(0.1, r.pT)).toFixed(2)} tokens per second`,
+          `slot print_timing: id  0 | task ${r.taskId} | prompt processing, n_tokens = ${padNum(n, 6)}, progress = ${(n / total).toFixed(2)}, t = ${padNum(r.pT + r.waitT, 6, 2)} s / ${(r.loggedNew / Math.max(0.1, r.pT + r.waitT)).toFixed(2)} tokens per second`,
         ),
       );
     }
@@ -353,12 +398,14 @@ export class LlmSim {
   private finishRequest(r: Req) {
     const c = this.clock();
     const s = c.sessionT;
-    const prefillMs = r.prefillS * 1000;
+    // The server's prompt eval time includes the wait for a sleeping GPU: that is the cost the client sees.
+    const prefillTotalS = r.prefillS + r.waitT;
+    const prefillMs = prefillTotalS * 1000;
     const decodeMs = r.dT * 1000;
     const pPerTok = prefillMs / r.newTokens;
     const dPerTok = decodeMs / Math.max(1, r.gen);
     this.log.push(
-      llamaLine(s, 'I', `slot print_timing: id  0 | task ${r.taskId} | prompt eval time = ${padNum(prefillMs, 10, 2)} ms / ${padNum(r.newTokens, 5)} tokens (${padNum(pPerTok, 8, 2)} ms per token, ${padNum(r.newTokens / r.prefillS, 8, 2)} tokens per second)`),
+      llamaLine(s, 'I', `slot print_timing: id  0 | task ${r.taskId} | prompt eval time = ${padNum(prefillMs, 10, 2)} ms / ${padNum(r.newTokens, 5)} tokens (${padNum(pPerTok, 8, 2)} ms per token, ${padNum(r.newTokens / prefillTotalS, 8, 2)} tokens per second)`),
     );
     this.log.push(
       llamaLine(s, 'I', `slot print_timing: id  0 | task ${r.taskId} |        eval time = ${padNum(decodeMs, 10, 2)} ms / ${padNum(r.gen, 5)} tokens (${padNum(dPerTok, 8, 2)} ms per token, ${padNum(r.gen / Math.max(0.01, r.dT), 8, 2)} tokens per second)`),
@@ -379,7 +426,7 @@ export class LlmSim {
       at: Math.round(c.epoch),
       promptTokens: r.cached + r.newTokens,
       cachedTokens: r.cached,
-      prefillS: round1(r.prefillS),
+      prefillS: round1(prefillTotalS),
       generatedTokens: r.gen,
       decodeS: round1(r.dT),
     });
@@ -391,6 +438,13 @@ export class LlmSim {
     this.last = r;
     this.req = null;
     this.activity = 'idle';
+    const paced = this.cfg.paced;
+    if (paced) {
+      // Arrival to arrival is ~periodS whatever the request took (the wake-up wait included).
+      const period = paced.periodS + this.rng.range(-paced.jitterS, paced.jitterS);
+      this.idleLeft = Math.max(1, period - (this.age - r.arriveT));
+      return;
+    }
     // The next real request defines the idle gap that precedes it.
     const peek = this.pool[this.cursor % this.pool.length];
     this.idleLeft = clamp(peek.gapS, 0.2, this.cfg.gapCapS);
@@ -398,6 +452,25 @@ export class LlmSim {
 }
 
 const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/**
+ * Replay pool for a paced session: the short real requests of every long session, shuffled (seeded), so
+ * the cadence is the scripted one and each request still has real token counts and speeds. Falls back to
+ * the picked session when the fixtures hold too few short ones.
+ */
+function pacedPool(cfg: LlmSimConfig, p: PacedCfg, fallback: ReqTuple[], rng: Rng): ReqTuple[] {
+  const room = cfg.ctxTotal - 256;
+  const short = cfg.sessions
+    .filter((s) => s.length >= 30)
+    .flat()
+    .filter((t) => t.newTokens <= p.maxNewTokens && t.genTokens <= p.maxGenTokens && t.cachedTokens + t.newTokens + t.genTokens <= room);
+  if (short.length < 8) return fallback;
+  for (let i = short.length - 1; i > 0; i--) {
+    const j = rng.int(0, i);
+    [short[i], short[j]] = [short[j], short[i]];
+  }
+  return short;
+}
 
 /** Cumulative time at each decile boundary, normalised to 1, from the measured rate ramp. */
 function buildCurve(ramp: number[]): number[] {

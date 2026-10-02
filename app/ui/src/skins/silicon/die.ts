@@ -293,6 +293,41 @@ export class Pen {
     const y1 = Math.round(this.Y(r.y + r.h) + h);
     this.ctx.fillRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
   }
+  /** Dashed hairline rectangle (virtual-unit dash lengths). */
+  dashRect(r: Rect, color: string, dash: number[]) {
+    const { ctx } = this;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = this.lw;
+    ctx.setLineDash(dash.map((d) => d * this.s));
+    const x0 = this.snap(this.X(r.x));
+    const y0 = this.snap(this.Y(r.y));
+    const x1 = this.snap(this.X(r.x + r.w));
+    const y1 = this.snap(this.Y(r.y + r.h));
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.setLineDash([]);
+  }
+  /** Diagonal hatch (45 deg, rising to the right) clipped to a rectangle; `step` in virtual units. */
+  hatch(r: Rect, color: string, step: number) {
+    const { ctx } = this;
+    const x0 = Math.round(this.X(r.x));
+    const y0 = Math.round(this.Y(r.y));
+    const w = Math.max(1, Math.round(this.X(r.x + r.w)) - x0);
+    const h = Math.max(1, Math.round(this.Y(r.y + r.h)) - y0);
+    const d = Math.max(4, step * this.s);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, w, h);
+    ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = this.lw;
+    ctx.beginPath();
+    for (let k = -h; k < w; k += d) {
+      ctx.moveTo(x0 + k, y0 + h);
+      ctx.lineTo(x0 + k + h, y0);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   line(x1: number, y1: number, x2: number, y2: number, color: string, dash?: number[]) {
     const { ctx } = this;
     ctx.strokeStyle = color;
@@ -369,10 +404,15 @@ export interface StaticOpts {
   perBlockGiB: number;
   /** Full only: what one tile means right now ("1 tile =" / "1 token"). */
   caption: string[];
+  /** The GPU is powered down (vram.dormant): dark tiles, and the memory caption is drawn with the data. */
+  dormant?: boolean;
 }
 
 const CELL_FILL = '#1B2933';
 const CELL_EDGE = '#2A3B48';
+/** Powered-down compute units: the same tiles, dark. */
+const CELL_FILL_OFF = '#111A21';
+const CELL_EDGE_OFF = '#1B2832';
 
 /** A row of short parallel ticks (pad rows / ladders): background only. */
 function comb(p: Pen, x0: number, x1: number, y0: number, y1: number, step: number, color: string) {
@@ -474,7 +514,7 @@ function drawStaticFull(p: Pen, g: DieGeom, o: StaticOpts) {
 
   // Shader engines.
   g.se.forEach((s) => {
-    p.fill({ x: s.x + 4, y: s.y + 4, w: s.w - 8, h: s.h - 8 }, '#0E1820');
+    p.fill({ x: s.x + 4, y: s.y + 4, w: s.w - 8, h: s.h - 8 }, o.dormant ? '#0B1319' : '#0E1820');
     p.chamfer(s, 10, C.lineBright);
     p.chamfer({ x: s.x + 5, y: s.y + 5, w: s.w - 10, h: s.h - 10 }, 7, C.lineDim);
     p.text('SHADER ENGINE', s.x + 20, s.y + 26, 14, C.ink, { weight: 500, spacing: 0.5 });
@@ -490,8 +530,8 @@ function drawStaticFull(p: Pen, g: DieGeom, o: StaticOpts) {
   g.tiles.forEach((t, i) => {
     p.rect({ x: t.x - 1, y: t.y - 1, w: t.w + 2, h: t.h + 2 }, C.lineDim);
     for (const c of g.cells[i]) {
-      p.fill(c, CELL_FILL);
-      p.rect(c, CELL_EDGE);
+      p.fill(c, o.dormant ? CELL_FILL_OFF : CELL_FILL);
+      p.rect(c, o.dormant ? CELL_EDGE_OFF : CELL_EDGE);
     }
   });
 
@@ -519,14 +559,15 @@ function drawStaticFull(p: Pen, g: DieGeom, o: StaticOpts) {
   p.line(60, 282, tx, ty, C.lineHi);
   p.dot(tx, ty, 2.6, C.hot);
 
-  // Memory caption under the bottom row.
-  p.text(`GDDR6 · 8 × ${o.perBlockGiB.toFixed(2)} GiB · filled in order up to VRAM used`, die.x + die.w / 2, 630, 12, C.inkDim, {
-    align: 'center',
-    weight: 500,
-  });
+  // Memory caption under the bottom row (dormant: the dynamic layer says what is paged out instead).
+  if (!o.dormant)
+    p.text(`GDDR6 · 8 × ${o.perBlockGiB.toFixed(2)} GiB · filled in order up to VRAM used`, die.x + die.w / 2, 630, 12, C.inkDim, {
+      align: 'center',
+      weight: 500,
+    });
 }
 
-function drawStaticMini(p: Pen, g: DieGeom) {
+function drawStaticMini(p: Pen, g: DieGeom, o: StaticOpts) {
   const { die, cache, centre } = g;
   const inner = { x: die.x + 7, y: die.y + 7, w: die.w - 14, h: die.h - 14 };
 
@@ -582,8 +623,8 @@ function drawStaticMini(p: Pen, g: DieGeom) {
   g.tiles.forEach((t, i) => {
     p.rect({ x: t.x - 1, y: t.y - 1, w: t.w + 2, h: t.h + 2 }, C.lineDim);
     for (const c of g.cells[i]) {
-      p.fill(c, CELL_FILL);
-      p.rect(c, CELL_EDGE);
+      p.fill(c, o.dormant ? CELL_FILL_OFF : CELL_FILL);
+      p.rect(c, o.dormant ? CELL_EDGE_OFF : CELL_EDGE);
     }
   });
 
@@ -645,7 +686,7 @@ export function drawStatic(p: Pen, g: DieGeom, o: StaticOpts) {
     );
   }
   if (g.variant === 'full') drawStaticFull(p, g, o);
-  else drawStaticMini(p, g);
+  else drawStaticMini(p, g, o);
 }
 
 export interface DynamicState {
@@ -655,6 +696,8 @@ export interface DynamicState {
   cacheFrac: number | null;
   /** Tile glow 0..1, by tile id. */
   glow: (tile: number) => number;
+  /** GPU dormant: GiB of the session's allocations paged out to system RAM, else null. */
+  pagedOutGiB?: number | null;
 }
 
 /** The data layer. Cheap: a few dozen fillRects from precomputed rectangles. */
@@ -672,14 +715,36 @@ export function drawDynamic(p: Pen, g: DieGeom, d: DynamicState) {
     else p.fill({ x: r.x, y: r.y, w: r.w * f, h: r.h }, C.cyan);
   });
 
+  // Dormant: the allocations that are not resident sit in system RAM. Drawn as empty, hatched, dashed
+  // outlines over [resident, resident + paged out], block by block, at the same GiB scale as the fill.
+  const paged = d.pagedOutGiB ?? null;
+  if (paged !== null && d.perBlockGiB > 0) {
+    const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+    g.mem.forEach((mb, i) => {
+      const fa = clamp01(d.usedGiB / d.perBlockGiB - i);
+      const fb = clamp01((d.usedGiB + paged) / d.perBlockGiB - i);
+      if (fb - fa < 0.004) return;
+      const s = memSlot(mb, g.variant);
+      const r = { x: s.x + 2, y: s.y + 2, w: s.w - 4, h: s.h - 4 };
+      const part = mb.vertical ? { x: r.x, y: r.y + r.h * (1 - fb), w: r.w, h: r.h * (fb - fa) } : { x: r.x + r.w * fa, y: r.y, w: r.w * (fb - fa), h: r.h };
+      p.hatch(part, 'rgba(120,190,236,0.34)', full ? 5 : 8);
+      p.dashRect(part, C.lineHi, full ? [3, 2.5] : [6, 5]);
+    });
+    if (full) {
+      p.text(`PAGED OUT · ${paged.toFixed(2)} GiB IN SYSTEM RAM`, g.die.x + g.die.w / 2, 630, 12, C.amber, { align: 'center', weight: 600, spacing: 0.5 });
+    }
+  }
+
   if (full) {
     // Prompt cache: fill from the bottom by reuse fraction, slats lit below the level.
     const c = g.cache;
     const ci = { x: c.x + 8, y: c.y + 8, w: c.w - 16, h: c.h - 16 };
     const frac = d.cacheFrac ?? 0;
     const fillY = ci.y + ci.h * (1 - frac);
+    // Dormant: the last request's reuse is a remembered figure, not a live one.
+    const off = paged !== null;
     if (frac > 0) {
-      ctx.globalAlpha = 0.3;
+      ctx.globalAlpha = off ? 0.13 : 0.3;
       p.fill({ x: ci.x, y: fillY, w: ci.w, h: ci.h * frac }, C.cyan);
       ctx.globalAlpha = 1;
     }
@@ -691,11 +756,11 @@ export function drawDynamic(p: Pen, g: DieGeom, d: DynamicState) {
         if (frac > 0 && fillY < y1) {
           const ly = Math.max(y0, fillY);
           if (ly > y0) p.line(x, y0, x, ly, C.lineDim);
-          p.line(x, ly, x, y1, C.cyanSoft);
+          p.line(x, ly, x, y1, off ? '#2A5877' : C.cyanSoft);
         } else p.line(x, y0, x, y1, C.lineDim);
       }
     }
-    p.text(d.cacheFrac === null ? '—' : `${Math.round(frac * 100)}%`, c.x + c.w / 2, c.y + 96, 16, C.hot, { align: 'center', weight: 700 });
+    p.text(d.cacheFrac === null ? '—' : `${Math.round(frac * 100)}%`, c.x + c.w / 2, c.y + 96, 16, off ? C.muted : C.hot, { align: 'center', weight: 700 });
   }
 
   // Token stream: a tile lights as a whole.

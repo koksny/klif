@@ -3,6 +3,7 @@
   import { fmtFixed } from '../../../lib/model/format';
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
+  import type { GpuView } from '../power';
   import { releasedGiB, selectedSlot, sessionKind, sessionSlot, viewState } from '../util';
   import Bottom from './Bottom.svelte';
   import FaultPanel from './FaultPanel.svelte';
@@ -16,7 +17,7 @@
   import Tabs from './Tabs.svelte';
   import Timeline from './Timeline.svelte';
 
-  let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
+  let { vm, actions, gpu = null }: { vm: ViewModel; actions: Actions; gpu?: GpuView | null } = $props();
 
   const s = $derived(vm.session);
   const view = $derived(viewState(vm));
@@ -31,6 +32,8 @@
   /** VRAM held by others; with nothing running that is everything in use (older cores lack the field). */
   const baseGiB = $derived(vm.vram.baselineGiB ?? (s ? 0 : vm.vram.usedGiB));
   const cliffLayers = $derived(fit ? (sel?.expectedVram ?? []) : vm.vram.layers);
+  /** The GPU is asleep with nothing in flight: the numbers on the hero are the last request's, not live. */
+  const stale = $derived(!!gpu && gpu.phase === 'asleep' && (s?.llm ? s.llm.activity === 'idle' : s?.image?.activity === 'idle'));
   const kicker = $derived(
     fit
       ? `VRAM cliff · fit preview for ${sel?.label ?? 'job'}`
@@ -38,13 +41,19 @@
         ? 'VRAM cliff · filling'
         : mode === 'fault'
           ? 'VRAM cliff · released'
-          : 'VRAM cliff',
+          : gpu
+            ? gpu.phase === 'waking'
+              ? 'VRAM cliff · restoring from system RAM'
+              : gpu.phase === 'sleeping'
+                ? 'VRAM cliff · paging out to system RAM'
+                : 'VRAM cliff · paged out to system RAM'
+            : 'VRAM cliff',
   );
 </script>
 
 <div class="full">
   <div class="pad top">
-    <Header {vm} {actions} />
+    <Header {vm} {actions} {gpu} />
     <Tabs {vm} {actions} />
   </div>
 
@@ -61,7 +70,7 @@
     {/if}
     <div class="pad mid">
       {#if view === 'llm' && s?.llm}
-        <LlmPanel llm={s.llm} />
+        <LlmPanel llm={s.llm} {stale} />
       {:else if view === 'image' && s?.image}
         <ImagePanel image={s.image} />
       {:else if s}
@@ -85,6 +94,7 @@
       faultSinceS={s?.fault?.sinceS}
       releasedGiB={releasedGiB(vm)}
       {kicker}
+      {gpu}
     />
   </div>
 

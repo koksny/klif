@@ -8,9 +8,13 @@
   //   prefill  hero = prompt % on the drum, tok/s beside it; bottom = prefill bar + time left
   //   image    hero = step n / M on drums, s/it; centre = last image; bottom = step bar
   //   fault    hero = FAULT + title + since; centre = exit code; bottom = last log line
-  import type { ViewModel } from '../../../lib/model/types';
+  //   asleep   (vram.dormant set) hero = GPU ASLEEP / GPU WAKING on an amber lamp + the GiB paged out and
+  //            the last tok/s dimmed; the header carries the power state and how long; while a request
+  //            waits on the restore the bottom bar is the restore progress (amber)
+  import { onDestroy } from 'svelte';
+  import type { Actions, ViewModel } from '../../../lib/model/types';
   import { fmtGiB, fmtCtx, fmtTps } from '../../../lib/model/format';
-  import { PHASE_LABEL, availLabel, clamp, fmtAgo, fmtDur, fmtJobS, fmtLeft, frac, phaseOf, sessionSpanS, sessionVram, pointerSlot, shortLabel, slotById } from '../theme';
+  import { PHASE_LABEL, availLabel, clamp, fmtAgo, fmtDur, fmtJobS, fmtLeft, frac, phaseOf, sessionSpanS, sessionVram, pointerSlot, shortLabel, sleepDetail, sleepOf, slotById } from '../theme';
   import Drum from '../parts/Drum.svelte';
   import StepDrum from '../parts/StepDrum.svelte';
   import Led from '../parts/Led.svelte';
@@ -19,8 +23,22 @@
   import ContextDial from '../parts/ContextDial.svelte';
   import Selector from '../parts/Selector.svelte';
   import BackendToggle from '../parts/BackendToggle.svelte';
+  import Icon from '../parts/Icon.svelte';
 
-  let { vm }: { vm: ViewModel } = $props();
+  let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
+
+  // "Leave panel mode": the only control on this read-only layout. Invisible until the pointer is over
+  // the panel (hover) or it takes keyboard focus; a touch/pen tap reveals it for a few seconds.
+  const canLeave = $derived(vm.host?.panel?.available !== false);
+  let tapped = $state(false);
+  let tapTimer: ReturnType<typeof setTimeout> | undefined;
+  function onTap(e: PointerEvent) {
+    if (e.pointerType === 'mouse') return;
+    tapped = true;
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => (tapped = false), 4500);
+  }
+  onDestroy(() => clearTimeout(tapTimer));
 
   const s = $derived(vm.session);
   const phase = $derived(phaseOf(vm));
@@ -31,6 +49,8 @@
   const img = $derived(s && (s.phase === 'live' || s.phase === 'stopping') ? s.image : null);
   const pf = $derived(llm?.prefill ?? null);
   const prefilling = $derived(!!llm && llm.activity === 'prefill' && !!pf && pf.tokens > 0);
+  // GPU dormant: the hero reads the sleep, not a speed the GPU cannot produce right now.
+  const sleep = $derived(llm || img ? sleepOf(vm.vram) : null);
   const mode = $derived(
     !s ? 'idle' : s.phase === 'fault' ? 'fault' : llm ? (prefilling ? 'prefill' : 'llm') : img ? 'image' : 'loading',
   );
@@ -62,7 +82,10 @@
   });
 
   // The bottom LED bar.
-  const bar = $derived.by(() => {
+  const bar = $derived.by((): { label: string; f: number; value: string; tone?: 'amber' } => {
+    if (sleep && sleep.phase === 'waking') {
+      return { label: 'RESTORE', f: sleep.restored, value: `${Math.round(sleep.restored * 100)}%`, tone: 'amber' };
+    }
     if (llm) {
       if (prefilling && pf) {
         const f = frac(pf.doneTokens, pf.tokens);
@@ -111,19 +134,46 @@
   });
 </script>
 
+<svelte:window onpointerdown={onTap} />
+
 <div class="mini">
+  {#if canLeave}
+    <button
+      class="back"
+      class:tapped
+      type="button"
+      onclick={() => actions.togglePanel?.()}
+      title="Leave panel mode"
+      aria-label="Leave panel mode"
+    >
+      <Icon name="window" size="calc(32 * var(--u))" />
+      <span>WINDOW</span>
+    </button>
+  {/if}
   <div class="top">
     <span class="klif">KLIF</span>
     <span class="tsep"></span>
     <Led on={phase !== 'idle'} tone={phase === 'fault' ? 'orange' : 'cyan'} size="calc(24 * var(--u))" />
     <span class="ph" class:fault={phase === 'fault'}>{PHASE_LABEL[phase]}</span>
+    {#if sleep}<span class="zzd">{sleepDetail(sleep)}</span>{/if}
     <span class="rule"></span>
   </div>
 
   <div class="model" style="font-size: calc({nameSize} * var(--u))">{model?.name ?? '—'}</div>
 
   <div class="hero">
-    {#if mode === 'llm' && llm}
+    {#if sleep}
+      <div class="msg zz">
+        <span class="bigrow zzrow">
+          <Led on tone="amber" size="calc(60 * var(--u))" pulse={sleep.phase === 'waking'} />
+          <span class="big">GPU {sleep.phase === 'waking' ? 'WAKING' : 'ASLEEP'}</span>
+        </span>
+        <span class="line">
+          <b>{fmtGiB(sleep.pagedGiB)} GiB paged out</b>
+          {#if sleep.phase === 'waking'}<span class="dd"> · restoring</span>{:else if llm && llm.decodeTps > 0}<span class="dd"> · last {fmtTps(llm.decodeTps)} tok/s</span>{:else if lastJob}<span class="dd"> · last image {fmtJobS(lastJob.seconds)}</span>{/if}
+        </span>
+      </div>
+    {:else if mode === 'llm' && llm}
       <div class="drum"><Drum value={llm.decodeTps} intDigits={llm.decodeTps >= 99.95 ? 3 : 2} variant="mini" /></div>
       <span class="unit">tok/s</span>
     {:else if mode === 'prefill' && pf}
@@ -174,7 +224,7 @@
       {#if mode !== 'idle' && vm.vram.spillMiB > 0}
         <div class="read hotv">+{Math.round(vm.vram.spillMiB)} MiB spill</div>
       {:else}
-        <div class="read" class:hotv={mode === 'idle' && expected.length > 0 && spare < 0}>{fmtGiB(mode === 'idle' ? fitTotal : vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB</div>
+        <div class="read" class:quiet={!!sleep && sleep.phase !== 'waking'} class:hotv={mode === 'idle' && expected.length > 0 && spare < 0}>{fmtGiB(mode === 'idle' ? fitTotal : vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB</div>
       {/if}
     </div>
     <div class="cd">
@@ -208,7 +258,7 @@
       <span class="ltxt mono">{logLine || 'no log output'}</span>
     {:else}
       <span class="bl">{bar.label}</span>
-      <div class="bar"><LedBar fraction={bar.f} segments={36} label={bar.label} /></div>
+      <div class="bar"><LedBar fraction={bar.f} segments={36} label={bar.label} tone={bar.tone} /></div>
       <span class="bv">{bar.value}</span>
     {/if}
   </div>
@@ -223,6 +273,57 @@
     background-color: #1e1f22;
     background-image: var(--tex, none);
     background-size: 384px 384px;
+  }
+  /* corner control: invisible until hover / focus / tap, sits on the header rule, never over data */
+  .back {
+    position: absolute;
+    z-index: 3;
+    right: calc(24 * var(--u));
+    top: calc(12 * var(--u));
+    height: calc(48 * var(--u));
+    display: inline-flex;
+    align-items: center;
+    gap: calc(12 * var(--u));
+    padding: 0 calc(18 * var(--u)) 0 calc(14 * var(--u));
+    border: 1px solid #08090a;
+    border-radius: calc(5 * var(--u));
+    background: linear-gradient(180deg, #2c2d31, #1d1e21);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      0 0 0 calc(3 * var(--u)) #1e1f22;
+    color: var(--cream);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .back span {
+    font-weight: 500;
+    font-size: calc(26 * var(--u));
+    letter-spacing: 0.1em;
+    line-height: 1;
+  }
+  .back :global(.ic) {
+    stroke-width: 1.5;
+  }
+  .back:hover {
+    background: linear-gradient(180deg, #323337, #222326);
+  }
+  .back.tapped,
+  .back:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  @media (hover: hover) {
+    .mini:hover .back {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .back {
+      transition: none;
+    }
   }
   .top {
     position: absolute;
@@ -255,6 +356,14 @@
   }
   .ph.fault {
     color: var(--orange);
+  }
+  .zzd {
+    font-weight: 500;
+    font-size: calc(30 * var(--u));
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--amber);
+    white-space: nowrap;
   }
   .rule {
     flex: 1 1 auto;
@@ -383,6 +492,24 @@
   .msg.fault .big {
     color: var(--orange);
   }
+  .bigrow.zzrow {
+    justify-content: flex-start;
+    align-items: center;
+    gap: calc(26 * var(--u));
+  }
+  .msg.zz .big {
+    color: var(--amber);
+  }
+  .msg.zz .line {
+    color: var(--cream);
+  }
+  .msg.zz .line b {
+    font-weight: 600;
+  }
+  .msg.zz .dd {
+    color: var(--cream-2);
+    opacity: 0.8;
+  }
   .bigrow {
     display: flex;
     align-items: baseline;
@@ -425,6 +552,9 @@
     line-height: 1;
     white-space: nowrap;
     letter-spacing: -0.01em;
+  }
+  .read.quiet {
+    opacity: 0.6;
   }
   .cd {
     width: calc(224 * var(--u));

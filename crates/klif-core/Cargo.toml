@@ -1,0 +1,22 @@
+[package]
+name = "klif-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+klif-common = { path = "../klif-common" }
+klif-catalog = { path = "../klif-catalog" }
+klif-supervisor = { path = "../klif-supervisor" }
+klif-telemetry = { path = "../klif-telemetry" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+# GetLocalTime for session names (yyyyMMdd-HHmmss-fff, local time like the old GUI).
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
+
+[[bin]]
+name = "klif-cli"
+path = "src/bin/klif-cli.rs"

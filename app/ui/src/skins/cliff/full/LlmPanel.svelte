@@ -3,7 +3,8 @@
   import { fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../../lib/model/format';
   import Swell from '../Swell.svelte';
 
-  let { llm }: { llm: LlmLive } = $props();
+  /** `stale`: the GPU is asleep and nothing is running, so the hero is the last request's number, dimmed. */
+  let { llm, stale = false }: { llm: LlmLive; stale?: boolean } = $props();
 
   const SEGS = 16;
 
@@ -26,7 +27,7 @@
   const specOn = $derived(llm.spec ? Math.round((llm.spec.acceptancePct / 100) * SEGS) : 0);
 </script>
 
-<section class="hero">
+<section class="hero" class:stale>
   {#if pf}
     <!-- prompt processing is the news while it runs: progress, speed and time left, never "0.0 tok/s" -->
     <div class="c-lbl">Prefill<span class="q">{' · current request'}</span></div>
@@ -110,6 +111,11 @@
   }
   .q {
     color: var(--muted);
+  }
+  /* GPU asleep, nothing in flight: the last request's speed is history, not a reading */
+  .hero.stale .num,
+  .hero.stale .sw {
+    opacity: 0.5;
   }
   .row {
     display: flex;

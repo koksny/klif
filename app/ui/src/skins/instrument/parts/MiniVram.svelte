@@ -5,8 +5,11 @@
   // Modes as on the full dial: 'fit' = the idle preview (expected layers on the baseline, dashed,
   // needle at the expected total); 'fault' = the history above what is still resident drawn dashed,
   // with the fracture where it fell.
+  // Live while vram.dormant is set (the GPU asleep, the allocations paged out to system RAM): the needle
+  // drops to what is resident, a dashed ghost needle stays at the allocated total, the strata are
+  // outlines inside a dashed envelope and the history silhouette is dimmed.
   import type { GpuMemory, VramLayer } from '../../../lib/model/types';
-  import { VRAM_A0, VRAM_A1, clamp, polar, sectorPath } from '../theme';
+  import { VRAM_A0, VRAM_A1, clamp, polar, sectorPath, sleepOf } from '../theme';
 
   let {
     vram,
@@ -15,6 +18,7 @@
   }: { vram: GpuMemory; mode?: 'live' | 'fit' | 'fault'; fit?: { baseline: number; layers: VramLayer[] } | null } = $props();
 
   const isFit = $derived(mode === 'fit' && !!fit);
+  const sleep = $derived(mode === 'live' ? sleepOf(vram) : null);
   const layers = $derived.by<VramLayer[]>(() => {
     if (!isFit || !fit) return vram.layers;
     const base = Math.max(0, fit.baseline);
@@ -72,6 +76,15 @@
       fill: `M${BOX.x0},${BOX.base} L${BOX.x0},${y0} ${top.replace(/^M[^ ]+/, '')}${face} Z`,
     };
   });
+  // Asleep: the envelope of the allocations, a flat top at the allocated total with the same cliff face.
+  const envelope = $derived.by(() => {
+    if (!sleep) return null;
+    const yT = yOf(sleep.allocGiB);
+    const h = BOX.base - yT;
+    const face = ` C${BOX.xc + 16},${(yT + h * 0.15).toFixed(1)} ${BOX.xc + 24},${(BOX.base - h * 0.35).toFixed(1)} ${BOX.xc + 34},${(BOX.base - h * 0.1).toFixed(1)} C${BOX.xc + 40},${BOX.base - 2} ${BOX.xc + 48},${BOX.base} ${BOX.xc + 56},${BOX.base}`;
+    const top = `M${BOX.x0},${yT.toFixed(1)} L${BOX.xc},${yT.toFixed(1)}`;
+    return { fill: `M${BOX.x0},${BOX.base} L${BOX.x0},${yT.toFixed(1)} L${BOX.xc},${yT.toFixed(1)}${face} Z`, outline: `${top}${face}` };
+  });
   const bands = $derived.by(() => {
     let acc = 0;
     return layers.map((l, i) => {
@@ -84,6 +97,8 @@
   const TONES = ['rgba(237,230,214,0.07)', 'rgba(237,230,214,0.13)', 'rgba(237,230,214,0.05)', 'rgba(237,230,214,0.1)'];
   // The needle is drawn pointing at 9 o'clock (180 deg); turn it clockwise to A0, then by used/total.
   const needleDeg = $derived(180 - VRAM_A0 + (VRAM_A0 - VRAM_A1) * clamp(used / total));
+  const ghostDeg = $derived(sleep ? 180 - VRAM_A0 + (VRAM_A0 - VRAM_A1) * clamp(sleep.allocGiB / total) : 0);
+  const NEEDLE = `M${P.x + 30},${P.y} L${P.x + 20},${P.y - 9} L${P.x - 200},${P.y - 5.5} L${P.x - 214},${P.y} L${P.x - 200},${P.y + 5.5} L${P.x + 20},${P.y + 9} Z`;
 </script>
 
 <div class="dialbox">
@@ -98,6 +113,10 @@
       <stop offset="1" stop-color="#121315" />
     </radialGradient>
     <clipPath id="{uid}-l"><path d={land.fill} /></clipPath>
+    {#if envelope}<clipPath id="{uid}-e"><path d={envelope.fill} /></clipPath>{/if}
+    <pattern id="{uid}-hz" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="12" stroke="rgba(237,230,214,0.16)" stroke-width="3" />
+    </pattern>
   </defs>
   <!-- D-shaped housing: upper half dial on a short flat foot -->
   <path d="M{P.x - 266},{P.y} A266,266 0 0 1 {P.x + 266},{P.y} L{P.x + 266},318 Q{P.x + 266},328 {P.x + 256},328 L{P.x - 256},328 Q{P.x - 266},328 {P.x - 266},318 Z" fill="#0b0c0d" />
@@ -109,13 +128,25 @@
     <line x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} class="tk" />
   {/each}
 
-  <path d={land.fill} fill="rgba(0,0,0,0.18)" />
-  <g clip-path="url(#{uid}-l)">
-    {#each bands as b (b.i)}
-      <rect x={BOX.x0} y={b.y} width={BOX.xc - BOX.x0 + 80} height={Math.max(0, b.h)} fill={TONES[b.i % TONES.length]} />
-    {/each}
-  </g>
-  <path d={land.outline} class="outline" class:dash={mode !== 'live'} />
+  {#if envelope}
+    <!-- asleep: allocations hatched where they are not resident, strata as dashed lines, dim resident history -->
+    <path d={envelope.fill} fill="url(#{uid}-hz)" />
+    <path d={land.fill} fill="rgba(30,31,34,0.7)" />
+    <g clip-path="url(#{uid}-e)">
+      {#each bands as b (b.i)}
+        {#if b.h >= 4}<line x1={BOX.x0} x2={BOX.xc + 80} y1={b.y} y2={b.y} class="stratum" />{/if}
+      {/each}
+    </g>
+    <path d={envelope.outline} class="envline" />
+  {:else}
+    <path d={land.fill} fill="rgba(0,0,0,0.18)" />
+    <g clip-path="url(#{uid}-l)">
+      {#each bands as b (b.i)}
+        <rect x={BOX.x0} y={b.y} width={BOX.xc - BOX.x0 + 80} height={Math.max(0, b.h)} fill={TONES[b.i % TONES.length]} />
+      {/each}
+    </g>
+  {/if}
+  <path d={land.outline} class="outline" class:dash={mode !== 'live'} class:resident={!!sleep} />
   {#if mode !== 'fit' && vram.spillMiB > 0}
     <!-- material that went over the edge: demoted to shared memory, same GiB axis -->
     {@const sh = Math.max(5, (vram.spillMiB / 1024 / total) * H)}
@@ -127,6 +158,14 @@
   {/if}
 
 </svg>
+{#if sleep}
+  <div class="nlayer" style="transform: rotate({ghostDeg}deg); transform-origin: {(P.x / 540) * 100}% {(P.y / 330) * 100}%" aria-hidden="true">
+    <svg class="mv" viewBox="0 0 540 330">
+      <path d={NEEDLE} class="gneedle" />
+      <circle cx={P.x} cy={P.y} r="20" class="ghub" />
+    </svg>
+  </div>
+{/if}
 <div class="nlayer" style="transform: rotate({needleDeg}deg); transform-origin: {(P.x / 540) * 100}% {(P.y / 330) * 100}%" aria-hidden="true">
   <svg class="mv" viewBox="0 0 540 330">
     <path d="M{P.x + 30},{P.y} L{P.x + 20},{P.y - 9} L{P.x - 200},{P.y - 5.5} L{P.x - 214},{P.y} L{P.x - 200},{P.y + 5.5} L{P.x + 20},{P.y + 9} Z" fill="#0c0d0e" />
@@ -168,6 +207,36 @@
   }
   .spill {
     fill: #ff6b2c;
+  }
+  .outline.resident {
+    stroke: rgba(237, 230, 214, 0.5);
+    stroke-width: 4.5;
+  }
+  .envline {
+    fill: none;
+    stroke: #ede6d6;
+    stroke-width: 5;
+    stroke-dasharray: 14 10;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .stratum {
+    stroke: rgba(237, 230, 214, 0.5);
+    stroke-width: 3;
+    stroke-dasharray: 10 9;
+  }
+  .gneedle {
+    fill: rgba(11, 12, 13, 0.6);
+    stroke: #ede6d6;
+    stroke-width: 4.5;
+    stroke-dasharray: 11 8;
+    stroke-linejoin: round;
+  }
+  .ghub {
+    fill: none;
+    stroke: #ede6d6;
+    stroke-width: 4.5;
+    stroke-dasharray: 8 7;
   }
   .floorline {
     stroke: #ede6d6;

@@ -1,8 +1,8 @@
 // Scenario registry. A scenario is a deterministic starting script for the mock engine plus the moment
 // at which the first frame is taken (so every skin can be looked at in the state it needs).
 import { SAMPLE_NOW } from '../model/sample';
-import type { SlotId, ViewModel } from '../model/types';
-import { MockEngine, type EngineHooks, type Extras } from './engine';
+import type { SlotId, ViewModel, VramLayer } from '../model/types';
+import { MockEngine, type DormantOpts, type EngineHooks } from './engine';
 import { browserHost } from './host';
 import { hashSeed } from './rng';
 
@@ -22,6 +22,8 @@ export interface ScenarioDef {
   shotUntil?: (vm: ViewModel) => boolean;
   /** Upper bound of the search, simulated seconds from t=0. */
   searchS?: number;
+  /** Simulated seconds per search step (default 0.5); finer when the frame to catch is brief. */
+  searchStepS?: number;
 }
 
 const llmDecoding = (vm: ViewModel) => {
@@ -64,6 +66,61 @@ function live(slot: SlotId, name: string, label: string, blurb: string, until: (
     startT: 600,
     startUntil: liveSession(slot, until),
     searchS: 3600,
+  };
+}
+
+/**
+ * Agent Medium with the 9070 XT asleep between requests (AMD ULPS, device state D3). The allocations are
+ * what the real session held (llama-server, 98k context); the device drives no display, so ~12 s after
+ * the last request the driver pages the VRAM out to system RAM and the next request waits ~4 s for it.
+ */
+const DORMANT_SESSION: DormantOpts = {
+  layers: [
+    { id: 'weights', label: 'weights', gib: 10.87 },
+    { id: 'kv', label: 'KV cache', gib: 3.62 },
+    { id: 'buffers', label: 'buffers', gib: 0.46 },
+    { id: 'draft', label: 'draft', gib: 0.45 },
+  ] satisfies VramLayer[],
+  periodS: 40,
+  firstInS: 4,
+};
+
+/** The GPU is fully asleep (VRAM paged out, nothing resident) and has been for a few seconds. */
+const gpuAsleep = (vm: ViewModel) => {
+  const d = vm.vram.dormant;
+  const l = vm.session?.llm;
+  return vm.session?.phase === 'live' && !!d && vm.vram.usedGiB < 0.05 && d.sinceS >= 9 && !!l && l.activity === 'idle' && l.requests.length >= 3;
+};
+
+/** Mid-wake: a request is waiting at 0 tok/s while about 7 GiB of the VRAM have been restored (~8.4 still paged out). */
+const gpuWaking = (vm: ViewModel) => {
+  const d = vm.vram.dormant;
+  const l = vm.session?.llm;
+  return (
+    vm.session?.phase === 'live' &&
+    !!d &&
+    !!l &&
+    l.activity === 'prefill' &&
+    l.prefill?.doneTokens === 0 &&
+    l.requests.length >= 2 &&
+    vm.vram.usedGiB >= 6.9 &&
+    vm.vram.usedGiB < 7.2
+  );
+};
+
+function dormantScenario(name: string, label: string, blurb: string, until: (vm: ViewModel) => boolean, searchStepS?: number): ScenarioDef {
+  return {
+    name,
+    label,
+    blurb,
+    setup: (e) => {
+      e.select('medium');
+      e.launch('medium', { skipBoot: true, uptimeOffsetS: 1800, dormant: DORMANT_SESSION });
+    },
+    startT: 0,
+    startUntil: until,
+    searchS: 400,
+    ...(searchStepS ? { searchStepS } : {}),
   };
 }
 
@@ -142,6 +199,19 @@ export const SCENARIOS: ScenarioDef[] = [
     }),
     searchS: 3600,
   },
+  dormantScenario(
+    'dormant',
+    'Dormant: GPU asleep (Agent Medium)',
+    'The 9070 XT drives no display, so ULPS puts it in D3 ~12 s after the last request: allocations stay, Dedicated Usage falls to ~0 (paged out to RAM). Every ~40 s a request wakes it: ~4 s at 0 tok/s while VRAM is restored. Freezes while asleep.',
+    gpuAsleep,
+  ),
+  dormantScenario(
+    'waking',
+    'Waking: restore in flight (Agent Medium)',
+    'The same session frozen mid-wake: a request is waiting at 0 tok/s, ~7 GiB of the VRAM restored, ~8.4 GiB still paged out.',
+    gpuWaking,
+    0.05,
+  ),
   live('low', 'live-low', 'Live: Agent Low (Gemma)', 'Gemma 4 26B-A4B: measured ~76-92 tok/s decode; request mix scaled to a 16k context (prefill speed estimated).', (vm) => {
     const l = vm.session?.llm;
     return !!l && l.activity === 'decode' && l.requests.length >= 4;
@@ -199,7 +269,6 @@ export function scenarioDef(name: string | null | undefined): ScenarioDef | null
 
 export interface BuildCtx {
   hooks: EngineHooks;
-  extras: (slot: SlotId) => Extras;
   /** shot=1: fixed epoch so snapshots are reproducible. */
   shot: boolean;
   /** ?frameless=1: the skin must draw its own window controls. */
@@ -212,7 +281,7 @@ export interface BuildCtx {
 /** Create the engine for a scenario and fast-forward it to its first frame. */
 export function buildEngine(def: ScenarioDef, ctx: BuildCtx): MockEngine {
   const epoch0 = ctx.shot ? SAMPLE_NOW : Math.floor(Date.now() / 1000);
-  const e = new MockEngine(epoch0, hashSeed(def.name) ^ ctx.seed, ctx.hooks, ctx.extras);
+  const e = new MockEngine(epoch0, hashSeed(def.name) ^ ctx.seed, ctx.hooks);
   e.host = browserHost(ctx.frameless);
   def.setup(e);
   if (ctx.t !== null) {
@@ -223,7 +292,8 @@ export function buildEngine(def: ScenarioDef, ctx: BuildCtx): MockEngine {
   const until = ctx.shot ? (def.shotUntil ?? def.startUntil) : def.startUntil;
   if (until) {
     const limit = def.searchS ?? 900;
-    while (e.t < limit && !until(e.snapshot())) e.fastForward(e.t + 0.5);
+    const step = def.searchStepS ?? 0.5;
+    while (e.t < limit && !until(e.snapshot())) e.fastForward(e.t + step);
   }
   return e;
 }

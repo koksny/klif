@@ -15,10 +15,15 @@
   //   fault - the session died: the history above what is still resident is drawn as a dashed ghost,
   //           the collapse is the fracture in the history, and the rubble at its foot scales with the
   //           GiB that fell (labelled).
+  //   sleep - (live mode, vram.dormant set) the GPU powered down with the model loaded: the allocations
+  //           still exist but are paged out to system RAM. The pointer drops to what is resident (usedGiB)
+  //           while a dashed ghost pointer stays at the allocated total; the strata (the allocations,
+  //           stacked on the same GiB axis) are outlines inside a dashed envelope, and an amber lamp prints
+  //           SLEEP (WAKING while the amount resident is climbing back) with the GiB paged out.
   import { onMount } from 'svelte';
   import type { GpuMemory, VramLayer } from '../../../lib/model/types';
   import { fmtGiB } from '../../../lib/model/format';
-  import { VRAM_FULL_A0 as A0, VRAM_FULL_A1 as A1, clamp, fmtLayer, polar, rockTexture, sectorPath } from '../theme';
+  import { VRAM_FULL_A0 as A0, VRAM_FULL_A1 as A1, clamp, fmtLayer, polar, rockTexture, sectorPath, sleepDetail, sleepOf, sleepWord } from '../theme';
 
   let {
     vram,
@@ -49,6 +54,7 @@
 
   const isFit = $derived(mode === 'fit' && !!fit);
   const isFault = $derived(mode === 'fault');
+  const sleep = $derived(mode === 'live' ? sleepOf(vram) : null);
   const layers = $derived.by<VramLayer[]>(() => {
     if (!isFit || !fit) return vram.layers;
     const base = Math.max(0, fit.baseline);
@@ -58,12 +64,15 @@
   const total = $derived(Math.max(0.01, vram.totalGiB));
   const used = $derived(isFit ? layers.reduce((a, l) => a + Math.max(0, l.gib), 0) : Math.max(0, vram.usedGiB));
   const hist = $derived(isFit ? [used, used] : vram.history.length ? vram.history : [used]);
-  const free = $derived(Math.max(0, total - used));
+  // Free headroom is measured against the allocations: a paged-out model still owns its VRAM.
+  const free = $derived(Math.max(0, total - (sleep ? Math.max(used, sleep.allocGiB) : used)));
   const spare = $derived(total - used);
   const warn = $derived(Math.max(0, Math.min(vram.warnBelowGiB, total)));
   const warnOn = $derived(free < warn);
   // The pointer is drawn at A0 (0 GiB) and turned clockwise by used/total of the sweep.
   const needleDeg = $derived((A0 - A1) * clamp(used / total));
+  // Asleep: the ghost pointer stays where the allocations put it.
+  const ghostDeg = $derived(sleep ? (A0 - A1) * clamp(sleep.allocGiB / total) : 0);
 
   const ang = (g: number) => A0 - (A0 - A1) * clamp(g / total);
   const yOf = (g: number) => BOX.bottom - clamp(g / total, 0, 1.02) * BOXH;
@@ -143,11 +152,13 @@
       // In-band labels sit at the left as in the mockup, but only over solid rock: start after the
       // last history sample (oldest first) that dipped below this band's top.
       let k = N - 1;
-      while (k > 0 && hist[k - 1] >= acc - 0.02) k--;
+      // Asleep the strata are the allocations, not the resident history: labels sit over the envelope.
+      if (sleep) k = 0;
+      else while (k > 0 && hist[k - 1] >= acc - 0.02) k--;
       const solidX = xOf(k, N);
       const text = `${l.label}  ${fmtLayer(l.gib)}`;
       const textW = text.length * 17;
-      const lx = Math.max(BOX.x0 + 40, solidX + 28);
+      const lx = Math.max(BOX.x0 + (sleep ? 92 : 40), solidX + 28);
       const left = XC - 24 - lx >= textW;
       // Too little solid rock for the label either way (a dipping history): it becomes a callout.
       const inBand = yLo - yHi >= LABEL_MIN_H && (left || XC - 26 - textW >= solidX + 6);
@@ -180,6 +191,19 @@
       out.push({ text: b.text, pts: `${XC + 6},${b.mid} ${ex},${b.mid} ${ex},${y - 10} ${ex + 10},${y - 10}`, dx: XC + 6, dy: b.mid, ty: y });
     }
     return out;
+  });
+
+  // Asleep: the envelope of the allocations (flat top at the allocated total, the same cliff face), drawn
+  // dashed; the strata lines inside it are clipped to it.
+  const envelope = $derived.by(() => {
+    if (!sleep) return null;
+    const yT = yOf(sleep.allocGiB);
+    const H = BOX.bottom - yT;
+    const face =
+      ` C${XC + 14},${(yT + H * 0.22).toFixed(1)} ${XC + 20},${(BOX.bottom - H * 0.3).toFixed(1)} ${XC + 36},${(BOX.bottom - H * 0.09).toFixed(1)}` +
+      ` C${XC + 50},${BOX.bottom - 3} ${XC + 74},${BOX.bottom} ${XC + 98},${BOX.bottom}`;
+    const top = `M${BOX.x0},${yT.toFixed(1)} L${XC},${yT.toFixed(1)}`;
+    return { fill: `M${BOX.x0},${BOX.bottom} L${BOX.x0},${yT.toFixed(1)} L${XC},${yT.toFixed(1)}${face} Z`, outline: `${top}${face}`, yT };
   });
 
   // Free headroom: a dimension at the cliff edge from the capacity line down to the plateau top.
@@ -256,14 +280,16 @@
   })();
 
   const aria = $derived(
-    isFit
+    sleep
+      ? `${title}: GPU asleep, ${fmtGiB(used)} of ${fmtGiB(total)} GiB resident, ${fmtGiB(sleep.pagedGiB)} GiB paged out to system memory`
+      : isFit
       ? `${title} fit preview: ${fmtGiB(used)} of ${fmtGiB(total)} GiB expected, ${spare >= 0 ? `${fmtGiB(spare)} GiB spare` : `${fmtGiB(-spare)} GiB over`}`
       : `${title}: ${fmtGiB(used)} of ${fmtGiB(total)} GiB used, ${fmtGiB(free)} GiB free`,
   );
 </script>
 
 <div class="dialbox">
-<svg class="vram" class:fit={isFit} class:fault={isFault} viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet" role="img" aria-label={aria}>
+<svg class="vram" class:fit={isFit} class:fault={isFault} class:sleep={!!sleep} viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet" role="img" aria-label={aria}>
   <defs>
     <linearGradient id="{uid}-bezel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#3b3c40" />
@@ -288,6 +314,12 @@
       <line x1="0" y1="0" x2="0" y2="14" stroke="rgba(237,230,214,0.09)" stroke-width="3" />
     </pattern>
     <clipPath id="{uid}-land"><path d={land.fill} /></clipPath>
+    {#if envelope}<clipPath id="{uid}-env"><path d={envelope.fill} /></clipPath>{/if}
+    <radialGradient id="{uid}-amber" cx="50%" cy="42%" r="60%">
+      <stop offset="0" stop-color="#fff0c8" />
+      <stop offset="0.5" stop-color="#ffb02e" />
+      <stop offset="1" stop-color="#d98a0a" />
+    </radialGradient>
     {#if rock}
       <pattern id="{uid}-rock" width="256" height="256" patternUnits="userSpaceOnUse">
         <image href={rock} width="256" height="256" />
@@ -311,6 +343,16 @@
   {/each}
 
   <text x={C} y="238" class="title">{title}</text>
+  {#if sleep}
+    <!-- the SLEEP lamp: amber, breathing while the GPU is waking up -->
+    <g class="lamp" class:wake={sleep.phase === 'waking'}>
+      <title>{sleepDetail(sleep)}</title>
+      <circle cx="602" cy="218" r="24" fill="#0b0c0d" />
+      <circle cx="602" cy="218" r="19" class="lens" fill="url(#{uid}-amber)" />
+      <circle cx="596" cy="211" r="5" fill="rgba(255,255,255,0.55)" />
+    </g>
+    <text x="636" y="230" class="sleepword">{sleepWord(sleep)}</text>
+  {/if}
   {#if isFit}
     <text x={C} y="296" class="sub">{vram.device} · {fmtGiB(total)} GiB</text>
     <text x={C} y="346" class="fitlbl">FIT PREVIEW</text>
@@ -319,6 +361,10 @@
   {/if}
 
   <!-- the cliff -->
+  {#if envelope}
+    <!-- asleep: the allocations are hatched where they are not resident; the solid body below is what was -->
+    <path d={envelope.fill} fill="url(#{uid}-hatch)" />
+  {/if}
   {#if isFault}
     <!-- what was resident before the collapse: a dashed ghost -->
     <path d={land.fill} fill="url(#{uid}-hatch)" />
@@ -326,18 +372,28 @@
   {:else}
     <path d={land.fill} fill="#3b3935" class="landfill" />
   {/if}
-  <g clip-path="url(#{uid}-land)" class="strata">
-    {#each bands as b (b.i)}
-      <rect x={BOX.x0} y={b.yHi} width={BOX.x1 - BOX.x0 + 120} height={Math.max(0, b.h)} fill={TONES[b.i % TONES.length]} />
-    {/each}
-    {#if rock}<rect x={BOX.x0} y={BOX.top - 20} width={BOX.x1 - BOX.x0 + 120} height={BOXH + 40} fill="url(#{uid}-rock)" opacity={isFault ? 0.25 : 0.55} />{/if}
-    <rect x={BOX.x0} y={BOX.top - 20} width={BOX.x1 - BOX.x0 + 120} height={BOXH + 40} fill="url(#{uid}-wash)" />
-    {#if !isFault}<rect x={XC - 36} y={BOX.top - 20} width="140" height={BOXH + 40} fill="url(#{uid}-facet)" />{/if}
-    {#each bands as b (b.i)}
-      <line x1={BOX.x0} x2={BOX.x1 + 120} y1={b.yHi} y2={b.yHi} class="stratum" />
-    {/each}
-  </g>
-  <path d={land.top} class="ridge" class:dash={isFit || isFault} />
+  {#if envelope}
+    <!-- asleep: what was resident is a plain dim body (no rock); the strata (allocations) are outlines only -->
+    <g clip-path="url(#{uid}-env)" class="strata">
+      {#each bands as b (b.i)}
+        <line x1={BOX.x0} x2={BOX.x1 + 120} y1={b.yHi} y2={b.yHi} class="stratum ghostline" />
+      {/each}
+    </g>
+    <path d={envelope.outline} class="envline" />
+  {:else}
+    <g clip-path="url(#{uid}-land)" class="strata">
+      {#each bands as b (b.i)}
+        <rect x={BOX.x0} y={b.yHi} width={BOX.x1 - BOX.x0 + 120} height={Math.max(0, b.h)} fill={TONES[b.i % TONES.length]} />
+      {/each}
+      {#if rock}<rect x={BOX.x0} y={BOX.top - 20} width={BOX.x1 - BOX.x0 + 120} height={BOXH + 40} fill="url(#{uid}-rock)" opacity={isFault ? 0.25 : 0.55} />{/if}
+      <rect x={BOX.x0} y={BOX.top - 20} width={BOX.x1 - BOX.x0 + 120} height={BOXH + 40} fill="url(#{uid}-wash)" />
+      {#if !isFault}<rect x={XC - 36} y={BOX.top - 20} width="140" height={BOXH + 40} fill="url(#{uid}-facet)" />{/if}
+      {#each bands as b (b.i)}
+        <line x1={BOX.x0} x2={BOX.x1 + 120} y1={b.yHi} y2={b.yHi} class="stratum" />
+      {/each}
+    </g>
+  {/if}
+  <path d={land.top} class="ridge" class:dash={isFit || isFault} class:resident={!!sleep} />
   {#if !isFault}
     <path d={land.face} class="faceglow" class:hot={warnOn} />
     <path d={land.face} class="face" class:hot={warnOn} class:dash={isFit} />
@@ -353,7 +409,10 @@
   <!-- capacity line and the dimensioned free headroom -->
   <line x1={BOX.x0} x2={XC + 30} y1={BOX.top} y2={BOX.top} class="cap" />
   {#if !isFit}
-    <text x={XC - 4} y={BOX.top - 30} class="free" class:hot={warnOn} text-anchor="end">{fmtGiB(free)} GiB free</text>
+    <text x={XC - 4} y={BOX.top - 30} class="free" class:hot={warnOn} class:quiet={!!sleep} text-anchor="end">{fmtGiB(free)} GiB free</text>
+    {#if sleep}
+      <text x="236" y={BOX.top - 30} class="paged">paged out {fmtGiB(sleep.pagedGiB)} GiB</text>
+    {/if}
   {/if}
   {#if !isFit}
     <polyline points="{XC - 128},{BOX.top - 16} {XC + 8},{BOX.top - 16} {XC + 8},{dimY1 - 3}" class="dim" />
@@ -398,8 +457,18 @@
         height={Math.max(5, (vram.spillMiB / 1024 / total) * BOXH)} class="spillpile" />
     {/if}
     <text x={C} y="822" class="spill" class:hot={vram.spillMiB > 0}>spill to shared memory: {Math.round(vram.spillMiB)} MiB</text>
+    {#if sleep}<text x={C} y="884" class="sleepline">{sleepDetail(sleep)}</text>{/if}
   {/if}
 </svg>
+{#if sleep}
+  <!-- Ghost pointer: dashed outline standing at the allocated total while the real one sits at what is resident. -->
+  <div class="nlayer" style="transform: rotate({ghostDeg}deg)" aria-hidden="true">
+    <svg class="vram" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet">
+      <polygon points={ptr.shaft} class="gshaft" />
+      <circle cx={ptr.hx} cy={ptr.hy} r="15" class="ghub" />
+    </svg>
+  </div>
+{/if}
 <!-- Pointer on its own layer (a composited CSS rotation; the printed face is never repainted).
      It rests at 0 GiB and turns clockwise by used/total of the sweep around the dial centre. -->
 <div class="nlayer" style="transform: rotate({needleDeg}deg)" aria-hidden="true">
@@ -624,6 +693,89 @@
   }
   .spillpile {
     fill: #ff6b2c;
+  }
+  /* asleep: the SLEEP lamp, the dashed allocation envelope and ghost pointer, outline-only strata */
+  .lamp .lens {
+    filter: drop-shadow(0 0 9px rgba(255, 176, 46, 0.75));
+  }
+  .lamp.wake .lens {
+    animation: breathe 1.1s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    50% {
+      opacity: 0.4;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lamp.wake .lens {
+      animation: none;
+    }
+  }
+  .sleepword {
+    fill: #ffb02e;
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: 3px;
+  }
+  .paged {
+    fill: #ffb02e;
+    font-size: 33px;
+    font-weight: 500;
+    letter-spacing: 1px;
+  }
+  .sleepline {
+    fill: rgba(255, 176, 46, 0.85);
+    font-size: 30px;
+    font-weight: 500;
+    letter-spacing: 1.5px;
+    text-anchor: middle;
+  }
+  .free.quiet {
+    fill: rgba(237, 230, 214, 0.5);
+  }
+  .sleep .landfill {
+    fill: rgba(59, 57, 53, 0.62);
+  }
+  .sleep .dim {
+    stroke: rgba(237, 230, 214, 0.42);
+  }
+  .sleep .arrow {
+    fill: rgba(237, 230, 214, 0.5);
+  }
+  .envline {
+    fill: none;
+    stroke: rgba(237, 230, 214, 0.78);
+    stroke-width: 3.4;
+    stroke-dasharray: 10 7;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .stratum.ghostline {
+    stroke: rgba(237, 230, 214, 0.5);
+    stroke-width: 2.4;
+    stroke-dasharray: 8 7;
+  }
+  .ridge.resident {
+    stroke: rgba(221, 214, 198, 0.55);
+  }
+  .sleep .layer {
+    fill: rgba(241, 235, 221, 0.78);
+  }
+  .sleep .layer.small {
+    fill: rgba(237, 230, 214, 0.7);
+  }
+  .gshaft {
+    fill: rgba(11, 12, 13, 0.55);
+    stroke: rgba(237, 230, 214, 0.92);
+    stroke-width: 3.4;
+    stroke-dasharray: 7 6;
+    stroke-linejoin: round;
+  }
+  .ghub {
+    fill: none;
+    stroke: rgba(237, 230, 214, 0.85);
+    stroke-width: 3;
+    stroke-dasharray: 5 5;
   }
   .dialbox {
     position: relative;

@@ -10,6 +10,7 @@ import type {
   LoadProgress,
   ModelRef,
   Phase,
+  Recipe,
   Session,
   Slot,
   SlotId,
@@ -20,10 +21,11 @@ import type {
 } from '../model/types';
 import { SLOTS } from '../model/sample';
 import { bootLines, bootView, planBoot, type BootLine, type BootPlan } from './boot';
-import { expectedLayers, fitLayers } from './catalog';
+import { applyPatch, DEFAULT_RECIPES, expectedLayers, fitLayers, slotWithRecipe } from './catalog';
 import { ConsoleBuf, llamaTs } from './consoleBuf';
 import { failSteps, makeFault, POWERSHELL_FAIL_STDERR, ROCM_CRASH_STDERR, ROCM_EXIT_CODE, type FaultKind } from './faults';
 import { browserHost } from './host';
+import { GpuPower, type PowerCfg } from './gpupower';
 import { ImageSim } from './imageSim';
 import { LlmSim } from './llmSim';
 import { bootDurations, defaultPort, deviceDetail, imageConfig, llmConfig, ramFootprintGiB } from './profiles';
@@ -51,14 +53,11 @@ const DEMOTE_ORDER: VramLayerId[] = ['buffers', 'kv', 'draft', 'projector', 'wei
 export interface EngineHooks {
   toast(text: string): void;
   toggleConsole(open?: boolean): void;
+  /** Panel mode in a browser: switch the layout override between the mini panel and the full window. */
+  togglePanel(): void;
   openTune(slot?: SlotId): void;
   copy(text: string, toastText: string): void;
   openUrl(url: string): void;
-}
-
-export interface Extras {
-  promptCacheMiB: number;
-  port: number;
 }
 
 export interface LaunchOpts {
@@ -75,6 +74,21 @@ export interface LaunchOpts {
   crashOnJob?: number;
   /** LLM: compute buffers swell with the prefill progress until the demand passes the VRAM edge (spill). */
   spill?: boolean;
+  /**
+   * LLM: the GPU powers down (AMD ULPS, device state D3) ~12 s after the last request and the next request
+   * waits ~4 s while the VRAM is restored from system RAM. See gpupower.ts and GpuMemory.dormant.
+   */
+  dormant?: DormantOpts;
+}
+
+export interface DormantOpts {
+  /** The session's allocations on the device (baseline NOT included), as measured on the real machine. */
+  layers: VramLayer[];
+  /** Seconds between request arrivals (default 40). */
+  periodS?: number;
+  /** The first request arrives this long after t=0 (default 4). */
+  firstInS?: number;
+  power?: Partial<PowerCfg>;
 }
 
 /** The previous session, kept by the engine; endedAgoS is derived from the clock at snapshot time. */
@@ -105,6 +119,8 @@ interface SessionRt {
   act: number;
   /** Extra compute-buffer demand in GiB (spill scenario). */
   swell: number;
+  /** The GPU's power state (dormant scenarios), else null. */
+  power: GpuPower | null;
   seed: number;
 }
 
@@ -112,7 +128,9 @@ const r1 = (v: number) => Math.round(v * 10) / 10;
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 function cloneSlot(s: Slot): Slot {
-  return { ...s, model: { ...s.model }, expectedVram: s.expectedVram?.map((l) => ({ ...l })) };
+  const c: Slot = { ...s, model: { ...s.model }, expectedVram: s.expectedVram?.map((l) => ({ ...l })) };
+  if (s.recipe) c.recipe = { ...s.recipe };
+  return c;
 }
 
 function idSums(layers: VramLayer[]): Record<VramLayerId, number> {
@@ -166,6 +184,8 @@ export class MockEngine {
 
   private slots: Slot[];
   private slotsSnap: Slot[];
+  /** What each tier launches (the Tune drawer changes it with setRecipe). */
+  private recipes: Record<SlotId, Recipe> = { ...DEFAULT_RECIPES };
   private rt: SessionRt | null = null;
   private lastRec: LastRec | null = null;
   private rng: Rng;
@@ -190,6 +210,8 @@ export class MockEngine {
   private vramAccT = 0;
   private layersNow: VramLayer[] = [{ id: 'other', label: 'other', gib: BASE_VRAM }];
   private sessionNow: VramLayer[] = [];
+  /** What is resident right now: layersNow, except while the GPU is dormant (then layersNow = allocations). */
+  private residentNow: VramLayer[] = [{ id: 'other', label: 'other', gib: BASE_VRAM }];
   private spillNow = 0;
 
   private cpu = 3;
@@ -199,11 +221,10 @@ export class MockEngine {
     private readonly epoch0: number,
     seed: number,
     private readonly hooks: EngineHooks,
-    private readonly extras: (slot: SlotId) => Extras,
   ) {
     this.seed = seed;
     this.rng = createRng(seed);
-    this.slots = SLOTS.map(cloneSlot);
+    this.slots = SLOTS.map((s) => slotWithRecipe(s, this.recipes[s.id]));
     this.slotsSnap = this.slots.map(cloneSlot);
     this.actions = {
       select: (slot) => this.select(slot),
@@ -216,9 +237,11 @@ export class MockEngine {
       toggleConsole: (open) => this.hooks.toggleConsole(open),
       openTune: (slot) => this.hooks.openTune(slot ?? this.selected),
       dismiss: () => this.dismiss(),
+      setRecipe: (slot, patch) => this.setRecipe(slot, patch),
       minimize: () => this.windowControl(),
       toggleMaximize: () => this.windowControl(),
       closeWindow: () => this.windowControl(),
+      togglePanel: () => this.hooks.togglePanel(),
     };
   }
 
@@ -248,12 +271,12 @@ export class MockEngine {
     return this.rt?.phase ?? null;
   }
 
-  /** Replace the model behind a slot (Tune drawer). A running session keeps the settings it started with. */
-  setSlotModel(slot: SlotId, model: ModelRef) {
-    const s = this.slots.find((x) => x.id === slot);
-    if (!s) return;
-    s.model = { ...model };
-    s.expectedVram = expectedLayers(model);
+  /** Change what a slot launches (Tune drawer). A running session keeps the recipe it started with. */
+  setRecipe(slot: SlotId, patch: Partial<Recipe>) {
+    const i = this.slots.findIndex((x) => x.id === slot);
+    if (i < 0) return;
+    this.recipes[slot] = applyPatch(this.slots[i].kind, this.recipes[slot], patch);
+    this.slots[i] = slotWithRecipe(this.slots[i], this.recipes[slot]);
     this.slotsSnap = this.slots.map(cloneSlot);
   }
 
@@ -291,7 +314,7 @@ export class MockEngine {
     const slot = this.slots.find((s) => s.id === id);
     if (!slot) return;
     if (slot.availability !== 'ready') {
-      this.hooks.toast(`${slot.label} cannot start: ${slot.availability}.`);
+      this.hooks.toast(`${slot.label} cannot start: ${slot.reason ?? `${slot.availability}.`}`);
       return;
     }
     // Launching over a faulted session ends that one (it becomes the "last session").
@@ -301,12 +324,12 @@ export class MockEngine {
     this.pendingLaunch = null;
     const model: ModelRef = { ...slot.model };
     const kind = slot.kind;
-    const x = this.extras(id);
+    const port = this.recipes[id].port ?? 0;
     const sRng = createRng(hashSeed(`${this.seed}:${this.sessionNo}:${id}`));
     const d = bootDurations(model, sRng);
     // The loader trims its compute buffers to squeeze under the edge before anything spills.
     const target = fitLayers(expectedLayers(model), this.baseline, VRAM_TOTAL).layers;
-    const plan = planBoot(d, kind, model, target, deviceDetail(model), x.port || defaultPort(id));
+    const plan = planBoot(d, kind, model, target, deviceDetail(model), port || defaultPort(id));
     const rt: SessionRt = {
       slot: id,
       model,
@@ -325,9 +348,10 @@ export class MockEngine {
       fault: null,
       faultAt: 0,
       stopT: 0,
-      layers: target,
+      layers: opts.dormant ? opts.dormant.layers.map((l) => ({ ...l })) : target,
       act: 0.3,
       swell: 0,
+      power: opts.dormant ? new GpuPower(opts.dormant.power) : null,
       seed: hashSeed(`${this.seed}:${this.sessionNo}`),
     };
     this.rt = rt;
@@ -352,8 +376,8 @@ export class MockEngine {
       return;
     }
     if (s.phase === 'stopping') return;
-    // Shrink from whatever is resident right now.
-    s.layers = this.sessionNow.map((l) => ({ ...l }));
+    // Shrink from whatever is resident right now (nothing much, if the GPU is asleep).
+    s.layers = this.residentNow.slice(1).map((l) => ({ ...l }));
     s.phase = 'stopping';
     s.phaseT = this.t;
     s.stopT = this.t;
@@ -453,7 +477,16 @@ export class MockEngine {
     const rng = createRng(s.seed);
     const clock = () => ({ epoch: this.epoch0 + this.t, sessionT: this.t - s.t0 - s.procOffset });
     if (s.plan.kind === 'llm') {
-      s.llm = new LlmSim(llmConfig(s.model, { big: s.opts.big }), rng, this.console, clock);
+      const cfg = llmConfig(s.model, { big: s.opts.big });
+      const d = s.opts.dormant;
+      if (d) {
+        cfg.paced = { periodS: d.periodS ?? 40, jitterS: 2, firstInS: d.firstInS ?? 4, maxNewTokens: 1800, maxGenTokens: 280 };
+      }
+      s.llm = new LlmSim(cfg, rng, this.console, clock);
+      if (s.power) {
+        const power = s.power;
+        s.llm.blocked = () => power.dormant;
+      }
     } else {
       s.image = new ImageSim(imageConfig(s.opts.crashOnJob), rng, this.console, () => this.epoch0 + this.t);
     }
@@ -461,6 +494,7 @@ export class MockEngine {
 
   private stepLive(s: SessionRt, h: number) {
     s.llm?.step(h);
+    s.power?.step(h, this.t, !!s.llm && s.llm.activity !== 'idle');
     if (s.image) {
       s.image.step(h);
       if (s.image.crashed) this.fail(s, 'rocm-crash');
@@ -558,6 +592,8 @@ export class MockEngine {
     this.layersNow = res.layers;
     this.sessionNow = res.layers.slice(1);
     this.spillNow = res.spillMiB;
+    const power = this.rt?.phase === 'live' ? this.rt.power : null;
+    this.residentNow = power && power.dormant ? power.resident(res.layers) : res.layers;
   }
 
   /** A session that is "already running" at t=0 also has a past: fill the history with its steady state. */
@@ -613,6 +649,8 @@ export class MockEngine {
         }
         case 'live': {
           ramT = RAM_BASE + foot;
+          // What the driver paged out of VRAM sits in system RAM until the next request restores it.
+          if (s.power) ramT += s.power.cfg.pagedOutGiB * (1 - s.power.res);
           if (s.llm) cpuT = s.llm.activity === 'prefill' ? 13 : s.llm.activity === 'decode' ? 6 : 2.5;
           else if (s.image) cpuT = s.image.activity === 'generating' ? 5 : 2;
           break;
@@ -631,7 +669,7 @@ export class MockEngine {
 
   /** 1 Hz history of the total and of every layer id (same cadence and length). */
   private recordVram(h: number) {
-    const cur = idSums(this.layersNow);
+    const cur = idSums(this.residentNow);
     for (const id of LAYER_IDS) this.layerAcc[id] += cur[id] * h;
     this.vramAccT += h;
     while (this.vramAccT >= 1) {
@@ -654,7 +692,7 @@ export class MockEngine {
 
   snapshot(): ViewModel {
     const s = this.rt;
-    const used = r2(this.layersNow.reduce((a, l) => a + l.gib, 0));
+    const used = r2(this.residentNow.reduce((a, l) => a + l.gib, 0));
     const layerHistory: Partial<Record<VramLayerId, number[]>> = {};
     for (const id of LAYER_IDS) if (this.layerHist[id].some((v) => v > 0)) layerHistory[id] = this.layerHist[id].slice();
     const vram: GpuMemory = {
@@ -667,6 +705,7 @@ export class MockEngine {
       layerHistory,
       baselineGiB: r2(this.baseline),
       warnBelowGiB: VRAM_WARN,
+      dormant: s && s.phase === 'live' && s.power ? s.power.view(this.t) : null,
     };
     const system: SystemStats = {
       ramUsedGiB: r1(this.ram),

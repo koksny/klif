@@ -2,7 +2,7 @@
 // it costs the rest of the machine. Chosen by model FAMILY (the tiers are swappable), not by slot id.
 import type { ModelRef, SlotId } from '../model/types';
 import type { BootDurations } from './boot';
-import { catalogFor } from './catalog';
+import { cardFor } from './catalog';
 import { HIGH, KREA, LOW, MEDIUM, type BigPrefill, type ReqTuple } from './fixtures';
 import type { ImageSimConfig } from './imageSim';
 import type { LlmSimConfig } from './llmSim';
@@ -59,7 +59,7 @@ function gemmaSessions(speedScale: number, ctxTotal: number): ReqTuple[][] {
 
 export function llmConfig(model: ModelRef, opts: { big?: boolean } = {}): LlmSimConfig {
   const fam = familyOf(model);
-  const ctxTotal = model.ctxTokens ?? catalogFor(model.name)?.defaultCtx ?? 16384;
+  const ctxTotal = model.ctxTokens ?? cardFor(model)?.defaultCtx ?? 16384;
   const spec = specLabel(model.specMode);
   switch (fam) {
     case 'flashnext':
@@ -141,7 +141,7 @@ export function bootDurations(model: ModelRef, rng: Rng): BootDurations {
 
 export function deviceDetail(model: ModelRef): string {
   // The device detail is whatever the real core reports at runtime; the mock shows a generic one.
-  return 'ROCm · gfx1201';
+  return 'ROCm Â· gfx1201';
 }
 
 /** Resident system RAM a running model adds on top of the idle desktop (GiB). */

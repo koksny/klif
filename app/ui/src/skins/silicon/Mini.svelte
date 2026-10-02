@@ -2,14 +2,21 @@
   // Silicon, mini panel (960x640, read from 1 m). Read-only. A fixed 960x640 drawing sheet scaled
   // to fit; smallest text 30 px. Same composition in every state: title line, die (left), the
   // segmented VRAM gauge under it, readouts on the right, title block bottom right.
-  import type { ViewModel } from '../../lib/model/types';
+  // GPU dormant (live session, vram.dormant set): amber chip, hatched dashed outlines for what is paged
+  // out (die blocks and gauge), and a big "GPU ASLEEP" / "GPU WAKING" in place of the speed.
+  import type { Actions, ViewModel } from '../../lib/model/types';
   import { fmtGiB, fmtInt, fmtPct, fmtTps } from '../../lib/model/format';
   import DieCanvas from './DieCanvas.svelte';
   import { GEOM } from './die';
   import { held } from './held.svelte';
+  import { useSleep } from './sleep.svelte';
   import { availabilityText, baselineOf, fmtAgo, fmtDur, fmtEta } from './text';
 
-  let { vm }: { vm: ViewModel } = $props();
+  let { vm, actions }: { vm: ViewModel; actions?: Actions } = $props();
+
+  // "Back to window": the one control on the panel. Hidden until the pointer is over the panel (or it
+  // is focused with the keyboard), then a small chip in the quiet strip under the title rule.
+  const canLeave = $derived(!!(vm.host?.panel?.available || vm.host?.panel?.active));
 
   const SW = 960;
   const SH = 640;
@@ -42,10 +49,23 @@
   const imgFill = $derived(imgGen && img ? img.step / img.steps : null);
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
 
-  const tone = $derived(loading ? 'amber' : faulted ? 'fault' : s && phase === 'live' ? 'live' : 'off');
+  // GPU dormant: asleep between requests, or waking while the VRAM is restored from system RAM.
+  const sleep = useSleep(() => vm);
+  const dz = $derived(phase === 'live' ? sleep.info : null);
+  const waking = $derived(!!dz && sleep.waking);
+
+  const tone = $derived(dz || loading ? 'amber' : faulted ? 'fault' : s && phase === 'live' ? 'live' : 'off');
   const phaseLabel = $derived(
     phase === 'idle' ? 'IDLE' : phase === 'live' ? 'LIVE' : phase === 'fault' ? 'FAULT' : phase === 'stopping' ? 'STOPPING' : phase === 'loading' ? 'LOADING' : 'STARTING',
   );
+  const statusLabel = $derived(dz ? (waking ? 'GPU WAKING' : 'GPU ASLEEP') : phaseLabel);
+  const titleWord = $derived(dz ? (waking ? 'WAKING' : 'DORMANT') : phaseLabel);
+  /** The line under "x GiB paged out": how long and in which power state, or how far the restore is. */
+  const sleepLine = $derived.by(() => {
+    if (!dz) return '';
+    if (waking) return `${Math.round(dz.restoredFrac * 100)}% restored`;
+    return [dz.powerState, `asleep ${fmtDur(dz.sinceS)}`, llm ? `last ${fmtTps(tps.current)} tok/s` : null].filter(Boolean).join(' · ');
+  });
   const dwg = $derived(vm.vram.device.replace(/^RX\s*/i, '').trim().replace(/\s+/g, '-'));
   // Drawing revision = the app's major.minor (host.appVersion "0.2.0" -> "0.2").
   const rev = $derived((vm.host?.appVersion ?? '').split('.').slice(0, 2).join('.') || '—');
@@ -73,13 +93,20 @@
   const usedClamped = $derived(Math.min(total, Math.max(0, vm.vram.usedGiB)));
   const usedX = $derived(xAt(usedClamped));
   const segW = BAR.w / 8;
+  // Dormant: the paged-out allocations occupy [resident, resident + paged out] of the gauge, same scale.
+  const pagedEnd = $derived(dz ? Math.min(total, usedClamped + dz.pagedOutGiB) : usedClamped);
+  const pagedX = $derived(xAt(pagedEnd));
   const segs = $derived(
     Array.from({ length: 8 }, (_, i) => {
       const f = Math.min(1, Math.max(0, usedClamped / (total / 8) - i));
-      return { x: BAR.x + i * segW, f };
+      const ha = f;
+      const hb = dz ? Math.min(1, Math.max(0, pagedEnd / (total / 8) - i)) : 0;
+      return { x: BAR.x + i * segW, f, ha, hb };
     }),
   );
-  const freeDotX = $derived(Math.min(BAR.x + BAR.w - 6, Math.max(usedX + 3, (usedX + BAR.x + BAR.w) / 2)));
+  const freeDotX = $derived(
+    dz ? (usedX + pagedX) / 2 : Math.min(BAR.x + BAR.w - 6, Math.max(usedX + 3, (usedX + BAR.x + BAR.w) / 2)),
+  );
   const spillGiB = $derived(vm.vram.spillMiB / 1024);
   const spillY = 464;
   const lowFree = $derived(!!s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB);
@@ -106,9 +133,9 @@
     <div class="top">
       <span class="klif">KLIF</span>
       <span class="sep"></span>
-      <span class="st {tone}"><i class="dot"></i>{phaseLabel}</span>
+      <span class="st {tone}"><i class="dot" class:pulse={waking}></i>{statusLabel}</span>
       <span class="sep"></span>
-      <span class="model" class:fit={phaseLabel.length + name.length > 25}>{name}</span>
+      <span class="model" class:fit={statusLabel.length + name.length > 25}>{name}</span>
     </div>
     <div class="rule"></div>
 
@@ -122,8 +149,11 @@
         totalGiB={vm.vram.totalGiB}
         cacheFrac={null}
         jobFill={imgFill}
+        pagedOutGiB={dz ? dz.pagedOutGiB : null}
         pxScale={u}
-        label="GPU die: compute-unit tiles show the token stream; GDDR6 blocks show VRAM used"
+        label={dz
+          ? `GPU die, GPU ${waking ? 'waking' : 'asleep'}: compute-unit tiles dark; GDDR6 blocks show ${fmtGiB(dz.residentGiB)} GiB resident and ${fmtGiB(dz.pagedOutGiB)} GiB paged out as hatched outlines`
+          : 'GPU die: compute-unit tiles show the token stream; GDDR6 blocks show VRAM used'}
       />
     </div>
 
@@ -147,6 +177,9 @@
       {#each segs as sg, i (i)}
         <rect x={sg.x + 1.5} y={BAR.y} width={segW - 3} height={BAR.h} class="seg" />
         {#if sg.f > 0}<rect x={sg.x + 1.5} y={BAR.y} width={(segW - 3) * sg.f} height={BAR.h} class="segfill" />{/if}
+        {#if sg.hb - sg.ha > 0.004}
+          <rect x={sg.x + 1.5 + (segW - 3) * sg.ha} y={BAR.y} width={(segW - 3) * (sg.hb - sg.ha)} height={BAR.h} fill="url(#sim-ghost)" class="paged" />
+        {/if}
       {/each}
       <!-- idle: the expected footprint of the selected tier, hatched, at true scale -->
       {#if ghost}
@@ -160,6 +193,11 @@
       <line x1={BAR.x} x2={usedX} y1="566" y2="566" class="hl" />
       {#if usedX - BAR.x >= 30}<path d="M{BAR.x},566 l12,-5 v10 z M{usedX},566 l-12,-5 v10 z" class="ah" />{/if}
       <line x1={usedX} x2={usedX} y1={BAR.y + BAR.h + 4} y2="574" class="hl" />
+      {#if dz && pagedX - usedX >= 2}
+        <line x1={usedX} x2={pagedX} y1="566" y2="566" class="hl amb" />
+        {#if pagedX - usedX >= 30}<path d="M{usedX},566 l12,-5 v10 z M{pagedX},566 l-12,-5 v10 z" class="ah amb" />{/if}
+        <line x1={pagedX} x2={pagedX} y1={BAR.y + BAR.h + 4} y2="574" class="hl amb" />
+      {/if}
       <!-- the cliff edge (limit) -->
       <line x1={BAR.x + BAR.w} x2={BAR.x + BAR.w} y1="478" y2="572" class="limit" />
 
@@ -172,14 +210,18 @@
       {:else if spillGiB > 0}
         <path d="M{BAR.x + BAR.w + 19},{BAR.y + BAR.h / 2} L505,{spillY} H544" class="leader red" />
       {/if}
-      {#if liveLlm || imgGen}
+      {#if (liveLlm || imgGen) && !dz}
         <circle cx={tileX} cy={tileY} r="5.5" class="pt" />
         <path d="M{tileX},{tileY} L{tileX + 66},150 H{leaderEnd}" class="leader" />
       {/if}
     </svg>
 
     <!-- Readouts -->
-    {#if liveLlm && llm}
+    {#if dz}
+      <div class="zhero"><span>GPU</span><span>{waking ? 'WAKING' : 'ASLEEP'}</span></div>
+      <div class="zpaged"><b>{fmtGiB(dz.pagedOutGiB)} GiB</b><small>&nbsp;paged out</small></div>
+      <div class="zline">{sleepLine}</div>
+    {:else if liveLlm && llm}
       {#if prefilling && llm.prefill}
         <div class="tag">PREFILL</div>
         <div class="hero tagged" bind:offsetWidth={tagHeroW}><b>{Math.floor(preFrac * 100)}<small>%</small></b></div>
@@ -236,6 +278,7 @@
       <div class="fitlbl" class:redtxt={spare < 0}>{spare >= 0 ? 'FITS' : 'OVER LIMIT'} · {fmtGiB(base + expected)} GiB</div>
       <div class="gib fit" class:redtxt={spare < 0}>{spare >= 0 ? `${fmtGiB(spare)} GiB spare` : `over by ${fmtGiB(-spare)} GiB`}</div>
     {:else}
+      {#if dz}<div class="fitlbl amber">RESIDENT</div>{/if}
       <div class="gib" class:amber={lowFree && spillGiB <= 0} class:redtxt={spillGiB > 0} class:sp={spillGiB > 0}>{fmtGiB(vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB</div>
       {#if spillGiB > 0}<div class="spilltxt">SPILL {fmtInt(vm.vram.spillMiB)} MiB</div>{/if}
     {/if}
@@ -243,7 +286,13 @@
     {#if idle && last}
       <div class="last"><span class="cl">LAST</span>{lastLabel} · {fmtDur(last.uptimeS)}{last.ended === 'fault' ? ' · fault' : ''}</div>
     {/if}
-    <div class="tb">KLIF · DWG {dwg} · {phaseLabel} · REV {rev}</div>
+    <div class="tb">KLIF · DWG {dwg} · {titleWord} · REV {rev}</div>
+
+    {#if canLeave}
+      <button class="back" onclick={() => actions?.togglePanel?.()} title="Leave panel mode" aria-label="Leave panel mode">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 1.5h7v7M1.5 3.5h7v7h-7z" /></svg>
+      </button>
+    {/if}
   </div>
 </div>
 
@@ -307,6 +356,23 @@
   }
   .st.amber {
     color: #f2b33a;
+  }
+  .st .dot.pulse {
+    animation: zz-pulse 1s ease-in-out infinite;
+  }
+  @keyframes zz-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .st .dot.pulse {
+      animation: none;
+    }
   }
   .st.fault {
     color: #ff5a36;
@@ -373,6 +439,18 @@
     stroke: #ff5a36;
     stroke-width: 2;
   }
+  .paged {
+    stroke: #8fd0f5;
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+  }
+  .hl.amb {
+    stroke: #f2b33a;
+    stroke-dasharray: 5 4;
+  }
+  .ah.amb {
+    fill: #f2b33a;
+  }
   .limit {
     stroke: #ff5a36;
     stroke-width: 2;
@@ -435,6 +513,48 @@
   }
   .tag.amber {
     color: #f2b33a;
+  }
+  /* GPU dormant: the speed gives way to the state. */
+  .zhero {
+    position: absolute;
+    right: 34px;
+    top: 66px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    font-size: 116px;
+    font-weight: 700;
+    line-height: 0.9;
+    letter-spacing: 0.01em;
+    color: #f2b33a;
+    white-space: nowrap;
+  }
+  .zpaged {
+    position: absolute;
+    right: 34px;
+    top: 278px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .zpaged b {
+    font-size: 76px;
+    font-weight: 600;
+  }
+  .zpaged small {
+    font-size: 40px;
+    font-weight: 600;
+    color: #afc2cf;
+  }
+  .zline {
+    position: absolute;
+    right: 34px;
+    top: 362px;
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: #afc2cf;
+    line-height: 1;
+    white-space: nowrap;
   }
   .unit {
     position: absolute;
@@ -627,6 +747,9 @@
     line-height: 1;
     white-space: nowrap;
   }
+  .fitlbl.amber {
+    color: #f2b33a;
+  }
   .gib {
     position: absolute;
     left: 552px;
@@ -676,6 +799,57 @@
   .last .cl {
     font-size: 32px;
     margin-right: 12px;
+  }
+  /* Back to window: invisible (and inert) until the panel is hovered or the button is keyboard-focused.
+     Sits in the empty strip between the title rule and the hero; the ::before widens the hit area. */
+  .back {
+    position: absolute;
+    right: 34px;
+    top: 70px;
+    width: 60px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    color: #afc2cf;
+    background: #0d1115;
+    border: 1.5px solid #4e6779;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .back::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+  }
+  .back svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+  }
+  .mini:hover .back,
+  .back:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .back:hover,
+  .back:focus-visible {
+    color: #f4faff;
+    border-color: #5ab6eb;
+  }
+  .back:focus-visible {
+    outline: 1.5px solid #5ab6eb;
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .back {
+      transition: none;
+    }
   }
   .tb {
     position: absolute;

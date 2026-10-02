@@ -18,7 +18,7 @@
 <div class="ph {size}" style="--k:{k.toFixed(4)}" bind:clientWidth={w} bind:clientHeight={h}>
   {#if w > 0 && h > 0}
     {#if size === 'mini'}
-      <Mini {vm} {k} />
+      <Mini {vm} {actions} {k} />
     {:else}
       <Full {vm} {actions} {k} />
     {/if}

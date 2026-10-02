@@ -13,6 +13,7 @@ export const PAL = {
   cyan: '#5AB6EB',
   cyanInk: '#0D1117',
   orange: '#FF6B2C',
+  amber: '#FFB02E',
   segOff: '#33353A',
 } as const;
 
@@ -267,4 +268,57 @@ export function median(xs: number[]): number {
   const a = [...xs].sort((p, q) => p - q);
   const m = a.length >> 1;
   return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+// ---------------------------------------------------------------------------------------------
+// GPU dormancy (GpuMemory.dormant): the inference GPU powered down (AMD ULPS / device state D3) with a
+// model loaded. The session's allocations stay (layers = allocations), usedGiB is what is resident.
+
+export type SleepPhase = 'asleep' | 'falling' | 'waking';
+
+export interface Sleep {
+  phase: SleepPhase;
+  /** What the session's layers allocate (sum of vram.layers): where the ghost pointer stands. */
+  allocGiB: number;
+  /** Resident in VRAM right now (vram.usedGiB). */
+  usedGiB: number;
+  /** vram.dormant.pagedOutGiB, as reported. */
+  pagedGiB: number;
+  sinceS: number;
+  /** "D3", if the core knows it. */
+  power: string | null;
+  /** Share of the session's memory resident again, 0..1: used / (used + paged out), the restore progress while waking. */
+  restored: number;
+}
+
+/**
+ * The dormancy read from the GPU memory, or null while the GPU is awake. The phase follows the resident
+ * amount over the last ~3 s of history: rising = waking (restoring from system RAM), falling = still
+ * powering down, flat = asleep (a flat but substantially resident amount reads as waking).
+ */
+export function sleepOf(vram: GpuMemory): Sleep | null {
+  const d = vram.dormant;
+  if (!d) return null;
+  const used = Math.max(0, vram.usedGiB);
+  const paged = Math.max(0, d.pagedOutGiB);
+  const sum = vram.layers.reduce((a, l) => a + Math.max(0, l.gib), 0);
+  const allocGiB = sum > 0.01 ? sum : used + paged;
+  const h = vram.history;
+  const ref = h.length >= 4 ? h[h.length - 4] : h.length ? h[0] : used;
+  const delta = used - ref;
+  // Restore progress from what the core reports: resident vs. resident + still paged out.
+  const restored = frac(used, used + paged);
+  const phase: SleepPhase = delta > 0.3 ? 'waking' : delta < -0.3 ? 'falling' : restored >= 0.5 ? 'waking' : 'asleep';
+  return { phase, allocGiB, usedGiB: used, pagedGiB: paged, sinceS: Math.max(0, d.sinceS), power: d.powerState ?? null, restored };
+}
+
+/** The lamp's printed word. */
+export const sleepWord = (s: Sleep) => (s.phase === 'waking' ? 'WAKING' : 'SLEEP');
+
+/** "D3 · asleep 14 s", "waking from D3 · asleep 14 s", "D3 · powering down". */
+export function sleepDetail(s: Sleep): string {
+  const p = s.power ?? 'dormant';
+  if (s.phase === 'falling') return `${p} · powering down`;
+  if (s.phase === 'waking') return `waking from ${p} · asleep ${fmtDur(s.sinceS)}`;
+  return `${p} · asleep ${fmtDur(s.sinceS)}`;
 }

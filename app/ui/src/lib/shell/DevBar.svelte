@@ -13,6 +13,9 @@
   function setTier(v: string) {
     ui.tierPin = v === 'auto' ? null : (v as Tier);
   }
+
+  /** The inference GPU is asleep (or waking) with the model still loaded: what the skins must show honestly. */
+  const dormant = $derived(player.vm.vram.dormant ?? null);
 </script>
 
 <div class="bar" role="toolbar" aria-label="Developer bar">
@@ -32,25 +35,27 @@
       <option value="mini">mini</option>
     </select>
   </label>
-  <label class="wide">
-    <span>scenario</span>
-    <select value={player.scenario} onchange={(e) => player.setScenario(e.currentTarget.value)}>
-      {#each player.scenarios as s (s.name)}
-        <option value={s.name} title={s.blurb}>{s.name}</option>
-      {/each}
-    </select>
-  </label>
-  <label>
-    <span>speed</span>
-    <select value={String(player.speed)} onchange={(e) => (player.speed = Number(e.currentTarget.value))}>
-      {#each SPEEDS as v (v)}
-        <option value={String(v)}>{v}x</option>
-      {/each}
-      {#if !SPEEDS.includes(player.speed)}
-        <option value={String(player.speed)}>{player.speed}x</option>
-      {/if}
-    </select>
-  </label>
+  {#if !player.native}
+    <label class="wide">
+      <span>scenario</span>
+      <select value={player.scenario} onchange={(e) => player.setScenario(e.currentTarget.value)}>
+        {#each player.scenarios as s (s.name)}
+          <option value={s.name} title={s.blurb}>{s.name}</option>
+        {/each}
+      </select>
+    </label>
+    <label>
+      <span>speed</span>
+      <select value={String(player.speed)} onchange={(e) => (player.speed = Number(e.currentTarget.value))}>
+        {#each SPEEDS as v (v)}
+          <option value={String(v)}>{v}x</option>
+        {/each}
+        {#if !SPEEDS.includes(player.speed)}
+          <option value={String(player.speed)}>{player.speed}x</option>
+        {/if}
+      </select>
+    </label>
+  {/if}
   <label>
     <span>tier</span>
     <select value={ui.tierPin ?? 'auto'} onchange={(e) => setTier(e.currentTarget.value)}>
@@ -61,11 +66,20 @@
     </select>
   </label>
   <span class="tier" data-tier={ui.tier} title="Tier currently applied">{ui.tier}</span>
-  <button type="button" onclick={() => (player.paused = !player.paused)}>{player.paused ? 'resume' : 'pause'}</button>
-  {#if player.paused}
-    <button type="button" onclick={() => player.stepOnce(0.5)}>+0.5 s</button>
+  {#if dormant}
+    <span class="pwr" title="vm.vram.dormant: the GPU is powered down, the session's VRAM is paged out to system RAM">
+      gpu {dormant.powerState ?? 'dormant'} &middot; {Math.round(dormant.sinceS)} s &middot; {dormant.pagedOutGiB.toFixed(1)} GiB paged out
+    </span>
   {/if}
-  <span class="clock" title="Simulated time since the scenario started">{fmtClock(player.simT)}</span>
+  {#if player.native}
+    <span class="clock" title="The view model comes from the native core">native core</span>
+  {:else}
+    <button type="button" onclick={() => (player.paused = !player.paused)}>{player.paused ? 'resume' : 'pause'}</button>
+    {#if player.paused}
+      <button type="button" onclick={() => player.stepOnce(0.5)}>+0.5 s</button>
+    {/if}
+    <span class="clock" title="Simulated time since the scenario started">{fmtClock(player.simT)}</span>
+  {/if}
 </div>
 
 <style>
@@ -138,6 +152,15 @@
   .tier[data-tier='off'],
   .tier[data-tier='calm'] {
     color: var(--k-warn, #f2a33a);
+  }
+  .pwr {
+    font: 600 11px/1 var(--k-font-data, ui-monospace, monospace);
+    padding: 5px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--k-warn, #f2a33a);
+    color: var(--k-warn, #f2a33a);
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
   }
   .clock {
     margin-left: auto;

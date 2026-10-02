@@ -23,7 +23,7 @@
   import ImageHero from './ImageHero.svelte';
   import FaultPanel from './FaultPanel.svelte';
   import FullState from './FullState.svelte';
-  import { loadSpanS, recipeLine } from './geom';
+  import { gpuSleep, loadSpanS, recipeLine } from './geom';
 
   let { vm, actions, k }: { vm: ViewModel; actions: Actions; k: number } = $props();
 
@@ -59,6 +59,9 @@
   const prefillText = $derived.by(() => {
     const p = llm?.prefill;
     if (!p) return '—';
+    if (llm?.activity === 'prefill' && pfWaits) {
+      return `${fmtInt(p.doneTokens)} / ${fmtInt(p.tokens)} tok · waiting for the GPU`;
+    }
     if (llm?.activity === 'prefill' && p.etaS > 0) {
       return `${fmtInt(p.doneTokens)} / ${fmtInt(p.tokens)} tok · ${fmtInt(p.tps)} tok/s · eta ${fmtSeconds(p.etaS)}`;
     }
@@ -82,12 +85,19 @@
     return tps / 180;
   });
 
+  /** GPU dormant (vm.vram.dormant): asleep, or waking while its VRAM is restored from system RAM. */
+  const gpu = $derived(
+    gpuSleep(vm.vram, (!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating')),
+  );
+  /** A prefill that has not started because the GPU is still being restored. */
+  const pfWaits = $derived(!!gpu && !!pf && pf.doneTokens === 0);
+
   const span = $derived(mode === 'loading' ? loadSpanS(s?.loading?.elapsedS ?? s?.uptimeS ?? 0) : 300);
   const markAgo = $derived(mode === 'fault' ? (s?.fault?.sinceS ?? null) : null);
 </script>
 
 <div class="full m-{mode}">
-  <Header session={s} host={vm.host} {actions} {k} />
+  <Header session={s} host={vm.host} {actions} {k} {gpu} />
 
   {#if mode === 'idle'}
     <TierCards slots={vm.slots} selected={vm.selected} {actions} />
@@ -124,13 +134,14 @@
         <div class="dhead">
           <span class="lbl">{pf ? 'Prompt prefill' : 'Decode speed'}</span>
           {#if !pf}<span class="act" data-act={llm.activity}>{ACT[llm.activity]}</span>{/if}
+          {#if gpu}<span class="act gpuw">{gpu.state === 'waking' ? 'gpu waking' : 'gpu asleep'}</span>{/if}
           <span class="note">{pf ? 'decode · 5-minute history' : '5-minute history'}</span>
         </div>
         {#if pf}
           <div class="readout pf" title="Prompt processing of the current request">
             <span class="num">{Math.floor(pfFrac * 100)}<span class="pc">%</span></span>
             <div class="pfx">
-              <span class="pfa">{fmtInt(pf.tps)} tok/s · {pf.etaS > 0 ? `eta ${fmtSeconds(pf.etaS)}` : 'finishing'}</span>
+              <span class="pfa">{fmtInt(pf.tps)} tok/s · {pfWaits ? 'waiting for the GPU' : pf.etaS > 0 ? `eta ${fmtSeconds(pf.etaS)}` : 'finishing'}</span>
               <span class="pfbar" role="img" aria-label="Prefill {Math.floor(pfFrac * 100)}%"><span class="pff" style="transform:scaleX({pfFrac.toFixed(4)})"></span></span>
               <span class="pfb">{fmtInt(pf.doneTokens)} / {fmtInt(pf.tokens)} tok{pf.cachedTokens ? ` · ${fmtInt(pf.cachedTokens)} cached` : ''}</span>
             </div>
@@ -140,7 +151,7 @@
             <span class="num">{fmtTps(llm.decodeTps)}</span><span class="unit">tok/s</span>
           </div>
         {/if}
-        <div class="scope"><Scope history={llm.decodeHistory} /></div>
+        <div class="scope"><Scope history={llm.decodeHistory} dim={!!gpu} /></div>
         <div class="dfoot">
           <span class="seg"><span class="lbl">Prefill</span><span class="val">{prefillText}</span></span>
           <span class="vrule" aria-hidden="true"></span>
@@ -187,9 +198,14 @@
     <section class="panel grat vram" aria-label="VRAM cliff">
       <div class="vhead">
         <span class="lbl">VRAM cliff</span>
-        <span class="val">{vm.vram.device} · {fmtGiB(vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB</span>
+        <span class="val">{vm.vram.device} · {fmtGiB(vm.vram.usedGiB)} / {fmtGiB(vm.vram.totalGiB)} GiB{gpu ? ' resident' : ''}</span>
+        {#if gpu}
+          <span class="gpu-tag" title="vm.vram.dormant: the GPU is powered down, the session's VRAM is paged out to system RAM">
+            {gpu.powerState ?? 'dormant'} · {gpu.state === 'waking' ? `restoring ${Math.round(gpu.restoredFrac * 100)}%` : 'asleep'} · {Math.round(gpu.sinceS)} s
+          </span>
+        {/if}
       </div>
-      <div class="cliffbox"><VramCliff vram={vm.vram} {k} spanS={span} markAgoS={markAgo} /></div>
+      <div class="cliffbox"><VramCliff vram={vm.vram} {k} spanS={span} markAgoS={markAgo} {gpu} /></div>
     </section>
   {/if}
 
@@ -303,6 +319,10 @@
   }
   .act[data-act='prefill'] {
     color: var(--ph-amber);
+  }
+  .act.gpuw {
+    color: var(--ph-amber);
+    text-shadow: 0 0 6px rgba(232, 176, 74, 0.4);
   }
   .note {
     margin-left: auto;
@@ -520,6 +540,13 @@
   }
   .vhead .sub {
     margin-left: calc(-12px * var(--k));
+  }
+  .vhead .gpu-tag {
+    margin-left: auto;
+    padding-right: calc(6px * var(--k));
+    color: var(--ph-amber);
+    text-shadow: 0 0 6px rgba(232, 176, 74, 0.4);
+    white-space: nowrap;
   }
   .vhead .dev {
     margin-left: auto;

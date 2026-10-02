@@ -4,6 +4,7 @@
   // - Afterglow: earlier frames persist on a 1/3-resolution canvas and fade (tau 0.38 s). Upscaling
   //   that small canvas is the bloom, so there is no blur filter anywhere.
   // - Frames come from the shared scheduler (<= 30 fps) and stop entirely once the glow has settled.
+  // - dim (GPU asleep): the live beam is off; only the amber afterglow and a faint trace remain.
   import { untrack } from 'svelte';
   import { getTier, onFrame, onTier, type Tier } from '../../lib/render/scheduler';
   import { niceRange, newSamples, sameSeries, smoothCanvas } from './geom';
@@ -12,10 +13,13 @@
   let {
     history,
     variant = 'full',
+    dim = false,
   }: {
     /** One sample per second, oldest first, up to 300. */
     history: number[];
     variant?: 'full' | 'mini';
+    /** Afterglow only: no bright beam, no hot core (the GPU is asleep, nothing is being traced live). */
+    dim?: boolean;
   } = $props();
 
   const SLOTS = 300;
@@ -132,11 +136,20 @@
     c.rect(0, 0, xr + 0.5, h);
     c.clip();
     c.globalCompositeOperation = 'lighter';
-    c.globalAlpha = variant === 'mini' ? 1 : 0.85;
+    c.globalAlpha = dim ? (variant === 'mini' ? 0.6 : 0.5) : variant === 'mini' ? 1 : 0.85;
     c.imageSmoothingEnabled = true;
     c.drawImage(glow, 0, 0, w, h);
     c.globalCompositeOperation = 'source-over';
-    if (n > 1) {
+    if (n > 1 && dim) {
+      // Afterglow only: the beam itself is gone, a ghost of its path stays.
+      c.lineJoin = 'round';
+      c.lineCap = 'round';
+      smoothCanvas(c, xs, ys, n);
+      c.strokeStyle = P.brand;
+      c.globalAlpha = 0.2;
+      c.lineWidth = variant === 'mini' ? 1.6 : 1.1;
+      c.stroke();
+    } else if (n > 1) {
       c.lineJoin = 'round';
       c.lineCap = 'round';
       smoothCanvas(c, xs, ys, n);
@@ -160,13 +173,13 @@
 
     if (data.length > 0) {
       const r = variant === 'mini' ? 5 : 3.6;
-      c.fillStyle = P.cyan;
-      c.globalAlpha = 0.22;
+      c.fillStyle = dim ? P.amber : P.cyan;
+      c.globalAlpha = dim ? 0.14 : 0.22;
       c.beginPath();
       c.arc(xr, dotY, r * 2.4, 0, Math.PI * 2);
       c.fill();
-      c.globalAlpha = 1;
-      c.fillStyle = P.hot;
+      c.globalAlpha = dim ? 0.55 : 1;
+      c.fillStyle = dim ? P.amber : P.hot;
       c.beginPath();
       c.arc(xr, dotY, r, 0, Math.PI * 2);
       c.fill();
@@ -271,6 +284,14 @@
   $effect(() => {
     const hist = history;
     untrack(() => ingest(hist));
+  });
+
+  // Dim on/off while the beam is at rest: repaint (while it moves, the next frame does it).
+  $effect(() => {
+    void dim;
+    untrack(() => {
+      if (ctx && !unsub) draw(0, true);
+    });
   });
 
   $effect(() => {

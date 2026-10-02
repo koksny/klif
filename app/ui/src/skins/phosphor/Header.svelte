@@ -3,13 +3,16 @@
   import { fmtClock } from '../../lib/model/format';
   import Mark from './Mark.svelte';
   import WinControls from './WinControls.svelte';
+  import PanelButton from './PanelButton.svelte';
+  import type { GpuSleep } from './geom';
 
   let {
     session,
     host,
     actions,
     k,
-  }: { session: Session | null; host: HostInfo | undefined; actions: Actions; k: number } = $props();
+    gpu = null,
+  }: { session: Session | null; host: HostInfo | undefined; actions: Actions; k: number; gpu?: GpuSleep | null } = $props();
 
   const PHASE: Record<string, { word: string; tone: string }> = {
     starting: { word: 'STARTING', tone: 'amber' },
@@ -21,6 +24,8 @@
   const st = $derived(session ? PHASE[session.phase] : { word: 'IDLE', tone: 'muted' });
   const booting = $derived(session?.phase === 'starting' || session?.phase === 'loading');
   const frameless = $derived(!!host?.frameless);
+  /** A small screen exists (or this is a browser): offer panel mode, frameless or not. */
+  const panel = $derived(host?.panel?.available ? host.panel : null);
 </script>
 
 <header class="hdr" class:fl={frameless} data-tauri-drag-region>
@@ -29,9 +34,24 @@
     <div class="title" data-tauri-drag-region>KLIF</div>
     <div class="tag" data-tauri-drag-region>Koksny.com LOCAL INFERENCE FORNICATOR</div>
   </div>
+  {#if panel && !frameless}<div class="pbox"><PanelButton {actions} {panel} /></div>{/if}
   <div class="status" data-tauri-drag-region>
-    {#if frameless}<div class="winrow"><WinControls {actions} maximized={!!host?.maximized} /></div>{/if}
-    <div class="st {st.tone}" data-tauri-drag-region><span class="dot"></span>{st.word}</div>
+    {#if frameless}
+      <div class="winrow">
+        {#if panel}<PanelButton {actions} {panel} /><span class="vrule" aria-hidden="true"></span>{/if}
+        <WinControls {actions} maximized={!!host?.maximized} />
+      </div>
+    {/if}
+    {#if gpu}
+      <!-- dormant GPU: ASLEEP (or WAKING while the VRAM is restored) in amber, next to the server's own state -->
+      <div class="stline" data-tauri-drag-region>
+        <div class="st amber sleepw {gpu.state}" data-tauri-drag-region><span class="dot ring"></span>{gpu.state === 'waking' ? 'WAKING' : 'ASLEEP'}</div>
+        <span class="vrule" aria-hidden="true"></span>
+        <div class="st {st.tone}" data-tauri-drag-region><span class="dot"></span>{st.word}</div>
+      </div>
+    {:else}
+      <div class="st {st.tone}" data-tauri-drag-region><span class="dot"></span>{st.word}</div>
+    {/if}
     {#if session}
       <div class="up" data-tauri-drag-region>
         {#if booting}elapsed {fmtClock(session.loading?.elapsedS ?? session.uptimeS)}{:else}uptime {fmtClock(session.uptimeS)}{/if}
@@ -100,7 +120,21 @@
     gap: calc(4px * var(--k));
   }
   .winrow {
+    display: flex;
+    align-items: center;
+    gap: calc(10px * var(--k));
     margin: calc(-8px * var(--k)) calc(-12px * var(--k)) calc(4px * var(--k)) 0;
+  }
+  .vrule {
+    width: 1px;
+    height: calc(20px * var(--k));
+    background: var(--ph-rule);
+  }
+  /* windowed (not frameless): the button sits in the right cluster, left of the status readout */
+  .pbox {
+    flex: none;
+    align-self: center;
+    margin-right: calc(-4px * var(--k));
   }
   .st {
     display: flex;
@@ -117,6 +151,35 @@
     border-radius: 50%;
     background: currentColor;
     box-shadow: 0 0 8px currentColor;
+  }
+  .stline {
+    display: flex;
+    align-items: center;
+    gap: calc(16px * var(--k));
+  }
+  .stline .vrule {
+    margin: 0;
+  }
+  .dot.ring {
+    background: transparent;
+    border: calc(2.5px * var(--k)) solid currentColor;
+    box-shadow: 0 0 8px currentColor;
+    animation: ph-breathe 3.2s ease-in-out infinite;
+  }
+  .sleepw.waking .dot.ring {
+    background: currentColor;
+    animation: ph-breathe 0.9s ease-in-out infinite;
+  }
+  @keyframes ph-breathe {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.ring,
+    .sleepw.waking .dot.ring {
+      animation: none;
+    }
   }
   .st.amber {
     color: var(--ph-amber);
