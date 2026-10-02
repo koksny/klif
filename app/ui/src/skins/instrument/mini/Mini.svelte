@@ -180,6 +180,20 @@
     if (sleep) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: lowFree ? 'amber' : '' };
   });
+  // The panel's one control, in the header: Launch the selected tier (idle), Cancel (loading), Stop (live),
+  // Restart (fault). A tier is picked on the strip while nothing runs.
+  const act = $derived.by(() => {
+    const ph = vm.session?.phase;
+    const pick = vm.slots.find((x) => x.id === vm.selected);
+    if (!ph) {
+      const ok = pick?.availability === 'ready';
+      const word = (pick?.label ?? '').replace(/^AGENT\s+/i, '');
+      return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
+    }
+    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };
+    if (ph === 'stopping') return { kind: 'stop', text: 'STOPPING', title: 'Stopping', disabled: true, run: () => {} };
+    return { kind: 'stop', text: ph === 'live' ? 'STOP' : 'CANCEL', title: ph === 'live' ? 'Stop the server' : 'Cancel the launch', disabled: false, run: () => actions?.stop() };
+  });
 </script>
 
 <svelte:window onpointerdown={onTap} />
@@ -205,6 +219,13 @@
     {:else if vm.host?.appVersion}
       <span class="clock ver">v{vm.host.appVersion}</span>
     {/if}
+    <button class="act {act.kind}" type="button" onclick={act.run} disabled={act.disabled || !actions} title={act.title}>
+      <svg viewBox="0 0 12 12" aria-hidden="true"
+        >{#if act.kind === 'go'}<path d="M3 1.5 10.5 6 3 10.5z" class="fill" />{:else if act.kind === 'hot'}<path d="M10 6a4 4 0 1 1-1.17-2.83" /><path
+            d="M10 1.5v2.5H7.5"
+          />{:else}<rect x="2.5" y="2.5" width="7" height="7" class="fill" />{/if}</svg
+      ><span>{act.text}</span>
+    </button>
     {#if canLeave}
       <button class="back" class:tapped type="button" onclick={() => actions.togglePanel?.()} title="Leave panel mode" aria-label="Leave panel mode">
         <Icon name="window" size="calc(24 * var(--u))" />
@@ -218,10 +239,12 @@
       {@const sel = t.id === ptr}
       {@const na = t.availability !== 'ready'}
       {@const running = !!s && s.slot === t.id}
-      <div class="tier" class:sel class:na class:locked={busy && !running} class:fault={running && view === 'fault'}>
+      <button type="button" class="tier" class:sel class:na class:locked={busy && !running} class:fault={running && view === 'fault'} aria-disabled={!!vm.session} onclick={() => {
+          if (!vm.session) actions?.select(t.id);
+        }}>
         <Led on={running || na || (sel && !s)} tone={running ? tone : na ? 'orange' : 'cyan'} size="calc(14 * var(--u))" pulse={running && view === 'loading'} />
         <span>{shortLabel(t.label)}</span>
-      </div>
+      </button>
     {/each}
   </div>
 
@@ -726,5 +749,77 @@
   }
   .vram .v.amber {
     color: var(--amber);
+  }
+  /* Launch / Cancel / Stop / Restart: one width, so nothing in the header moves. */
+  .act {
+    flex: none;
+    width: calc(292 * var(--u));
+    height: calc(44 * var(--u));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(12 * var(--u));
+    padding: 0 calc(14 * var(--u));
+    border: 1.5px solid var(--cyan);
+    border-radius: calc(5 * var(--u));
+    background: var(--cyan);
+    color: #0b1a24;
+    font-family: inherit;
+    font-size: calc(24 * var(--u));
+    font-weight: 600;
+    font-stretch: 87.5%;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .act span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .act svg {
+    width: calc(18 * var(--u));
+    height: calc(18 * var(--u));
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .act svg .fill {
+    fill: currentColor;
+    stroke: none;
+  }
+  .act.stop {
+    background: transparent;
+    border-color: var(--orange);
+    color: var(--orange);
+  }
+  .act.hot {
+    background: var(--orange);
+    border-color: var(--orange);
+    color: #1b0d05;
+  }
+  .act:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+  .act.stop {
+    background: linear-gradient(180deg, #2c2d31, #1d1e21);
+  }
+  .act.go:disabled {
+    opacity: 1;
+    background: linear-gradient(180deg, #2c2d31, #1d1e21);
+    border-color: #08090a;
+    color: var(--muted);
+  }
+  button.tier {
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.tier[aria-disabled='true'] {
+    cursor: default;
   }
 </style>

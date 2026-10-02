@@ -185,6 +185,20 @@
     if (dz) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: lowFree ? 'amber' : '' };
   });
+  // The panel's one control, in the header: Launch the selected tier (idle), Cancel (loading), Stop (live),
+  // Restart (fault). A tier is picked on the strip while nothing runs.
+  const act = $derived.by(() => {
+    const ph = vm.session?.phase;
+    const pick = vm.slots.find((x) => x.id === vm.selected);
+    if (!ph) {
+      const ok = pick?.availability === 'ready';
+      const word = (pick?.label ?? '').replace(/^AGENT\s+/i, '');
+      return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
+    }
+    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };
+    if (ph === 'stopping') return { kind: 'stop', text: 'STOPPING', title: 'Stopping', disabled: true, run: () => {} };
+    return { kind: 'stop', text: ph === 'live' ? 'STOP' : 'CANCEL', title: ph === 'live' ? 'Stop the server' : 'Cancel the launch', disabled: false, run: () => actions?.stop() };
+  });
 </script>
 
 <div class="mini" bind:clientWidth={w} bind:clientHeight={h}>
@@ -196,6 +210,13 @@
       <span class="st {tone}"><i class="dot" class:pulse={waking || loading}></i>{statusLabel}</span>
       <span class="grow"></span>
       {#if s}<span class="clock">{clock}</span>{:else if vm.host?.appVersion}<span class="clock ver">v{vm.host.appVersion}</span>{/if}
+      <button class="act {act.kind}" type="button" onclick={act.run} disabled={act.disabled || !actions} title={act.title}>
+        <svg viewBox="0 0 12 12" aria-hidden="true"
+          >{#if act.kind === 'go'}<path d="M3 1.5 10.5 6 3 10.5z" class="fill" />{:else if act.kind === 'hot'}<path d="M10 6a4 4 0 1 1-1.17-2.83" /><path
+              d="M10 1.5v2.5H7.5"
+            />{:else}<rect x="2.5" y="2.5" width="7" height="7" class="fill" />{/if}</svg
+        ><span>{act.text}</span>
+      </button>
       {#if canLeave}
         <button class="back" onclick={() => actions?.togglePanel?.()} title="Leave panel mode" aria-label="Leave panel mode">
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 1.5h7v7M1.5 3.5h7v7h-7z" /></svg>
@@ -209,9 +230,11 @@
         {@const sel = t.id === (s?.slot ?? vm.selected)}
         {@const na = t.availability !== 'ready'}
         {@const running = !!s && s.slot === t.id && !faulted}
-        <div class="tier" class:sel class:na class:locked={busy && !running} class:fault={faulted && s?.slot === t.id}>
+        <button type="button" class="tier" class:sel class:na class:locked={busy && !running} class:fault={faulted && s?.slot === t.id} aria-disabled={!!vm.session} onclick={() => {
+          if (!vm.session) actions?.select(t.id);
+        }}>
           <i class="td" class:run={running} class:bad={na}></i>{short(t.label)}
-        </div>
+        </button>
       {/each}
     </div>
 
@@ -757,5 +780,77 @@
     fill: none;
     stroke: currentColor;
     stroke-width: 1.4;
+  }
+  /* Launch / Cancel / Stop / Restart: one width, so nothing in the header moves. */
+  .act {
+    flex: none;
+    width: 292px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 0 14px;
+    border: 1.5px solid var(--cyan);
+    border-radius: 4px;
+    background: var(--cyan);
+    color: #04121b;
+    font-family: inherit;
+    font-size: 24px;
+    font-weight: 600;
+    font-stretch: 87.5%;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .act span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .act svg {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .act svg .fill {
+    fill: currentColor;
+    stroke: none;
+  }
+  .act.stop {
+    background: transparent;
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .act.hot {
+    background: var(--red);
+    border-color: var(--red);
+    color: #1a0602;
+  }
+  .act:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+  .act.go:disabled {
+    opacity: 1;
+    background: #1a2731;
+    border-color: #2f4150;
+    color: #8296a5;
+  }
+  button.tier:not(:disabled):not(.sel):hover {
+    border-color: #557086;
+  }
+  button.tier {
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.tier[aria-disabled='true'] {
+    cursor: default;
   }
 </style>
