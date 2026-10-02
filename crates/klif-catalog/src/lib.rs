@@ -95,6 +95,8 @@ pub struct Catalog {
     pub(crate) device_name: String,
     pub(crate) origin: Origin,
     pub(crate) warnings: Vec<String>,
+    /// `[krea] fast_starter` from the config: the Krea cards on HIP + the inference GPU launch through it.
+    pub(crate) fast_krea: Option<PathBuf>,
 }
 
 // The engine shares one catalog between its tick thread and the host's command threads.
@@ -117,7 +119,9 @@ impl Catalog {
             .filter(|s| !s.is_empty())
             .unwrap_or("GPU")
             .to_string();
-        let catalog = Catalog { data: loaded.data, probe: probe::FileProbe::default(), device_name, origin: loaded.origin, warnings };
+        let fast_krea = cfg.krea.fast_starter().map(std::path::Path::to_path_buf);
+        let catalog =
+            Catalog { data: loaded.data, probe: probe::FileProbe::default(), device_name, origin: loaded.origin, warnings, fast_krea };
         catalog.refresh_files();
         Ok(catalog)
     }
@@ -185,11 +189,19 @@ impl Catalog {
             self.probe.is_file(&p.binary);
             self.probe.model_bytes(&p.model);
         }
+        if let Some(fast) = &self.fast_krea {
+            self.probe.is_file(fast);
+        }
     }
 
     /// How the catalog data was obtained (cache hit, fresh export, stale cache).
     pub fn origin(&self) -> Origin {
         self.origin
+    }
+
+    /// The configured fast Krea starter (`[krea] fast_starter`), if any.
+    pub fn fast_krea_starter(&self) -> Option<&std::path::Path> {
+        self.fast_krea.as_deref()
     }
 
     /// Exporter and launcher warnings (e.g. orphan profiles, a stale export).

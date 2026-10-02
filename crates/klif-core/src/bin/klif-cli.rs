@@ -1,7 +1,9 @@
 //! klif-cli: inspect the KLIF core from a terminal.
 //!
 //!   klif-cli status [--wait <s>]     one ViewModel as JSON (after the first telemetry samples)
-//!   klif-cli plan <slot>             the launch plan for a tier: exe, argv, cwd, logs, env NAMES (never values)
+//!   klif-cli plan <slot> [key=value...]  the launch plan for a tier: exe, argv, cwd, logs, env NAMES (never values);
+//!                                    key=value pairs patch the recipe in memory only (state.json is not written),
+//!                                    e.g. `plan krea edit=on precision=medium`
 //!   klif-cli watch <n>               n one-line summaries at 2 Hz
 //!   klif-cli launch <slot> --yes     really launch the tier's recipe (needs --yes), then follow it until live
 //!   klif-cli gpu [--secs <s>]        the inference card's power state (1 Hz for s seconds) and EnableUlps
@@ -15,7 +17,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 use klif_core::klif_catalog::EnvValue;
 use klif_core::klif_common::config::Config;
-use klif_core::klif_common::vm::{Action, HostInfo, HostKind, Phase, SlotId, ViewModel};
+use klif_core::klif_common::vm::{Action, HostInfo, HostKind, Phase, RecipePatch, SlotId, ViewModel};
 use klif_core::{Engine, EngineHandle};
 
 fn usage() -> &'static str {
@@ -173,12 +175,56 @@ fn cmd_gpu(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `key=value` pairs to a Tune patch (the UI's `Partial<Recipe>`), for `plan` previews only.
+fn parse_patch(pairs: &[String]) -> Result<Option<RecipePatch>> {
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+    let mut obj = serde_json::Map::new();
+    for pair in pairs {
+        let (k, v) = pair.split_once('=').ok_or_else(|| anyhow!("expected key=value, got {pair:?}"))?;
+        let (key, value) = match k.trim().to_ascii_lowercase().as_str() {
+            "edit" => ("edit", serde_json::Value::Bool(parse_bool(v)?)),
+            "vision" => ("vision", serde_json::Value::Bool(parse_bool(v)?)),
+            "precision" => ("precision", serde_json::Value::String(v.trim().to_ascii_lowercase())),
+            "size" | "imagesize" => ("imageSize", serde_json::Value::String(v.trim().into())),
+            "card" | "cardid" => ("cardId", serde_json::Value::String(v.trim().into())),
+            "backend" => ("backend", serde_json::Value::String(v.trim().into())),
+            "hardware" => ("hardware", serde_json::Value::String(v.trim().into())),
+            "mode" => ("mode", serde_json::Value::String(v.trim().into())),
+            "kv" | "kvtype" => ("kvType", serde_json::Value::String(v.trim().into())),
+            "port" => ("port", serde_json::Value::from(v.trim().parse::<u16>()?)),
+            "ctx" | "ctxtokens" => ("ctxTokens", serde_json::Value::from(v.trim().parse::<u32>()?)),
+            other => bail!("unknown recipe key {other:?} (edit precision size card backend hardware port mode ctx kv vision)"),
+        };
+        obj.insert(key.into(), value);
+    }
+    Ok(Some(serde_json::from_value(serde_json::Value::Object(obj))?))
+}
+
+fn parse_bool(v: &str) -> Result<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Ok(true),
+        "off" | "false" | "0" | "no" => Ok(false),
+        _ => bail!("expected on/off, got {v:?}"),
+    }
+}
+
 fn cmd_plan(args: &[String]) -> Result<()> {
     let slot = parse_slot(args.first().ok_or_else(|| anyhow!("plan needs a slot"))?)?;
+    let patch = parse_patch(&args[1..])?;
     let cfg = Config::load()?;
-    let pv = klif_core::preview_plan(&cfg, slot)?;
+    let pv = klif_core::preview_plan_with(&cfg, slot, patch.as_ref())?;
     let p = &pv.plan;
     println!("slot:        {} ({})", slot.as_str(), slot.label());
+    if patch.is_some() {
+        println!("recipe:      {} (patched in memory, state.json untouched)", serde_json::to_string(&pv.recipe)?);
+    } else {
+        println!("recipe:      {}", serde_json::to_string(&pv.recipe)?);
+    }
+    if let Some(mode) = &p.model.mode {
+        println!("mode:        {mode}");
+    }
     println!("card:        {}  profile {}", p.card_id, p.profile_key);
     println!("model:       {} {} [{}] on {}", p.model.name, p.model.quant, serde_json::to_string(&p.model.backend)?, p.model.device);
     println!("exe:         {}", p.exe.display());

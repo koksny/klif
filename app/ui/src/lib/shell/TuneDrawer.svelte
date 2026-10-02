@@ -78,6 +78,14 @@
   }
   const cacheValues = $derived(withCurrent(opts?.promptCacheMiB, recipe?.promptCacheMiB));
   const portValues = $derived(withCurrent(opts?.ports, recipe?.port));
+
+  // Krea on the fast starter: Precision (default low) with the hint of the selected level.
+  const precision = $derived(recipe?.precision ?? 'low');
+  // The levels pick the edit LoRA and the reference size, so they only matter with Edit on.
+  const precisionHint = $derived.by(() => {
+    const hint = opts?.precisions?.find((p) => p.value === precision)?.hint ?? '';
+    return hint && opts?.editToggle && !recipe?.edit ? `${hint} · used when Edit is on` : hint;
+  });
 </script>
 
 <div class="scrim" role="presentation" onclick={close} transition:fade|global={{ duration: 160 }}></div>
@@ -225,15 +233,56 @@
             <span class="ro">{m.specMode} <small>(set by the starter)</small></span>
           </div>
         {/if}
-      {:else if opts.imageSizes?.length}
-        <label class="field">
-          <span>Image size</span>
-          <select value={recipe.imageSize} onchange={(e) => set({ imageSize: e.currentTarget.value })}>
-            {#each opts.imageSizes as s (s.value)}
-              <option value={s.value}>{choiceText(s)}</option>
-            {/each}
-          </select>
-        </label>
+      {:else}
+        {#if opts.imageSizes?.length}
+          <label class="field">
+            <span>Image size</span>
+            <select value={recipe.imageSize} onchange={(e) => set({ imageSize: e.currentTarget.value })}>
+              {#each opts.imageSizes as s (s.value)}
+                <option value={s.value}>{choiceText(s)}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+
+        {#if opts.editToggle}
+          <div class="field">
+            <span id="lbl-edit">Edit</span>
+            <button
+              type="button"
+              class="switch"
+              role="switch"
+              aria-checked={!!recipe.edit}
+              aria-labelledby="lbl-edit"
+              class:on={!!recipe.edit}
+              onclick={() => set({ edit: !recipe.edit })}
+            >
+              <i></i>{recipe.edit ? 'identity edit · LoRA on' : 'off · plain generation'}
+            </button>
+          </div>
+        {/if}
+
+        {#if opts.precisions?.length}
+          <div class="field">
+            <span id="lbl-precision">Precision</span>
+            <div class="stack">
+              <div class="seg3" role="radiogroup" aria-labelledby="lbl-precision">
+                {#each opts.precisions as p (p.value)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={precision === p.value}
+                    class:on={precision === p.value}
+                    class:na={p.availability !== 'ready'}
+                    title={p.hint}
+                    onclick={() => set({ precision: p.value })}>{p.label}</button
+                  >
+                {/each}
+              </div>
+              {#if precisionHint}<small class="hint">{precisionHint}</small>{/if}
+            </div>
+          </div>
+        {/if}
       {/if}
 
       {#if portValues.length}
@@ -409,6 +458,15 @@
   .seg3 button.na.on {
     background: color-mix(in srgb, var(--k-warn, #f2a33a) 70%, var(--k-surface, #141414));
     border-color: var(--k-warn, #f2a33a);
+  }
+  .stack {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .stack .hint {
+    color: var(--k-muted, #8a8a8a);
+    font: 500 11px/1.3 var(--k-font-ui, system-ui, sans-serif);
   }
   .switch {
     display: inline-flex;

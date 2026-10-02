@@ -240,6 +240,9 @@ fn main() {
     let mut printed_records = 0usize;
     let mut jobs_seen = 0u64;
     let mut job_running = false;
+    // Step-by-step detail for the first two jobs and the first edit job.
+    let mut job_detail = false;
+    let mut edit_detailed = false;
     let mut last_bar = (0u32, 0u32);
     let mut prev_fatal: Option<String> = None;
     loop {
@@ -353,11 +356,13 @@ fn main() {
             let gen = im.activity == klif_common::vm::ImageActivity::Generating;
             if gen && !job_running {
                 jobs_seen += 1;
-                if jobs_seen <= 2 {
+                job_detail = jobs_seen <= 2 || (im.edit && !edit_detailed);
+                edit_detailed |= job_detail && im.edit;
+                if job_detail {
                     println!("[t={now_v:8.1}] job #{jobs_seen} starts: {}x{} edit={}", im.width, im.height, im.edit);
                 }
             }
-            if gen && jobs_seen <= 2 && (im.step, im.steps) != last_bar && im.step > 0 {
+            if gen && job_detail && (im.step, im.steps) != last_bar && im.step > 0 {
                 println!(
                     "[t={now_v:8.1}]   step {}/{} {:.2} s/it, elapsed {:.1}s, {}x{} edit={}",
                     im.step, im.steps, im.s_per_it, im.elapsed_s, im.width, im.height, im.edit
@@ -441,6 +446,12 @@ fn main() {
         for j in &im.recent {
             println!("   job {:>6.2}s {}x{} edit={}", j.seconds, j.width, j.height, j.edit);
         }
+        println!(
+            "image: default LoRA {:?}, applied to {} of {} jobs",
+            sd.default_lora,
+            sd.default_lora_jobs,
+            im.images_this_session
+        );
     }
     println!("fatal_hint {:?}, starter_exit {:?}", sig.fatal_hint, sig.starter_exit.map(|c| format!("{c} (0x{:08X})", c as i32 as u32)));
     println!("error_tail ({}):", sig.error_tail.len());

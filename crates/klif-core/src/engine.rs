@@ -560,7 +560,7 @@ impl Inner {
         };
         let record = owned.record.clone();
         let kind = slot.kind();
-        let (model, host, spec_mode) = match &plan {
+        let (mut model, host, spec_mode) = match &plan {
             Some(p) => (p.model.clone(), p.host.clone(), p.spec_mode.clone()),
             None => (
                 ModelRef { name: card_id.clone().unwrap_or_else(|| "Unknown model".into()), ..ModelRef::default() },
@@ -568,6 +568,10 @@ impl Inner {
                 None,
             ),
         };
+        if kind == SlotKind::Image {
+            // The old launcher only knows the catalog's starter: no fast-Krea "Edit · Low" mode for its runs.
+            model.mode = None;
+        }
         let p = PersistedSession {
             record: record.clone(),
             origin: SessionOrigin::Legacy,

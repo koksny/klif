@@ -8,6 +8,11 @@
 //!   3. non-sd only: `-PromptCacheMiB <capped cache> -Port <PORT setting>`
 //!   4. dense Qwen 27B only: `-Vision on|off`
 //!   5. non-sd only: `-CacheType q4_0|q8_0`
+//!
+//! Exception: a Krea card on HIP + the inference GPU with `[krea] fast_starter` configured launches through that
+//! starter instead (`-File <fast_starter> -Variant <Realism|Muse> -Size <WxH> -Port <port> -Precision
+//! <Low|Medium|High> -Edit <On|Off>`, working directory = the starter's folder). Everything else (session and
+//! log names, LLAMA_API_KEY removed, host, expected VRAM) is the same as for the catalog's starter.
 
 use anyhow::{anyhow, bail, Result};
 use klif_common::config::Config;
@@ -15,6 +20,8 @@ use klif_common::vm::{Availability, Recipe, SlotId};
 use klif_common::Secret;
 
 use crate::chrono_like::LocalStamp;
+use crate::data::{Card, Profile};
+use crate::slots::Effective;
 use crate::{Catalog, EnvValue, LaunchPlan};
 
 /// The only variable the GUI manages around the child (removed always; set for llama cards when a key exists).
@@ -60,11 +67,85 @@ pub(crate) fn plan(
     let sd = card.is_sd;
     let eff = c.effective(card, profile, recipe);
     let rules = &c.data.rules;
+    let fast = c.fast_krea_for(card, recipe);
 
     // ---- argv ------------------------------------------------------------------------------
     let mut args: Vec<String> = rules.fixed_args.clone();
-    args.push(profile.script.to_string_lossy().into_owned());
+    if let Some(fast) = fast {
+        args.push(fast.to_string_lossy().into_owned());
+        let variant = profile.arg("Variant").map(str::to_string).unwrap_or_else(|| krea_variant(&card.id).to_string());
+        let size = c
+            .fast_krea_size(card, recipe)
+            .or_else(|| profile.arg("Size").map(str::to_string))
+            .or_else(|| card.ctx_label(profile.context).map(str::to_string))
+            .unwrap_or_default();
+        let precision = recipe.precision.unwrap_or_default();
+        let edit = recipe.edit.unwrap_or(false);
+        for (name, value) in [
+            ("-Variant", variant),
+            ("-Size", size),
+            ("-Port", eff.port.to_string()),
+            ("-Precision", precision.label().to_string()),
+            ("-Edit", if edit { "On" } else { "Off" }.to_string()),
+        ] {
+            args.push(name.to_string());
+            args.push(value);
+        }
+    } else {
+        args.push(profile.script.to_string_lossy().into_owned());
+        catalog_args(c, card, profile, &eff, &mut args);
+    }
 
+    // ---- environment -----------------------------------------------------------------------
+    let env_remove = vec![API_KEY_VAR.to_string()];
+    let mut env_set: Vec<(String, EnvValue)> = Vec::new();
+    if !sd {
+        if let Some(key) = api_key {
+            env_set.push((API_KEY_VAR.to_string(), EnvValue::Secret(key.clone())));
+        }
+        if cfg.telemetry.verbose_llama_logs {
+            env_set.push((LOG_VERBOSITY_VAR.to_string(), EnvValue::Plain(LOG_VERBOSITY_VALUE.to_string())));
+        }
+    }
+
+    // ---- working directory, session and logs -----------------------------------------------
+    let script = fast.unwrap_or(profile.script.as_path());
+    let cwd = script.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let session_name = session_name(&rules.session_format, &now_local.format(), &card.id, eff.port);
+    let logs = c.logs_dir(cfg);
+    let out_log = logs.join(format!("{session_name}.out.log"));
+    let err_log = logs.join(format!("{session_name}.err.log"));
+
+    let host = if sd { cfg.net.image_host.clone() } else { cfg.net.llm_host.clone() };
+    let model = c.model_ref(card, profile, recipe, &eff);
+    let spec_mode = model.spec_mode.clone();
+    let expected_layers = c.expected_layers(card, profile, recipe, &eff).unwrap_or_default();
+
+    Ok(LaunchPlan {
+        slot,
+        kind: slot.kind(),
+        card_id: card.id.clone(),
+        profile_key: profile.key.clone(),
+        model,
+        exe: crate::export::powershell_exe(),
+        args,
+        cwd,
+        env_remove,
+        env_set,
+        session_name,
+        out_log,
+        err_log,
+        port: eff.port,
+        host,
+        expected_layers,
+        spec_mode,
+    })
+}
+
+/// Steps 2 to 5 of the module doc: the catalog starter's arguments after the script path.
+fn catalog_args(c: &Catalog, card: &Card, profile: &Profile, eff: &Effective, args: &mut Vec<String>) {
+    let sd = card.is_sd;
+    let rules = &c.data.rules;
     let mut pairs: Vec<(String, String)> = profile.args.clone();
     if c.data.is_gen_override(&card.id) {
         let mode = eff.mode.clone().unwrap_or_else(|| c.data.defaults.generation_mode.clone());
@@ -100,50 +181,11 @@ pub(crate) fn plan(
         args.push("-CacheType".into());
         args.push(eff.kv.clone());
     }
+}
 
-    // ---- environment -----------------------------------------------------------------------
-    let env_remove = vec![API_KEY_VAR.to_string()];
-    let mut env_set: Vec<(String, EnvValue)> = Vec::new();
-    if !sd {
-        if let Some(key) = api_key {
-            env_set.push((API_KEY_VAR.to_string(), EnvValue::Secret(key.clone())));
-        }
-        if cfg.telemetry.verbose_llama_logs {
-            env_set.push((LOG_VERBOSITY_VAR.to_string(), EnvValue::Plain(LOG_VERBOSITY_VALUE.to_string())));
-        }
-    }
-
-    // ---- working directory, session and logs -----------------------------------------------
-    let cwd = profile.script.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let session_name = session_name(&rules.session_format, &now_local.format(), &card.id, eff.port);
-    let logs = c.logs_dir(cfg);
-    let out_log = logs.join(format!("{session_name}.out.log"));
-    let err_log = logs.join(format!("{session_name}.err.log"));
-
-    let host = if sd { cfg.net.image_host.clone() } else { cfg.net.llm_host.clone() };
-    let model = c.model_ref(card, profile, recipe, &eff);
-    let spec_mode = model.spec_mode.clone();
-    let expected_layers = c.expected_layers(card, profile, recipe, &eff).unwrap_or_default();
-
-    Ok(LaunchPlan {
-        slot,
-        kind: slot.kind(),
-        card_id: card.id.clone(),
-        profile_key: profile.key.clone(),
-        model,
-        exe: crate::export::powershell_exe(),
-        args,
-        cwd,
-        env_remove,
-        env_set,
-        session_name,
-        out_log,
-        err_log,
-        port: eff.port,
-        host,
-        expected_layers,
-        spec_mode,
-    })
+/// The fast starter's `-Variant` for a Krea card without one in its profile ("krea-muse" -> Muse).
+fn krea_variant(card_id: &str) -> &'static str {
+    if card_id.to_ascii_lowercase().contains("muse") { "Muse" } else { "Realism" }
 }
 
 fn klif_backend(r: &Recipe) -> &'static str {

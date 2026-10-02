@@ -2,6 +2,11 @@
 //! the starter's exit line. sd-server lines carry no timestamps, so times are arrival times.
 //! Level tags are unreliable (the Krea build prints the previous message's tag), so lines are
 //! classified by message text only.
+//!
+//! Two log dialects: the older Krea build (`stable-diffusion.cpp:NNN - ...`) and master-929 with the
+//! KLIF patches (`diffusion_engine.cpp` / `image.cpp`, `[INFO   ]` tags, eager load, `preprocess ref[N]`
+//! before an edit job, `default LoRA: name:1.00 (...)` at startup and `default LoRA applied: name:1.00`
+//! before every job the server's `--default-lora` applies to).
 
 use crate::llama::Steps;
 use crate::text::{redact, round_to, strip_sd_tag};
@@ -28,15 +33,36 @@ re!(D13, r"^(?:stable-diffusion|image)\.cpp:\d+\s+- generating image: (\d+)/(\d+
 re!(D14, r"^(?:stable-diffusion|image)\.cpp:\d+\s+- sampling completed, taking ([\d.]+)s$");
 re!(D15, r"^(?:stable-diffusion|image)\.cpp:\d+\s+- decoding (\d+)(?:/\d+)? latents$");
 re!(D16, r"^(?:stable-diffusion|image)\.cpp:\d+\s+- generate_image completed in ([\d.]+)s$");
+// master-929: reference image preprocessing, logged just before `generate_image WxH` of an edit job.
+re!(D17, r"^image_preprocess\.cpp:\d+\s+- preprocess ref\[\d+\]");
+// KLIF's sd-server patch: the startup default, then one line before every job it is applied to.
+re!(D18, r"^\w+\.cpp:\d+\s+- default LoRA: (.+?):(-?\d+(?:\.\d+)?) \(");
+re!(D19, r"^\w+\.cpp:\d+\s+- default LoRA applied: (.+?)\s*$");
+// Startup validation (`common.cpp: - error: unknown argument: --x`, `--default-lora '..' not found ...`):
+// every one of them ends the process before it listens.
+re!(D21, r"^\w+\.cpp:\d+\s+- error: (.+?)\s*$");
+re!(D22, r"^main\.cpp:\d+\s+- new_sd_ctx_t failed");
 // Raw lines (no tag).
 re!(D20, r"^sd-server (\S+) zakonczyl dzialanie z kodem (-?\d+)\.\s*$");
+// The same starter exit line in English ("sd-server exited with code 1.", "sd-server HIP929 exited with code -1").
+re!(D20B, r"(?i)^sd-server(?: (\S+))? (?:exited|ended|stopped) with (?:exit )?code (-?\d+)\.?\s*$");
 re!(D26, r"^\s*\|([=>]+)\s*\|\s+(\d+)/(\d+) - ([\d.]+)(s/it|it/s)\s*$");
 re!(E01, r"^ggml_cuda_init: found (\d+) ROCm devices");
 re!(E02, r"^\s+Device (\d+): (.+?), (gfx\w+)(?::\S+)? \((0x[0-9a-f]+)\), VMM: (\w+), Wave Size: (\d+), VRAM: (\d+) MiB");
 re!(E04, r"ROCm error: (.+)$");
 re!(E05, r"^(.+ggml-cuda\.cu):(\d+): ROCm error\s*$");
 re!(E06, r"ggml_cuda_compute_forward: (\w+) failed$");
-re!(GPU_BANNER, r"^GPU: (.+?) \((\S+) / (gfx\w+)\)\s*$");
+re!(E07, r"^ggml_cuda_init: failed to initialize ROCm: (.+?)\s*$");
+// The starters' own refusals before the server runs ("ERROR: Brak C:\...\x.dll", "ERROR: port 1234 jest zajety ...").
+re!(S01, r"^ERROR: Brak (.+?)\s*$");
+re!(S02, r"^ERROR: port (\d+) jest zaj[eę]ty");
+re!(S03, r"^ERROR: (.+?)\s*$");
+re!(NATIVE_ERR, r"^[\w.-]+\.exe : ");
+// An absolute Windows path (up to a quote or the end of the line); its last component is the file name.
+re!(WIN_PATH, r#"[A-Za-z]:\\(?:[^\\'"\r\n]+\\)*([^\\'"\r\n]*)"#);
+// Starter banners: "GPU: <name> (ROCm<N> / gfx<arch>)" and the fast Krea starter's
+// "GPU: <name> (HIP_VISIBLE_DEVICES=<N> -> ROCm0 / gfx<arch>), Flash Attention: ON".
+re!(GPU_BANNER, r"^GPU: (.+?) \((?:[^()]*?)(\S+) / (gfx\w+)\)");
 
 #[derive(Debug, Clone)]
 struct Job {
@@ -44,6 +70,8 @@ struct Job {
     width: u32,
     height: u32,
     edit: bool,
+    /// The server's default LoRA was applied to this job (`default LoRA applied: ...` before it).
+    default_lora: bool,
     step: u32,
     steps: u32,
     s_per_it: f64,
@@ -70,6 +98,15 @@ pub struct SdParser {
     pub aborted_jobs: u32,
     /// RAM-resident params (MB) from D04, for information.
     pub params_ram_mb: Option<f64>,
+    /// The server's `--default-lora` (name and weight) from its startup line.
+    pub default_lora: Option<(String, f64)>,
+    /// Finished jobs the default LoRA was applied to.
+    pub default_lora_jobs: u64,
+    /// ROCm devices the server sees (`ggml_cuda_init: found N ROCm devices`).
+    rocm_devices: Option<u32>,
+    /// A `preprocess ref[N]` / `default LoRA applied` line arrived for the job that starts next.
+    pending_ref: bool,
+    pending_lora: bool,
 }
 
 impl Default for SdParser {
@@ -97,6 +134,11 @@ impl SdParser {
             failed_op: None,
             aborted_jobs: 0,
             params_ram_mb: None,
+            default_lora: None,
+            default_lora_jobs: 0,
+            rocm_devices: None,
+            pending_ref: false,
+            pending_lora: false,
         }
     }
 
@@ -135,6 +177,12 @@ impl SdParser {
         }
         self.first_line();
         let msg = strip_sd_tag(line);
+        // A PowerShell starter that runs the server directly may get its first stderr line wrapped as
+        // `sd-server.exe : <line>` (Windows PowerShell 5.1 NativeCommandError); classify the line itself.
+        let msg = match NATIVE_ERR.find(msg) {
+            Some(m) => strip_sd_tag(&msg[m.end()..]),
+            None => msg,
+        };
 
         // Sampling bar (`  |=====>   | 3/8 - 2.50s/it`); tensor-upload bars use `#` and are ignored.
         if let Some(c) = D26.captures(msg) {
@@ -155,18 +203,40 @@ impl SdParser {
                 self.aborted_jobs += 1;
             }
             let (w, h) = (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0));
+            // master-929 logs the reference preprocessing (and KLIF's default-LoRA line) before the job line.
+            let edit = std::mem::take(&mut self.pending_ref);
+            let default_lora = std::mem::take(&mut self.pending_lora);
             self.job = Some(Job {
                 start_t: at,
                 width: w,
                 height: h,
-                edit: false,
+                edit,
+                default_lora,
                 step: 0,
                 steps: self.last_steps,
                 s_per_it: 0.0,
                 sampling: false,
                 decoding: false,
             });
-            self.last_size = (w, h, false);
+            self.last_size = (w, h, edit);
+            return;
+        }
+        if D17.is_match(msg) {
+            match self.job.as_mut() {
+                Some(j) => j.edit = true,
+                None => self.pending_ref = true,
+            }
+            return;
+        }
+        if D19.is_match(msg) {
+            match self.job.as_mut() {
+                Some(j) => j.default_lora = true,
+                None => self.pending_lora = true,
+            }
+            return;
+        }
+        if let Some(c) = D18.captures(msg) {
+            self.default_lora = Some((c[1].trim().to_string(), c[2].parse().unwrap_or(1.0)));
             return;
         }
         if D08.is_match(msg) {
@@ -208,7 +278,12 @@ impl SdParser {
                     self.recent.pop_front();
                 }
                 self.last_size = (j.width, j.height, j.edit);
+                if j.default_lora {
+                    self.default_lora_jobs += 1;
+                }
             }
+            self.pending_ref = false;
+            self.pending_lora = false;
             self.images += 1;
             self.job_seconds.push(secs);
             return;
@@ -245,13 +320,20 @@ impl SdParser {
         if let Some(c) = E01.captures(msg) {
             // Without the starter banner, only the device count is known (the selected device is in
             // the launch arguments, not in this table).
+            let n: u32 = c[1].parse().unwrap_or(0);
+            self.rocm_devices = Some(n);
             if self.device_detail.is_none() {
-                self.steps.detail[1] = Some(format!("{} ROCm devices", &c[1]));
+                self.steps.detail[1] = Some(if n == 1 { "1 ROCm device".to_string() } else { format!("{n} ROCm devices") });
             }
             self.steps.reach(1);
             return;
         }
-        if E02.is_match(msg) {
+        if let Some(c) = E02.captures(msg) {
+            // Exactly one visible device (HIP_VISIBLE_DEVICES with the gfx1201-only build): that one is it.
+            if self.device_detail.is_none() && self.rocm_devices == Some(1) {
+                let name = c[2].trim().trim_start_matches("AMD Radeon ").trim();
+                self.steps.detail[1] = Some(format!("{name} · ROCm{} · {}", &c[1], &c[3]));
+            }
             return;
         }
         // ---- faults ----
@@ -280,6 +362,51 @@ impl SdParser {
             self.push_error(line);
             self.set_fatal("ROCm error: sd-server aborted".into());
             return;
+        }
+        if let Some(c) = D20B.captures(msg) {
+            let code: i64 = c[2].parse().unwrap_or(0);
+            self.starter_exit = Some(code);
+            self.push_error(line);
+            if code != 0 {
+                let hex = format!("0x{:08X}", code as i32 as u32);
+                self.set_fatal(format!("sd-server exited with code {code} ({hex})"));
+            }
+            return;
+        }
+        if let Some(c) = E07.captures(msg) {
+            self.push_error(line);
+            if self.listening.is_none() {
+                self.set_fatal(format!("ROCm could not start: {}", c[1].trim()));
+            }
+            return;
+        }
+        if D22.is_match(msg) {
+            self.push_error(line);
+            if self.listening.is_none() {
+                self.set_fatal("sd-server could not load the models".into());
+            }
+            return;
+        }
+        if let Some(c) = D21.captures(msg) {
+            self.push_error(line);
+            if self.listening.is_none() {
+                self.set_fatal(format!("sd-server refused to start: {}", short_paths(&c[1])));
+            }
+            return;
+        }
+        if self.listening.is_none() {
+            let starter = if let Some(c) = S01.captures(msg) {
+                Some(format!("the starter is missing {}", short_paths(&c[1])))
+            } else if let Some(c) = S02.captures(msg) {
+                Some(format!("the starter found port {} already in use", &c[1]))
+            } else {
+                S03.captures(msg).map(|c| format!("the starter stopped: {}", short_paths(&c[1])))
+            };
+            if let Some(hint) = starter {
+                self.push_error(line);
+                self.set_fatal(hint);
+                return;
+            }
         }
         if line.trim_start().starts_with("[ERROR") || (from_err && msg.to_ascii_lowercase().contains("error")) {
             self.push_error(line);
@@ -328,6 +455,12 @@ impl SdParser {
     pub fn median_seconds(&self) -> f64 {
         median(&self.job_seconds)
     }
+}
+
+/// A startup error with every absolute Windows path cut to its last component (`'D:\dir\loras'` becomes
+/// `'loras'`, `D:\dir\x.dll` becomes `x.dll`): no machine path in a UI sentence.
+fn short_paths(msg: &str) -> String {
+    WIN_PATH.replace_all(msg, |c: &regex::Captures| c[1].to_string()).into_owned()
 }
 
 pub fn median(v: &[f64]) -> f64 {

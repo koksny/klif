@@ -310,6 +310,10 @@ impl Card {
     pub fn is_gemma(&self) -> bool {
         self.family_id == "gemma"
     }
+    /// Krea 2 image cards (Realism, Muse): the only cards the fast Krea starter runs.
+    pub fn is_krea(&self) -> bool {
+        self.is_image && self.family_id == "krea"
+    }
 }
 
 #[derive(Debug, Clone)]

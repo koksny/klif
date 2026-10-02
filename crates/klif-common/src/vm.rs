@@ -128,6 +128,34 @@ pub struct Recipe {
     pub vision: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Krea speed/quality level (image slot, fast Krea starter only). See types.ts Recipe.precision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precision: Option<Precision>,
+    /// Krea identity-edit mode (image slot, fast Krea starter only). See types.ts Recipe.edit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<bool>,
+}
+
+/// types.ts `Precision`: the three Krea speed/quality levels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Precision {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+impl Precision {
+    pub const ALL: [Precision; 3] = [Precision::Low, Precision::Medium, Precision::High];
+    /// "Low" / "Medium" / "High": the display label and the fast starter's `-Precision` value.
+    pub fn label(self) -> &'static str {
+        match self {
+            Precision::Low => "Low",
+            Precision::Medium => "Medium",
+            Precision::High => "High",
+        }
+    }
 }
 
 /// `Partial<Recipe>` from the UI: every field optional.
@@ -145,6 +173,8 @@ pub struct RecipePatch {
     pub port: Option<u16>,
     pub vision: Option<bool>,
     pub mode: Option<String>,
+    pub precision: Option<Precision>,
+    pub edit: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,6 +199,19 @@ pub struct CardChoice {
     pub quant: String,
 }
 
+/// types.ts `RecipeChoice<Precision> & { hint: string }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrecisionChoice {
+    pub value: Precision,
+    pub label: String,
+    pub availability: Availability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// One short line, e.g. "fastest · ~19 s edit 1024×768".
+    pub hint: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeOptions {
@@ -189,6 +232,12 @@ pub struct RecipeOptions {
     pub vision: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modes: Option<Vec<String>>,
+    /// Krea precision levels (fast Krea starter only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precisions: Option<Vec<PrecisionChoice>>,
+    /// True when the current card takes the Edit toggle (fast Krea starter only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit_toggle: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -28,7 +28,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use klif_common::config::{Config, GpuCfg, LauncherCfg, NetCfg, TelemetryCfg, TiersCfg, UiCfg};
+use klif_common::config::{Config, GpuCfg, KreaCfg, LauncherCfg, NetCfg, TelemetryCfg, TiersCfg, UiCfg};
 use klif_common::vm::{HostInfo, HostKind, PanelInfo};
 use tauri::webview::{PageLoadEvent, PageLoadPayload};
 use tauri::{AppHandle, Emitter, RunEvent, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
@@ -51,6 +51,7 @@ fn fallback_config() -> Config {
         tiers: TiersCfg::default(),
         ui: UiCfg::default(),
         telemetry: TelemetryCfg::default(),
+        krea: KreaCfg::default(),
         source: PathBuf::new(),
         state_dir,
     }

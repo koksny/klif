@@ -309,7 +309,8 @@ pub(crate) fn apply_patch(c: &Catalog, slot: SlotId, current: &Recipe, patch: &R
         }
     }
     if let (Some(v), Some(card)) = (&patch.image_size, target) {
-        if card.ctx_by_label(v).is_some() {
+        let fast_size = c.takes_krea_settings(card) && crate::slots::FAST_KREA_SIZES.contains(&v.as_str());
+        if card.ctx_by_label(v).is_some() || fast_size {
             r.image_size = Some(v.clone());
         }
     }
@@ -334,6 +335,13 @@ pub(crate) fn apply_patch(c: &Catalog, slot: SlotId, current: &Recipe, patch: &R
             r.mode = Some(m.clone());
         }
     }
+    // Krea Precision / Edit: kept here, dropped by repair where the card does not take them.
+    if let Some(v) = patch.precision {
+        r.precision = Some(v);
+    }
+    if let Some(v) = patch.edit {
+        r.edit = Some(v);
+    }
 
     // A swap to Bonsai starts from its context-dependent KV type, like a preset without a CacheType does.
     if r.card_id != previous_card && patch.kv_type.is_none() {
@@ -356,8 +364,8 @@ pub(crate) fn apply_patch(c: &Catalog, slot: SlotId, current: &Recipe, patch: &R
 }
 
 /// Make a recipe consistent with the catalog: the card exists, a profile exists for its backend/hardware,
-/// the context is one the card offers, KV/cache/port/vision/mode are present exactly where the card uses
-/// them, and the prompt cache respects the catalog's cap for the card and context.
+/// the context is one the card offers, KV/cache/port/vision/mode (and Krea precision/edit) are present exactly
+/// where the card uses them, and the prompt cache respects the catalog's cap for the card and context.
 pub(crate) fn repair(c: &Catalog, slot: SlotId, r: &mut Recipe, fill: &Fill, intent: Intent) {
     if c.data.card(&r.card_id).is_none() {
         let fallback = group(c, slot).first().map(|x| x.id.clone()).or_else(|| c.data.cards.first().map(|x| x.id.clone()));
@@ -370,7 +378,16 @@ pub(crate) fn repair(c: &Catalog, slot: SlotId, r: &mut Recipe, fill: &Fill, int
     repair_combo(c, card, r, intent);
 
     // context
-    if card.is_image {
+    if card.is_image && c.fast_krea_for(card, r).is_some() {
+        // The fast starter has its own size list (slots::FAST_KREA_SIZES); 720x1024 became 768x1024.
+        r.ctx_tokens = None;
+        let fast = crate::slots::FAST_KREA_SIZES;
+        let wanted = r.image_size.as_deref().map(|s| if s == "720x1024" { "768x1024" } else { s });
+        r.image_size = match wanted {
+            Some(s) if fast.contains(&s) => Some(s.to_string()),
+            _ => card.ctx_label(card.default_context).map(str::to_string),
+        };
+    } else if card.is_image {
         r.ctx_tokens = None;
         let valid = r.image_size.as_deref().and_then(|s| card.ctx_by_label(s)).is_some();
         if !valid {
@@ -382,6 +399,15 @@ pub(crate) fn repair(c: &Catalog, slot: SlotId, r: &mut Recipe, fill: &Fill, int
         r.image_size = None;
         let ctx = r.ctx_tokens.filter(|x| card.offers(*x)).unwrap_or(card.default_context);
         r.ctx_tokens = Some(ctx);
+    }
+
+    // Krea cards with the fast starter configured carry precision (default low) and edit (default off).
+    if c.takes_krea_settings(card) {
+        r.precision = Some(r.precision.unwrap_or_default());
+        r.edit = Some(r.edit.unwrap_or(false));
+    } else {
+        r.precision = None;
+        r.edit = None;
     }
 
     if card.is_sd {

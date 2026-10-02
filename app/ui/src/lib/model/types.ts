@@ -45,7 +45,7 @@ export interface ModelRef {
   specMode?: string;
   /** Vision projector loaded (LLM only). */
   vision?: boolean;
-  /** Reasoning mode, e.g. "Thinking" / "Instruct" (LLM only). */
+  /** Reasoning mode, e.g. "Thinking" / "Instruct" (LLM); Krea on the fast starter: "Edit · Low" / "Generate · Low". */
   mode?: string;
   /** Default output size for image models, e.g. "512x768". */
   imageSize?: string;
@@ -87,7 +87,22 @@ export interface Recipe {
   vision?: boolean;
   /** Reasoning mode, e.g. "Thinking" / "Instruct", only where the card supports it. */
   mode?: string;
+  /**
+   * Krea speed/quality level (image slot, only where options.precisions is offered: the fast Krea starter).
+   * low = rank-64 edit LoRA + quarter-size reference, medium = rank-64 + half-size reference,
+   * high = the full identity LoRA + half-size reference. Default 'low'.
+   */
+  precision?: Precision;
+  /**
+   * Krea identity edit (image slot, only where options.editToggle is true). Off = plain generation; on = the
+   * edit LoRA and reference preset per precision, with the identity LoRA applied to every request that names
+   * no LoRA itself. Default false.
+   */
+  edit?: boolean;
 }
+
+/** The three Krea precision levels (Recipe.precision). */
+export type Precision = 'low' | 'medium' | 'high';
 
 export interface RecipeChoice<T> {
   value: T;
@@ -110,6 +125,10 @@ export interface RecipeOptions {
   /** True when the current card supports the vision projector. */
   vision?: boolean;
   modes?: string[];
+  /** Krea precision levels with a one-line hint each ("fastest · ~19 s edit 1024×768"); fast Krea starter only. */
+  precisions?: (RecipeChoice<Precision> & { hint: string })[];
+  /** True when the current card takes the Edit toggle (fast Krea starter only). */
+  editToggle?: boolean;
 }
 
 /** Lifecycle of the one running session. */

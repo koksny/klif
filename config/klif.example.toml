@@ -43,3 +43,9 @@ preset = "qwen-dense"
 preset = "gemma-tavern"
 [tiers.krea]
 preset = "krea"
+
+# Optional: the fast Krea starter (a patched sd.cpp build). When set, the Krea cards on HIP + the inference GPU
+# launch through it (`-Variant -Size -Port -Precision Low|Medium|High -Edit On|Off`) and the Tune drawer offers
+# Edit and Precision. Leave it out to launch Krea through the catalog's own starter.
+# [krea]
+# fast_starter = 'D:\path\to\workshop\sd-server\Start-Krea2-929.ps1'

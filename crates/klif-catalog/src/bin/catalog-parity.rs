@@ -11,11 +11,13 @@
 //! `--dump` prints, instead of the parity lines, the tier default recipes, the view-model slots built from them
 //! (with port 7030 reported busy) and the result of a few Tune patches, as pretty JSON, for eyeballing.
 //! The config is found the usual way (KLIF_CONFIG, .local/klif.toml upward from the working directory).
+//! The parity lines compare with the old GUI, so they ignore `[krea] fast_starter` unless `--fast-krea` is given;
+//! `--dump` uses the config as it is and adds the fast Krea plans (every Precision x Edit) when it is set.
 
 use klif_catalog::chrono_like::LocalStamp;
 use klif_catalog::{Catalog, EnvValue, OldLauncherDefaults};
 use klif_common::config::Config;
-use klif_common::vm::{Backend, RecipePatch, SlotId};
+use klif_common::vm::{Backend, Precision, RecipePatch, SlotId};
 use klif_common::Secret;
 use serde_json::{json, Value};
 
@@ -41,12 +43,17 @@ fn main() -> anyhow::Result<()> {
     let saved_kv = arg_value(&args, "--saved-kv").unwrap_or_else(|| "q8_0".into());
     let saved_mode = arg_value(&args, "--saved-mode").unwrap_or_else(|| "Thinking".into());
 
-    let cfg = Config::load()?;
+    let mut cfg = Config::load()?;
+    let dump_mode = args.iter().any(|a| a == "--dump");
+    if !dump_mode && !args.iter().any(|a| a == "--fast-krea") {
+        // The old GUI has no fast Krea starter: parity is about the catalog's starters.
+        cfg.krea.fast_starter = None;
+    }
     let started = std::time::Instant::now();
     let catalog = Catalog::load(&cfg)?;
     eprintln!("catalog origin: {:?}; warnings: {}; loaded in {:.2} s", catalog.origin(), catalog.warnings().len(), started.elapsed().as_secs_f64());
 
-    if args.iter().any(|a| a == "--dump") {
+    if dump_mode {
         return dump(&catalog, &cfg, &args);
     }
 
@@ -207,6 +214,74 @@ fn dump(catalog: &Catalog, cfg: &Config, args: &[String]) -> anyhow::Result<()> 
         let next = catalog.apply_patch(slot, cur, &patch);
         println!("{} | {what}
    {}", slot.as_str(), serde_json::to_string(&next)?);
+    }
+    dump_fast_krea(catalog, cfg, &recipes, stamp)
+}
+
+/// The fast Krea starter: the Tune patches that drive it and its plans (argv, cwd, logs, env names), dry.
+fn dump_fast_krea(catalog: &Catalog, cfg: &Config, recipes: &klif_catalog::Recipes, stamp: LocalStamp) -> anyhow::Result<()> {
+    println!("== fast Krea starter: {:?}", catalog.fast_krea_starter());
+    let Some(base) = recipes.get(&SlotId::Krea) else { return Ok(()) };
+    let krea = |patch: RecipePatch| catalog.apply_patch(SlotId::Krea, base, &patch);
+    let chain: Vec<(&str, RecipePatch)> = vec![
+        ("edit on", RecipePatch { edit: Some(true), ..Default::default() }),
+        ("precision high", RecipePatch { precision: Some(Precision::High), ..Default::default() }),
+        ("card -> krea-muse", RecipePatch { card_id: Some("krea-muse".into()), ..Default::default() }),
+        ("backend -> Vulkan (catalog starter, values kept)", RecipePatch { backend: Some(Backend::Vulkan), ..Default::default() }),
+        ("backend -> HIP", RecipePatch { backend: Some(Backend::Hip), ..Default::default() }),
+        ("card -> qwen-image-21 (values dropped)", RecipePatch { card_id: Some("qwen-image-21".into()), ..Default::default() }),
+        ("card -> krea-realism (defaults again)", RecipePatch { card_id: Some("krea-realism".into()), ..Default::default() }),
+    ];
+    let mut cur = base.clone();
+    for (what, patch) in chain {
+        cur = catalog.apply_patch(SlotId::Krea, &cur, &patch);
+        let live = klif_catalog::LiveFacts::default();
+        let mut rs = recipes.clone();
+        rs.insert(SlotId::Krea, cur.clone());
+        let slot = catalog.slots(&rs, &live).into_iter().find(|s| s.id == SlotId::Krea);
+        let (mode, edit_toggle, levels) = slot
+            .as_ref()
+            .map(|s| {
+                let o = s.options.as_ref();
+                (
+                    s.model.mode.clone(),
+                    o.and_then(|o| o.edit_toggle),
+                    o.and_then(|o| o.precisions.as_ref()).map(|v| v.iter().map(|p| format!("{}: {}", p.label, p.hint)).collect::<Vec<_>>()),
+                )
+            })
+            .unwrap_or_default();
+        println!("krea | {what}
+   recipe {}
+   model.mode {mode:?}  editToggle {edit_toggle:?}  precisions {levels:?}", serde_json::to_string(&cur)?);
+    }
+    for edit in [false, true] {
+        for precision in [Precision::Low, Precision::Medium, Precision::High] {
+            let r = krea(RecipePatch { edit: Some(edit), precision: Some(precision), image_size: Some("1024x1024".into()), ..Default::default() });
+            match catalog.plan_unchecked(cfg, SlotId::Krea, &r, None, stamp) {
+                Ok(p) => println!(
+                    "plan edit={edit} precision={precision:?}: mode={:?}
+   exe {}
+   argv {:?}
+   cwd {}
+   out {}
+   envRemove {:?} envSet {:?} port {} layers {}",
+                    p.model.mode,
+                    p.exe.display(),
+                    p.args,
+                    p.cwd.display(),
+                    p.out_log.display(),
+                    p.env_remove,
+                    p.env_set.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+                    p.port,
+                    p.expected_layers.iter().map(|l| format!("{}={}", l.label, l.gib)).collect::<Vec<_>>().join(" ")
+                ),
+                Err(e) => println!("plan edit={edit} precision={precision:?}: refused: {e:#}"),
+            }
+        }
+    }
+    match catalog.plan(cfg, SlotId::Krea, base, None, stamp) {
+        Ok(_) => println!("plan() with the file-existence gate, default recipe: ok"),
+        Err(e) => println!("plan() with the file-existence gate, default recipe: refused: {e:#}"),
     }
     Ok(())
 }

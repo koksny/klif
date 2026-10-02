@@ -26,6 +26,8 @@ pub struct Config {
     pub ui: UiCfg,
     #[serde(default)]
     pub telemetry: TelemetryCfg,
+    #[serde(default)]
+    pub krea: KreaCfg,
     /// Filled by `Config::load`: the file it came from and its directory.
     #[serde(skip)]
     pub source: PathBuf,
@@ -145,6 +147,22 @@ pub struct TelemetryCfg {
 impl Default for TelemetryCfg {
     fn default() -> Self {
         Self { warn_below_gib: 0.15, verbose_llama_logs: true }
+    }
+}
+
+/// Optional `[krea]` section: the fast Krea starter (patched sd.cpp build with Precision / Edit).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct KreaCfg {
+    /// PowerShell starter taking `-Variant -Size -Port -Precision Low|Medium|High -Edit On|Off`. When set, the
+    /// Krea cards on HIP + the inference GPU launch through it instead of the catalog's starter, and the Tune
+    /// drawer offers Edit and Precision. Unset (or empty) = the catalog's starter, exactly as before.
+    pub fast_starter: Option<PathBuf>,
+}
+
+impl KreaCfg {
+    /// The configured fast starter, if any (an empty string counts as unset).
+    pub fn fast_starter(&self) -> Option<&Path> {
+        self.fast_starter.as_deref().filter(|p| !p.as_os_str().is_empty())
     }
 }
 

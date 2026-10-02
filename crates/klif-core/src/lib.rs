@@ -113,16 +113,27 @@ pub struct PlanPreview {
     pub refused: Option<String>,
     /// Whether an API key exists (its value is never exposed here).
     pub api_key_present: bool,
+    /// The recipe the plan was built from (after any preview patch and the catalog's repair).
+    pub recipe: klif_common::vm::Recipe,
 }
 
 /// Build the launch plan for a tier from the persisted (or default) recipe, without starting the engine.
 /// The plan carries the API key as an `EnvValue::Secret` when one exists: print names only.
 pub fn preview_plan(cfg: &Config, slot: SlotId) -> Result<PlanPreview> {
+    preview_plan_with(cfg, slot, None)
+}
+
+/// `preview_plan` with a Tune patch applied in memory first, repaired exactly like the UI's setRecipe.
+/// Nothing is written: state.json keeps the recipe the app shows.
+pub fn preview_plan_with(cfg: &Config, slot: SlotId, patch: Option<&klif_common::vm::RecipePatch>) -> Result<PlanPreview> {
     let catalog = klif_catalog::Catalog::load(cfg)?;
     let old = oldstate::read(cfg.launcher.state_file.as_deref());
     let persisted = state::load(&cfg.state_path("state.json"));
     let recipes = engine::initial_recipes(cfg, &catalog, &persisted, old.as_ref());
-    let recipe = recipes.get(&slot).cloned().ok_or_else(|| anyhow::anyhow!("no recipe for {}", slot.as_str()))?;
+    let mut recipe = recipes.get(&slot).cloned().ok_or_else(|| anyhow::anyhow!("no recipe for {}", slot.as_str()))?;
+    if let Some(p) = patch {
+        recipe = catalog.apply_patch(slot, &recipe, p);
+    }
     let key = if slot.kind() == klif_common::vm::SlotKind::Llm {
         oldstate::read_api_key(cfg.launcher.state_file.as_deref())
     } else {
@@ -133,5 +144,5 @@ pub fn preview_plan(cfg: &Config, slot: SlotId) -> Result<PlanPreview> {
         Ok(p) => (p, None),
         Err(e) => (catalog.plan_unchecked(cfg, slot, &recipe, key.as_ref(), stamp)?, Some(e.to_string())),
     };
-    Ok(PlanPreview { plan, refused, api_key_present: key.is_some() })
+    Ok(PlanPreview { plan, refused, api_key_present: key.is_some(), recipe })
 }

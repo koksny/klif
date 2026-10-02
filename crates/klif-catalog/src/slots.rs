@@ -1,8 +1,10 @@
 //! View-model side of the catalog: availability, display names, expected VRAM and the Tune drawer options.
 
 use klif_common::vm::{
-    Availability, Backend, CardChoice, ModelRef, Recipe, RecipeChoice, RecipeOptions, Slot, SlotId, SlotKind,
+    Availability, Backend, CardChoice, ModelRef, Precision, PrecisionChoice, Recipe, RecipeChoice, RecipeOptions, Slot,
+    SlotId, SlotKind,
 };
+use std::path::Path;
 
 use crate::data::{Card, Data, Profile};
 use crate::recipes::{self, cap_for, Fill};
@@ -44,8 +46,18 @@ impl Catalog {
         self.data.profile_by_key(&Catalog::profile_key(&card.id, Data::backend_str(backend), hardware, ctx))
     }
 
-    /// The launcher's file-based precedence (without BUSY): script, model, binary.
+    /// The launcher's file-based precedence (without BUSY): script, model, binary. A profile the fast Krea
+    /// starter runs checks that starter instead of the catalog's (and no binary: the starter owns its build).
     pub(crate) fn profile_state(&self, p: &Profile) -> Availability {
+        if let Some(fast) = self.fast_krea_for_profile(p) {
+            return if !self.probe.is_file(fast) {
+                Availability::ScriptMissing
+            } else if self.probe.model_bytes(&p.model).is_none() {
+                Availability::ModelMissing
+            } else {
+                Availability::Ready
+            };
+        }
         if !self.probe.is_file(&p.script) {
             Availability::ScriptMissing
         } else if self.probe.model_bytes(&p.model).is_none() {
@@ -55,6 +67,39 @@ impl Catalog {
         } else {
             Availability::Ready
         }
+    }
+
+    // ---- fast Krea starter --------------------------------------------------------------------
+
+    /// True when the card's recipes carry Precision and Edit: a Krea card with `[krea] fast_starter` configured.
+    /// The values are kept on every backend so a round trip through Vulkan does not lose them.
+    /// The output size a fast-starter Krea recipe launches with, when the recipe names one of FAST_KREA_SIZES.
+    pub(crate) fn fast_krea_size(&self, card: &Card, r: &Recipe) -> Option<String> {
+        self.fast_krea_for(card, r)?;
+        r.image_size.clone().filter(|s| FAST_KREA_SIZES.contains(&s.as_str()))
+    }
+
+    pub(crate) fn takes_krea_settings(&self, card: &Card) -> bool {
+        self.fast_krea.is_some() && card.is_krea()
+    }
+
+    /// The fast Krea starter when it runs this (card, backend, hardware): a Krea card on HIP + the inference GPU
+    /// (the build is gfx1201-only). Qwen Image, Vulkan and the dual-GPU profiles keep the catalog's starter.
+    fn fast_krea_on(&self, card: &Card, backend: &str, hardware: &str) -> Option<&Path> {
+        if !self.takes_krea_settings(card) || backend != Data::backend_str(Backend::Hip) || hardware != self.data.primary_hardware {
+            return None;
+        }
+        self.fast_krea.as_deref()
+    }
+
+    /// The fast Krea starter for a recipe, when it applies (see `fast_krea_on`).
+    pub(crate) fn fast_krea_for(&self, card: &Card, r: &Recipe) -> Option<&Path> {
+        self.fast_krea_on(card, Data::backend_str(r.backend), &r.hardware)
+    }
+
+    fn fast_krea_for_profile(&self, p: &Profile) -> Option<&Path> {
+        let card = self.data.card(&p.card_id)?;
+        self.fast_krea_on(card, &p.backend, &p.hardware)
     }
 
     /// Availability of a (card, backend, hardware, context) combination with a plain-sentence reason.
@@ -191,7 +236,9 @@ impl Catalog {
             ..ModelRef::default()
         };
         if card.is_image {
-            m.image_size = Some(if p.context_label.is_empty() { card.ctx_label(p.context).unwrap_or_default().to_string() } else { p.context_label.clone() });
+            m.image_size = Some(self.fast_krea_size(card, r).unwrap_or_else(|| {
+                if p.context_label.is_empty() { card.ctx_label(p.context).unwrap_or_default().to_string() } else { p.context_label.clone() }
+            }));
         } else {
             m.ctx_tokens = Some(p.context);
             m.kv_type = Some(eff.kv.clone());
@@ -200,6 +247,9 @@ impl Catalog {
                 m.vision = Some(eff.vision);
             }
             m.mode = eff.mode.clone();
+        }
+        if card.is_image && self.fast_krea_for(card, r).is_some() {
+            m.mode = Some(krea_mode_label(r));
         }
         m
     }
@@ -219,6 +269,25 @@ impl Catalog {
         })
     }
 }
+
+/// "Edit · Low" / "Generate · Medium": the fast Krea starter's mode as the skins show it (ModelRef.mode).
+pub(crate) fn krea_mode_label(r: &Recipe) -> String {
+    let mode = if r.edit.unwrap_or(false) { "Edit" } else { "Generate" };
+    format!("{mode} · {}", r.precision.unwrap_or_default().label())
+}
+
+/// Output sizes offered when a Krea card launches through the fast starter (all in its -Size ValidateSet):
+/// the catalog's list with 768x1024 instead of 720x1024, plus 1024x768.
+pub(crate) const FAST_KREA_SIZES: &[&str] = &["512x512", "512x768", "640x920", "720x960", "768x1024", "1024x768", "1024x1024"];
+
+/// The Precision levels of the fast Krea starter, with their hints. Times are the medians measured on an
+/// RX 9070 XT for an identity edit at 1024x768, 8 steps (low: rank-64 edit LoRA, reference capped at a quarter
+/// of the target area; medium: rank-64, half; high: the full identity LoRA, half).
+const PRECISION_HINTS: [(Precision, &str); 3] = [
+    (Precision::Low, "fastest · ~19 s edit 1024×768"),
+    (Precision::Medium, "sharper reference · ~23 s edit 1024×768"),
+    (Precision::High, "full identity LoRA · ~25 s edit 1024×768"),
+];
 
 /// One plain sentence for a state that is not READY.
 fn reason_for(av: Availability, backend: Backend) -> Option<String> {
@@ -266,6 +335,11 @@ fn slot(c: &Catalog, id: SlotId, recipes_in: &Recipes, live: &LiveFacts) -> Slot
     let mut r = stored;
     if r.prompt_cache_mib.is_none() && !card.is_sd {
         r.prompt_cache_mib = Some(fill.cache);
+    }
+    if c.takes_krea_settings(card) {
+        // A recipe saved before these existed starts at the defaults: generation, precision low.
+        r.precision = Some(r.precision.unwrap_or_default());
+        r.edit = Some(r.edit.unwrap_or(false));
     }
     let ctx = c.recipe_ctx(card, &r);
     let hardware = r.hardware.clone();
@@ -359,15 +433,38 @@ fn options(c: &Catalog, slot: SlotId, card: &Card, r: &Recipe, ctx: u32) -> Reci
     let mut o = RecipeOptions { cards: card_choices, backends, hardware: hardware_choices, ..RecipeOptions::default() };
 
     if card.is_image {
-        o.image_sizes = Some(
+        o.image_sizes = Some(if c.fast_krea_for(card, r).is_some() {
+            // The fast starter takes its own size list; availability is the card's on this backend/GPU.
+            let (availability, reason) = c.combo_state(card, r.backend, hardware, card.default_context);
+            FAST_KREA_SIZES
+                .iter()
+                .map(|s| RecipeChoice { value: s.to_string(), label: s.to_string(), availability, reason: reason.clone() })
+                .collect()
+        } else {
             card.contexts
                 .iter()
                 .map(|x| {
                     let (availability, reason) = c.combo_state(card, r.backend, hardware, x.value);
                     RecipeChoice { value: x.label.clone(), label: x.label.clone(), availability, reason }
                 })
-                .collect(),
-        );
+                .collect()
+        });
+        if c.fast_krea_for(card, r).is_some() {
+            let (availability, reason) = c.combo_state(card, r.backend, hardware, ctx);
+            o.precisions = Some(
+                PRECISION_HINTS
+                    .iter()
+                    .map(|(p, hint)| PrecisionChoice {
+                        value: *p,
+                        label: p.label().to_string(),
+                        availability,
+                        reason: reason.clone(),
+                        hint: hint.to_string(),
+                    })
+                    .collect(),
+            );
+            o.edit_toggle = Some(true);
+        }
     } else {
         o.contexts = Some(
             card.contexts

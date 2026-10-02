@@ -6,6 +6,7 @@ import type {
   Availability,
   Backend,
   ModelRef,
+  Precision,
   Recipe,
   RecipeChoice,
   RecipeOptions,
@@ -54,6 +55,8 @@ export interface MockCard {
   state?: Partial<Record<Backend, Availability>>;
   /** Prompt cache cap in MiB at contexts >= 131072, where the catalog caps it. */
   cacheCapLongCtx?: number;
+  /** Krea card: on HIP + the 9070 it runs through the fast starter (Precision + Edit). */
+  krea?: boolean;
 }
 
 export interface MockHardware {
@@ -78,7 +81,7 @@ export const LLM_PORTS = [7030, 7031, 7032, 7033, 7034, 7035];
 const CTX = [16384, 32768, 65536, 98304, 131072, 262144];
 const CTX_128K = CTX.filter((c) => c <= 131072);
 const GPU_RAM = ['9070', 'Dual', '9950X3D'];
-const IMAGE_SIZES = ['512x512', '512x768', '640x920', '720x960', '720x1024', '1024x1024'];
+const IMAGE_SIZES = ['512x512', '512x768', '640x920', '720x960', '768x1024', '1024x768', '1024x1024'];
 
 const qwen27 = (id: string, quant: string, weightsGiB: number, specMode: string, defaultCtx: number): MockCard => ({
   id,
@@ -174,8 +177,8 @@ export const CARDS: MockCard[] = [
   gemma('gemma-26b-udxl', 'Gemma 4 26B-A4B', 'QAT UD-Q4_K_XL', 14.6 /* est. */, 0.4 / 16384, 0.8, 131072),
   gemma('gemma-12b', 'Gemma 4 12B', 'QAT Q4_0', 6.5, 0.55 / 32768, 0.6, 131072),
   gemma('gemma-31b', 'Gemma 4 31B', 'Q4_0', 16.9 /* est. */, 0.9 / 16384 /* est. */, 1.0, 131072),
-  image('krea-realism', 'Krea 2 Realism Turbo', 'Q8_0', 7.4),
-  image('krea-muse', 'Krea 2 Muse', 'Q8_0', 7.4),
+  image('krea-realism', 'Krea 2 Realism Turbo', 'Q8_0', 7.4, { krea: true }),
+  image('krea-muse', 'Krea 2 Muse', 'Q8_0', 7.4, { krea: true }),
   image('qwen-image-21', 'Qwen Image 2.1', 'Q4_0', 11.9 /* est. */, {
     imageSizes: ['512x512', '512x768', '640x928', '736x960', '736x1024', '1024x1024'],
     vaeGiB: 0.3, // est.
@@ -190,8 +193,20 @@ export const DEFAULT_RECIPES: Record<SlotId, Recipe> = {
   high: { cardId: 'qwen-fn-iq2', backend: 'HIP', hardware: '9070', ctxTokens: 131072, kvType: 'q8_0', promptCacheMiB: 2048, port: 7030, mode: 'Thinking' },
   medium: { cardId: 'qwen-gsq', backend: 'HIP', hardware: '9070', ctxTokens: 98304, kvType: 'q8_0', promptCacheMiB: 16384, port: 7030, vision: true },
   low: { cardId: 'gemma-26b', backend: 'HIP', hardware: '9070', ctxTokens: 16384, kvType: 'q8_0', promptCacheMiB: 8192, port: 7030 },
-  krea: { cardId: 'krea-realism', backend: 'HIP', hardware: '9070', imageSize: '512x768', port: 1234 },
+  krea: { cardId: 'krea-realism', backend: 'HIP', hardware: '9070', imageSize: '512x768', port: 1234, precision: 'low', edit: false },
 };
+
+/** The fast Krea starter's Precision levels (the core's hints: medians of an identity edit at 1024x768). */
+export const PRECISIONS: { value: Precision; label: string; hint: string }[] = [
+  { value: 'low', label: 'Low', hint: 'fastest · ~19 s edit 1024×768' },
+  { value: 'medium', label: 'Medium', hint: 'sharper reference · ~23 s edit 1024×768' },
+  { value: 'high', label: 'High', hint: 'full identity LoRA · ~25 s edit 1024×768' },
+];
+
+/** The fast Krea starter runs this recipe: a Krea card on HIP + the 9070 (the build is gfx1201-only). */
+function fastKrea(card: MockCard, r: Recipe): boolean {
+  return !!card.krea && r.backend === 'HIP' && r.hardware === '9070';
+}
 
 /** Image servers keep their own pinned port. */
 export const DEFAULT_PORT: Record<SlotId, number> = { high: 7030, medium: 7030, low: 7030, krea: 1234 };
@@ -267,6 +282,16 @@ export function applyPatch(kind: SlotKind, cur: Recipe, patch: Partial<Recipe>):
     if (patch.imageSize !== undefined && sizes.includes(patch.imageSize)) next.imageSize = patch.imageSize;
     if (next.imageSize === undefined || !sizes.includes(next.imageSize)) next.imageSize = card.defaultImageSize ?? sizes[0];
     for (const k of ['ctxTokens', 'kvType', 'promptCacheMiB', 'vision', 'mode'] as const) delete next[k];
+    if (card.krea) {
+      // Kept on every backend (a round trip through Vulkan keeps them); used only by the fast starter.
+      if (patch.precision && PRECISIONS.some((p) => p.value === patch.precision)) next.precision = patch.precision;
+      if (patch.edit !== undefined) next.edit = patch.edit;
+      next.precision ??= 'low';
+      next.edit ??= false;
+    } else {
+      delete next.precision;
+      delete next.edit;
+    }
   }
   return next;
 }
@@ -284,6 +309,10 @@ export function modelFromRecipe(r: Recipe): ModelRef {
     if (r.mode) m.mode = r.mode;
   } else {
     m.imageSize = r.imageSize;
+    if (fastKrea(card, r)) {
+      const p = PRECISIONS.find((x) => x.value === (r.precision ?? 'low')) ?? PRECISIONS[0];
+      m.mode = `${r.edit ? 'Edit' : 'Generate'} · ${p.label}`;
+    }
   }
   m.weightsGiB = card.weightsGiB;
   return m;
@@ -314,6 +343,11 @@ export function optionsFor(kind: SlotKind, r: Recipe): RecipeOptions {
     if (card.modes?.length) opts.modes = [...card.modes];
   } else {
     opts.imageSizes = (card.imageSizes ?? []).map((s) => choice(s, s, { availability: 'ready' }));
+    if (fastKrea(card, r)) {
+      const a = comboAvailability(card, r.backend, r.hardware);
+      opts.precisions = PRECISIONS.map((p) => ({ ...choice(p.value, p.label, a), hint: p.hint }));
+      opts.editToggle = true;
+    }
   }
   return opts;
 }
