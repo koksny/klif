@@ -42,7 +42,7 @@
   const uid = nextUid();
 
   const mini = $derived(variant === 'mini');
-  const fs = $derived(Math.max(11, 13.5 * k));
+  const fs = $derived(Math.max(11.5, 11.75 * k));
 
   const geo = $derived.by(() => {
     const padL = mini ? 2 : 6;
@@ -536,7 +536,9 @@
   }
   .t.ram {
     fill: var(--ph-cyan);
-    letter-spacing: 0.08em;
+    font-weight: 500;
+    font-stretch: 87.5%;
+    letter-spacing: 0.12em;
   }
   .spill-t {
     fill: var(--ph-amber);

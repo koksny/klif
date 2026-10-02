@@ -24,8 +24,8 @@
   const geo = $derived.by(() => {
     const n = data.length;
     if (!w || !h || n < 2) return null;
-    const padT = 8;
-    const padB = 4;
+    const padT = 5;
+    const padB = 3;
     const x = (i: number) => (i / (n - 1)) * (w - 6);
     const y = (v: number) => padT + (1 - (v - range.lo) / (range.hi - range.lo)) * (h - padT - padB);
     let line = '';
@@ -89,13 +89,13 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    font-size: max(11px, calc(14 * var(--u)));
+    font-family: var(--font-text);
+    font-size: var(--fs-lbl);
     color: rgba(237, 230, 214, 0.55);
     line-height: 1;
     text-align: right;
   }
   .axis .u {
-    font-size: max(10px, calc(12 * var(--u)));
     color: rgba(237, 230, 214, 0.38);
   }
 </style>

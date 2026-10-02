@@ -14,8 +14,11 @@ export const P = {
   danger: '#E5615C',
 } as const;
 
-export const FONT_UI = "'Share Tech Mono', ui-monospace, monospace";
-export const FONT_DISPLAY = "'Saira Variable', 'Saira', system-ui, sans-serif";
+/** Saira (variable, with a width axis): every label, value and hero figure. */
+export const FONT_UI = "'Saira Variable', 'Saira', system-ui, sans-serif";
+export const FONT_DISPLAY = FONT_UI;
+/** The mono face is left for console text, ports, API keys and fault log lines. */
+export const FONT_MONO = "'Share Tech Mono', ui-monospace, monospace";
 
 export function prefersReducedMotion(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;

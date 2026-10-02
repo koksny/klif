@@ -1,20 +1,15 @@
 <script lang="ts">
-  // Fault hero: what happened (fault.title), the exit code and how long ago, the last real trace
-  // ending in a red drop at the failure (decode tok/s for an LLM that was serving, otherwise the VRAM
-  // history), or the load checklist when the process died while loading (fault.steps), then the last
-  // log lines and the three ways out.
-  import type { Actions, GpuMemory, Session, Slot } from '../../lib/model/types';
+  // Fault: covers the whole status block (same outer box, nothing below moves). What happened
+  // (fault.title), the tier, model and exit code, how long ago; then the last real trace ending in a red
+  // drop at the failure (decode tok/s for an LLM that was serving, otherwise the VRAM history), or the
+  // load checklist when the process died while loading (fault.steps), beside the last log lines.
+  // The ways out (Restart, Dismiss, Full log) are in the controls bar, in their usual places.
+  import type { GpuMemory, Session, Slot } from '../../lib/model/types';
   import FaultTrace from './FaultTrace.svelte';
   import Steps from './Steps.svelte';
   import { fmtAgo } from './geom';
 
-  let {
-    session,
-    slot,
-    vram,
-    actions,
-    k,
-  }: { session: Session; slot: Slot | undefined; vram: GpuMemory; actions: Actions; k: number } = $props();
+  let { session, slot, vram, k }: { session: Session; slot: Slot | undefined; vram: GpuMemory; k: number } = $props();
 
   const f = $derived(session.fault);
   const since = $derived(f?.sinceS ?? 0);
@@ -34,200 +29,159 @@
     return hst.slice(0, cut);
   });
 
-  const exitText = $derived(f?.exitCodeHex ?? (f?.exitCode !== undefined ? String(f.exitCode) : null));
+  const exitText = $derived.by(() => {
+    if (!f || f.exitCode === undefined) return 'no exit code';
+    return f.exitCodeHex ? `exit code ${f.exitCodeHex} (${f.exitCode})` : `exit code ${f.exitCode}`;
+  });
   /** As many of the newest log lines as fit the box (never a clipped half line). */
   let linesH = $state(0);
-  const fit = $derived(Math.max(2, Math.floor((linesH - 12 * k - 2) / (16 * k * 1.42))));
+  const lineH = $derived(Math.max(10.5, 11 * k) * 1.45);
+  const fit = $derived(Math.max(1, Math.floor((linesH + 1) / lineH)));
   const lines = $derived((f?.logTail ?? []).slice(-fit));
-
-  function back() {
-    if (actions.dismiss) actions.dismiss();
-    else actions.stop();
-  }
 </script>
 
-<section class="panel grat fault" class:withsteps={source === 'steps'} aria-label="Fault">
-  <div class="ftitle">{f?.title ?? 'The server stopped unexpectedly.'}</div>
-  <div class="fmeta">
-    {#if exitText}
-      <span>exit code <span class="code" title={f?.exitCode !== undefined ? `exit code ${f.exitCode}` : undefined}>{exitText}</span></span>
-      {#if f?.exitCodeHex && f?.exitCode !== undefined}<span class="dec">{f.exitCode}</span>{/if}
-    {:else}
-      <span class="mut">no exit code</span>
-    {/if}
-    <span class="bar" aria-hidden="true"></span>
-    <span>{fmtAgo(since)}</span>
-  </div>
-
-  <div class="trace">
-    {#if source === 'steps'}
-      <div class="stepbox">
-        <div class="lbl sm">Load steps at the failure</div>
-        <Steps {steps} compact />
-      </div>
-    {:else if source === 'decode'}
-      <FaultTrace values={session.llm?.decodeHistory ?? []} agoS={since} unit="decode tok/s · until the fault" />
-    {:else}
-      <FaultTrace values={vramBefore} agoS={since} unit="VRAM GiB · until the fault" stepped minSpan={2} />
-    {/if}
-  </div>
-
-  <div class="logbox">
-    <div class="lbl sm">Last log lines</div>
-    <div class="lines" bind:clientHeight={linesH}>
-      {#each lines as line, i (i)}<div class="ln">{line}</div>{/each}
-      {#if lines.length === 0}<div class="ln mut">no output captured</div>{/if}
+<section class="panel grat fault" role="alert" aria-label="Fault">
+  <div class="fhead">
+    <svg class="ico" viewBox="0 0 48 44" aria-hidden="true"><path d="M24 3.5 L45 40.5 H3 Z" /><path d="M24 16v12.5" /><circle cx="24" cy="34.2" r="1.6" class="idot" /></svg>
+    <div class="ft">
+      <div class="ftitle" title={f?.title}>{f?.title ?? 'The server stopped unexpectedly.'}</div>
+      <div class="fsub">{slot?.label ?? ''} · {session.model.name} · <span class="code">{exitText}</span></div>
     </div>
+    <div class="ago">{fmtAgo(since)}</div>
   </div>
 
-  <div class="acts">
-    <button class="act go" onclick={() => actions.restart()}>Restart {slot?.label ?? ''}</button>
-    <button class="act" onclick={() => actions.toggleConsole(true)}>Show full log</button>
-    <button class="act" onclick={back}>Back to launcher</button>
+  <div class="fbody">
+    <div class="trace">
+      {#if source === 'steps'}
+        <div class="lbl sm">Load steps at the failure</div>
+        <div class="stepbox"><Steps {steps} layout="compact" /></div>
+      {:else if source === 'decode'}
+        <FaultTrace values={session.llm?.decodeHistory ?? []} agoS={since} unit="decode tok/s · until the fault" />
+      {:else}
+        <FaultTrace values={vramBefore} agoS={since} unit="VRAM GiB · until the fault" stepped minSpan={2} />
+      {/if}
+    </div>
+    <div class="logbox">
+      <div class="lbl sm">Last log lines</div>
+      <div class="lines" bind:clientHeight={linesH} style="--lh:{lineH.toFixed(2)}px">
+        {#each lines as line, i (i)}<div class="ln mono" title={line}>{line}</div>{/each}
+        {#if lines.length === 0}<div class="ln mut">no output captured</div>{/if}
+      </div>
+    </div>
   </div>
 </section>
 
 <style>
   .fault {
-    flex: 2.2 1 0;
-    min-height: calc(360px * var(--k));
-    display: flex;
-    flex-direction: column;
-    gap: calc(10px * var(--k));
-    padding: calc(16px * var(--k)) calc(22px * var(--k)) calc(16px * var(--k));
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    padding: calc(10px * var(--k)) calc(16px * var(--k)) calc(10px * var(--k));
+    border-color: rgba(229, 97, 92, 0.85);
+    box-shadow:
+      0 0 14px rgba(229, 97, 92, 0.22),
+      inset 0 0 24px rgba(229, 97, 92, 0.08);
     overflow: hidden;
   }
+  .fhead {
+    display: grid;
+    grid-template-columns: calc(34px * var(--k)) minmax(0, 1fr) auto;
+    column-gap: calc(12px * var(--k));
+    align-items: center;
+    padding-bottom: calc(8px * var(--k));
+    border-bottom: 1px solid rgba(229, 97, 92, 0.45);
+  }
+  .ico {
+    width: calc(32px * var(--k));
+    height: calc(30px * var(--k));
+    fill: none;
+    stroke: var(--ph-danger);
+    stroke-width: 2.6;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 4px rgba(229, 97, 92, 0.6));
+  }
+  .ico .idot {
+    fill: var(--ph-danger);
+    stroke: none;
+  }
+  .ft {
+    min-width: 0;
+  }
   .ftitle {
-    flex: none;
     font-family: var(--ph-display);
-    font-stretch: 106%;
     font-weight: 400;
-    font-size: calc(33px * var(--k));
-    line-height: 1.12;
-    letter-spacing: 0.02em;
+    font-size: calc(19px * var(--k));
+    line-height: 1.15;
+    letter-spacing: 0.01em;
     color: var(--ph-danger);
     text-shadow:
       0 0 8px rgba(229, 97, 92, 0.5),
       0 0 22px rgba(229, 97, 92, 0.2);
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-  }
-  .fmeta {
-    flex: none;
-    display: flex;
-    align-items: baseline;
-    gap: calc(16px * var(--k));
-    font-size: calc(23px * var(--k));
-    letter-spacing: 0.05em;
-    color: var(--ph-cyan);
-    text-shadow: var(--ph-glow-soft);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fsub {
+    margin-top: calc(3px * var(--k));
+    font-size: var(--ph-fs-m);
+    color: var(--ph-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .code {
-    color: var(--ph-ink);
+    color: #ff8f88;
   }
-  .dec {
-    font-size: 0.72em;
-    color: var(--ph-muted);
-    text-shadow: none;
+  .ago {
+    align-self: end;
+    font-size: var(--ph-fs-m);
+    color: var(--ph-danger);
+    white-space: nowrap;
   }
-  .bar {
-    width: 1px;
-    height: 0.9em;
-    align-self: center;
-    background: var(--ph-rule);
-    margin: 0 calc(4px * var(--k));
+  .fbody {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    column-gap: calc(16px * var(--k));
+    min-height: 0;
+    padding-top: calc(8px * var(--k));
   }
   .trace {
-    flex: 1.25 1 0;
-    min-height: calc(72px * var(--k));
-    margin: 0 calc(-8px * var(--k)) 0 calc(-6px * var(--k));
-  }
-  .withsteps .trace {
-    flex: none;
+    position: relative;
     min-height: 0;
-  }
-  .stepbox {
-    height: 100%;
     display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .trace:has(.stepbox) {
     grid-template-rows: auto minmax(0, 1fr);
     gap: calc(6px * var(--k));
-    padding: 0 calc(8px * var(--k));
+  }
+  .stepbox {
+    min-height: 0;
     overflow: hidden;
   }
   .lbl.sm {
-    font-size: calc(15px * var(--k));
+    font-size: var(--ph-fs-xs);
   }
   .logbox {
-    flex: 1 1 0;
-    min-height: calc(110px * var(--k));
-    display: flex;
-    flex-direction: column;
-    gap: calc(8px * var(--k));
-    border: 1px solid var(--ph-rule);
-    border-radius: 5px;
-    background: rgba(3, 9, 12, 0.82);
-    padding: calc(10px * var(--k)) calc(16px * var(--k)) calc(12px * var(--k));
-    overflow: hidden;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: calc(5px * var(--k));
+    padding-left: calc(14px * var(--k));
+    border-left: 1px solid rgba(229, 97, 92, 0.3);
   }
   .lines {
-    flex: 1 1 0;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
     overflow: hidden;
-    border: 1px solid var(--ph-grat);
-    border-radius: 3px;
-    padding: calc(6px * var(--k)) calc(12px * var(--k));
   }
   .ln {
-    flex: none;
-    font-size: calc(16px * var(--k));
-    line-height: 1.42;
-    letter-spacing: 0.02em;
+    height: var(--lh);
+    line-height: var(--lh);
+    font-size: max(10.5px, calc(11px * var(--k)));
     color: #d8ecf2;
     white-space: pre;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .acts {
-    flex: none;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: calc(14px * var(--k));
-    height: calc(48px * var(--k));
-  }
-  .act {
-    border: 1px solid #2a7f93;
-    border-radius: 5px;
-    color: var(--ph-cyan);
-    background: rgba(3, 9, 12, 0.7);
-    font-size: calc(19px * var(--k));
-    letter-spacing: 0.04em;
-    text-shadow: var(--ph-glow-soft);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 0 calc(12px * var(--k));
-  }
-  .act:hover {
-    border-color: var(--ph-cyan);
-    background: rgba(18, 48, 58, 0.5);
-  }
-  .act.go {
-    color: #ff8f88;
-    border: 1.5px solid var(--ph-danger);
-    background: rgba(60, 14, 14, 0.32);
-    box-shadow:
-      0 0 12px rgba(229, 97, 92, 0.35),
-      inset 0 0 10px rgba(229, 97, 92, 0.12);
-    text-shadow: 0 0 6px rgba(229, 97, 92, 0.5);
-  }
-  .act.go:hover {
-    border-color: #ff8a80;
-    background: rgba(90, 20, 20, 0.42);
   }
 </style>

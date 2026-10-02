@@ -9,10 +9,17 @@
   --s3: #4a5860;
   --sky: #5ab6eb;
   --foam: #dceff8;
+  --mist: #c3d3db;
   --amber: #f2a33a;
   --danger: #e8645a;
+  --kelp: #58d0a5;
   --muted: #8fa3ae;
+  --dim: #5d6e77;
+  --label: #8fb2c3;
   --rule: #263037;
+  /* Panels sit on the chart: translucent slate, so the contours still show through faintly. */
+  --panel: rgba(21, 28, 32, 0.78);
+  --edge: #2a353b;
   --f-ui: 'IBM Plex Sans Variable', 'IBM Plex Sans', system-ui, sans-serif;
   --f-data: 'IBM Plex Mono', ui-monospace, monospace;
   --f-disp: 'Archivo Variable', 'Archivo', system-ui, sans-serif;
@@ -20,21 +27,332 @@
   --u: min(calc(100cqi / 1024), calc(100cqh / 1152));
   /* Mini: 1px at the 960x640 reference panel. */
   --m: min(calc(100cqi / 960), calc(100cqh / 640));
+  /* Type scale (coastal survey map): small labels, quiet body, one display figure per panel. */
+  --fs-xs: max(10px, calc(var(--u) * 9.75));
+  --fs-s: max(10.5px, calc(var(--u) * 10.5));
+  --fs-m: max(11.5px, calc(var(--u) * 11.75));
+  --fs-l: max(12.5px, calc(var(--u) * 13));
+  --gap: max(6px, calc(var(--u) * 8));
+  font-variant-numeric: tabular-nums;
 }
 
+/* Status-word tones shared by the panels. */
+.cliff .amb {
+  color: var(--amber);
+}
+
+/* Map label: the caption of a panel, a row key, a legend entry. */
 .cliff .c-lbl {
   font-family: var(--f-ui);
-  font-weight: 400;
-  font-size: max(12px, calc(var(--u) * 14.5));
-  line-height: 1.25;
-  color: var(--muted);
-  letter-spacing: 0.005em;
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--label);
+  white-space: nowrap;
 }
 
+/* Machine text only: the console line, ports, the key dots, fault log lines. */
 .cliff .c-data {
   font-family: var(--f-data);
   font-weight: 400;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+}
+
+.cliff .c-panel {
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- Status block: one hero panel over two detail rows, the same boxes for every kind and phase. */
+.cliff .c-hero {
+  display: grid;
+  grid-template-columns: max(190px, calc(var(--u) * 244)) minmax(0, 1fr);
+  overflow: hidden;
+}
+.cliff .c-hl {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: max(2px, calc(var(--u) * 3));
+  padding: 0 max(12px, calc(var(--u) * 16));
+  border-right: 1px solid var(--edge);
+  min-width: 0;
+}
+.cliff .c-hl.amb .c-lbl {
+  color: var(--amber);
+}
+.cliff .c-fig {
+  display: flex;
+  align-items: baseline;
+  gap: max(6px, calc(var(--u) * 8));
+  white-space: nowrap;
+  font-family: var(--f-disp);
+  font-stretch: 100%;
+  color: #f2f9fc;
+}
+.cliff .c-fig b {
+  font-weight: 400;
+  font-size: max(32px, calc(var(--u) * 44));
+  line-height: 1.02;
+  letter-spacing: -0.01em;
+}
+.cliff .c-fig .u {
+  font-weight: 400;
+  font-size: max(13px, calc(var(--u) * 17.5));
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+/* nothing measured (idle, stopping, no data yet) */
+.cliff .c-fig.dim b,
+.cliff .c-fig.dim .u {
+  color: #4b5a62;
+}
+/* GPU asleep: the last figure, not a live one */
+.cliff .c-fig.faded b,
+.cliff .c-fig.faded .u {
+  color: #7f939d;
+}
+.cliff .c-hr {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: center;
+  row-gap: max(5px, calc(var(--u) * 7));
+  padding: max(8px, calc(var(--u) * 10)) max(12px, calc(var(--u) * 16));
+  min-width: 0;
+  min-height: 0;
+}
+.cliff .c-hline {
+  display: flex;
+  align-items: baseline;
+  gap: max(14px, calc(var(--u) * 20));
+  min-width: 0;
+  font-size: var(--fs-m);
+  color: var(--mist);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cliff .c-hline > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cliff .c-hline b {
+  font-weight: 500;
+  color: var(--foam);
+}
+.cliff .c-hline .end {
+  margin-left: auto;
+  flex: none;
+}
+.cliff .c-hline.sm {
+  font-size: var(--fs-s);
+  color: var(--muted);
+}
+/* The word over a hero with nothing to measure, on a flat dashed sea level. */
+.cliff .c-wait {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 0;
+}
+.cliff .c-wait::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed #34424a;
+}
+.cliff .c-wait span {
+  position: relative;
+  padding: 0 max(10px, calc(var(--u) * 14));
+  background: #161d21;
+  font-weight: 600;
+  font-size: var(--fs-s);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.cliff .c-wait.amb span {
+  color: var(--amber);
+}
+
+.cliff .c-rows {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+}
+.cliff .c-row {
+  display: grid;
+  grid-template-columns:
+    max(90px, calc(var(--u) * 104)) minmax(0, 1.3fr)
+    max(98px, calc(var(--u) * 116)) minmax(0, 1fr);
+  min-height: 0;
+}
+.cliff .c-row + .c-row {
+  border-top: 1px solid var(--edge);
+}
+.cliff .c-row > .c-lbl {
+  display: flex;
+  align-items: center;
+  padding-left: max(12px, calc(var(--u) * 16));
+  overflow: hidden;
+}
+.cliff .c-row > .c-lbl:nth-child(3) {
+  border-left: 1px solid var(--edge);
+}
+.cliff .c-v {
+  display: flex;
+  align-items: center;
+  gap: max(10px, calc(var(--u) * 12));
+  padding-right: max(10px, calc(var(--u) * 14));
+  min-width: 0;
+  font-size: var(--fs-m);
+  color: var(--mist);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cliff .c-v .t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cliff .c-v b {
+  font-weight: 500;
+  color: var(--foam);
+}
+.cliff .c-v .q,
+.cliff .c-rows.dim .c-v {
+  color: #7d8f98;
+}
+.cliff .c-v .red {
+  color: var(--danger);
+}
+
+/* Pill meter: a sky fill on a slate track. */
+.cliff .c-bar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: max(30px, calc(var(--u) * 40));
+  height: max(6px, calc(var(--u) * 7));
+  border-radius: 99px;
+  background: var(--s1);
+  overflow: hidden;
+}
+.cliff .c-bar.tall {
+  height: max(8px, calc(var(--u) * 10));
+}
+.cliff .c-bar i {
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background: var(--sky);
+  transform-origin: left;
+  transition: transform 400ms ease-out;
+}
+.cliff .c-bar.warn i {
+  background: var(--danger);
+}
+.cliff .c-bar.amb i {
+  background: var(--amber);
+}
+
+/* ---- Track: the request timeline / recent jobs frame, one height for both and for every phase. */
+.cliff .c-track {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: max(54px, calc(var(--u) * 62));
+  overflow: hidden;
+}
+.cliff .c-tmain {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  row-gap: max(6px, calc(var(--u) * 7));
+  padding: max(8px, calc(var(--u) * 10)) max(12px, calc(var(--u) * 16)) max(10px, calc(var(--u) * 12));
+  min-width: 0;
+}
+.cliff .c-tcap {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cliff .c-tcap .note {
+  /* a flex item drops its leading space: keep the gap before " · ..." explicitly */
+  padding-left: 0.4em;
+  font-size: var(--fs-s);
+  color: var(--muted);
+  flex: none;
+}
+.cliff .c-tcap .last {
+  margin-left: auto;
+  padding-left: max(14px, calc(var(--u) * 20));
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-s);
+  color: #9fb2bc;
+}
+.cliff .c-tcap .last.bad {
+  color: var(--danger);
+}
+.cliff .c-tbars {
+  --tgap: max(6px, calc(var(--u) * 10));
+  display: flex;
+  align-items: center;
+  gap: var(--tgap);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.cliff .c-tbars > * {
+  height: max(12px, calc(var(--u) * 16));
+}
+/* Nothing to show: the empty frame of the track, a dashed outline. */
+.cliff .c-tempty {
+  flex: 1 1 auto;
+  border: 1px dashed #34424a;
+  border-radius: 3px;
+}
+/* The request (or job) that died with the server. */
+.cliff .c-tfail {
+  flex: 0 0 max(18px, calc(var(--u) * 24));
+  border: 1px dashed var(--danger);
+  border-radius: 3px;
+  background-color: rgba(232, 100, 90, 0.08);
+  background-image: repeating-linear-gradient(-45deg, rgba(232, 100, 90, 0.55) 0 1px, transparent 1px 5px);
+}
+.cliff .c-legend {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: max(5px, calc(var(--u) * 6));
+  margin: max(9px, calc(var(--u) * 10)) 0;
+  padding: 0 max(14px, calc(var(--u) * 18));
+  border-left: 1px solid var(--edge);
+}
+.cliff .c-legend .c-lbl {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  color: var(--mist);
+}
+.cliff .c-legend i {
+  width: max(8px, calc(var(--u) * 9));
+  height: max(8px, calc(var(--u) * 9));
+  border-radius: 2px;
+  flex: none;
 }
 
 .cliff .c-rule {

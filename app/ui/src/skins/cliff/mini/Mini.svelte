@@ -1,159 +1,266 @@
 <script lang="ts">
-  // Mini panel (960x640 at ~330 ppi, read from 1 m). Read-only, smallest text >= 30 px.
-  // One composition for every state: wordmark + status on top, the tier/model line, one hero number,
-  // one sub line, and the VRAM cliff across the lower half.
-  // Read-only apart from one corner control: "back to window", invisible until the panel is hovered.
+  // Cliff, mini panel (960x640, read from 1 m). Read-only. A fixed 960x640 sheet scaled to fit, laid out like
+  // the full window in miniature, and the same in every state (only the contents change):
+  //   header      KLIF · status · uptime / elapsed (the version when idle)
+  //   tier strip  the four tiers (selected, running, cannot launch, locked while starting)
+  //   model line  the running model, or the selected tier's
+  //   cliff (left) the VRAM cliff, the skin's signature; hero (right): one big figure with its label and a
+  //               status line; rows (right): two fixed facts per kind (LLM: context, prefill; image: last
+  //               image, images)
+  //   VRAM strip  numbers only (the drawing is the gauge): VRAM / FITS (idle) / RESIDENT (dormant) / SPILL
+  // A fault covers the hero and the rows. Dormant GPU: amber status, the last figure faded.
+  // Smallest text 24 px (labels), values 34 px and up.
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { fmtInt, fmtSeconds, fmtTps } from '../../../lib/model/format';
+  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../../lib/model/format';
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
   import type { GpuView } from '../power';
-  import Swell from '../Swell.svelte';
-  import { availabilityText, fmtAgo, fmtSpan, releasedGiB, selectedSlot, sessionSlot, statusOf, viewState } from '../util';
+  import { gpuStatus } from '../power';
+  import { availabilityText, blockView, fmtAgo, fmtEta, fmtSpan, releasedGiB, sessionKind, statusOf, sumGiB, tierWord } from '../util';
 
   let { vm, actions, gpu = null }: { vm: ViewModel; actions: Actions; gpu?: GpuView | null } = $props();
 
+  // "Back to window": the one control on the panel, shown while the pointer is over it or it has focus.
+  const canLeave = $derived(!!(vm.host?.panel?.available || vm.host?.panel?.active));
+
+  const SW = 960;
+  const SH = 640;
+  let w = $state(SW);
+  let h = $state(SH);
+  const k = $derived(Math.max(0.1, Math.min(w / SW, h / SH)));
+  const ox = $derived((w - SW * k) / 2);
+  const oy = $derived((h - SH * k) / 2);
+
   const s = $derived(vm.session);
-  const view = $derived(viewState(vm));
-  const st = $derived(statusOf(vm));
-  const sel = $derived(selectedSlot(vm));
-  const running = $derived(sessionSlot(vm));
-  const mode = $derived<SceneMode>(
-    view === 'idle' ? 'fit' : view === 'fault' ? 'fault' : view === 'loading' ? 'building' : 'live',
-  );
-  const fit = $derived(mode === 'fit');
-  const baseGiB = $derived(vm.vram.baselineGiB ?? (s ? 0 : vm.vram.usedGiB));
-  const layers = $derived(fit ? (sel?.expectedVram ?? []) : vm.vram.layers);
-  const ctxFrac = $derived(
-    s?.llm && s.llm.context.totalTokens > 0 ? Math.min(1, s.llm.context.usedTokens / s.llm.context.totalTokens) : 0,
-  );
-  const pf = $derived(
-    s?.llm && s.llm.activity === 'prefill' && s.llm.prefill && s.llm.prefill.tokens > 0 ? s.llm.prefill : null,
-  );
-  const pfFrac = $derived(pf ? Math.min(1, pf.doneTokens / pf.tokens) : 0);
+  const view = $derived(blockView(vm));
+  const kind = $derived(sessionKind(vm));
+  const slot = $derived(vm.slots.find((x) => x.id === (s?.slot ?? vm.selected)) ?? null);
+  const model = $derived(s?.model ?? slot?.model ?? null);
+  const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
-  const gen = $derived(img?.activity === 'generating');
-  const jobFrac = $derived(img && gen && img.steps > 0 ? Math.min(1, img.step / img.steps) : 0);
+  const idle = $derived(view === 'idle');
+  const faulted = $derived(view === 'fault');
+  const busy = $derived(view === 'loading' || view === 'stopping');
+  const st = $derived(statusOf(vm));
+  const live = $derived(view === 'live');
+
+  const prefilling = $derived(live && !!llm?.prefill && llm.activity === 'prefill');
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || slot?.recipe?.ctxTokens || 0);
+  const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0);
+  const preFrac = $derived(prefilling && llm?.prefill && llm.prefill.tokens > 0 ? Math.min(1, llm.prefill.doneTokens / llm.prefill.tokens) : 0);
+  const imgGen = $derived(live && !!img && img.activity === 'generating' && img.steps > 0);
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
-  const why = $derived(sel ? availabilityText(sel.availability) : null);
   const activeStep = $derived(s?.loading?.steps.find((x) => x.state === 'active') ?? null);
-  const last = $derived(vm.lastSession ?? null);
-  const lastLabel = $derived(last ? (vm.slots.find((x) => x.id === last.slot)?.label ?? last.model.name) : '');
-  const f = $derived(s?.fault ?? null);
-  const canLeave = $derived(!!vm.host?.panel?.available);
-  /** GPU asleep and nothing in flight: the hero is the last request's number, so it is dimmed. */
-  const stale = $derived(!!gpu && gpu.phase === 'asleep' && (s?.llm ? s.llm.activity === 'idle' : s?.image?.activity === 'idle'));
-  const R = 70;
-  const CIRC = 2 * Math.PI * R;
+
+  const tone = $derived(gpu || st.tone === 'busy' ? 'busy' : st.tone);
+  const statusText = $derived(gpu ? gpuStatus(gpu) : st.text);
+  const clock = $derived(s ? fmtClock(view === 'loading' ? (s.loading?.elapsedS ?? s.uptimeS) : s.uptimeS) : '');
+
+  /** The model line: name · quant · context or size · mode. */
+  const modelText = $derived.by(() => {
+    if (!model) return '';
+    const parts = [model.name, model.quant];
+    if (model.ctxTokens) parts.push(fmtCtx(model.ctxTokens));
+    if (model.imageSize) parts.push(model.imageSize);
+    if (model.mode) parts.push(model.mode);
+    return parts.join(' · ');
+  });
+
+  // ---- the drawing ---------------------------------------------------------------------------------------
+  const mode = $derived<SceneMode>(idle ? 'fit' : faulted ? 'fault' : view === 'loading' ? 'building' : 'live');
+  const baseGiB = $derived(vm.vram.baselineGiB ?? (s ? 0 : vm.vram.usedGiB));
+  const layers = $derived(mode === 'fit' ? (slot?.expectedVram ?? []) : vm.vram.layers);
+
+  // ---- hero: label, figure + unit, status line ---------------------------------------------------------------
+  type Tone = '' | 'amb' | 'red';
+  type Hero = { label: string; tone: Tone; fig: string; unit: string; pre?: string; dim: boolean; faded: boolean; line: string; lineTone: Tone };
+  const why = $derived(slot ? availabilityText(slot.availability) : null);
+  const last = $derived(vm.lastSession);
+  const lastText = $derived.by(() => {
+    if (!last) return '';
+    const label = tierWord(vm.slots.find((x) => x.id === last.slot)?.label ?? last.model.name);
+    return `last ${label} · ${fmtSpan(last.uptimeS)}${last.ended === 'fault' ? ' · fault' : ''} · ${fmtAgo(last.endedAgoS)}`;
+  });
+  const hero = $derived.by<Hero>(() => {
+    const base = { tone: '' as Tone, dim: false, faded: false, lineTone: '' as Tone };
+    const kindLabel = kind === 'image' ? 'DIFFUSION STEP' : 'DECODE SPEED';
+    if (gpu && live) {
+      if (gpu.phase === 'waking')
+        return { ...base, label: 'GPU WAKING', tone: 'amb', fig: String(Math.round(gpu.frac * 100)), unit: '%', line: `${fmtGiB(gpu.pagedOutGiB)} GiB still in system RAM` };
+      const ps = gpu.powerState ? ` · ${gpu.powerState}` : '';
+      const fig = llm ? fmtTps(llm.decodeTps) : '—';
+      return {
+        ...base,
+        label: `${gpuStatus(gpu)}${ps}`,
+        tone: 'amb',
+        fig,
+        unit: llm ? 'tok/s' : '',
+        faded: true,
+        line: `${fmtGiB(gpu.pagedOutGiB)} GiB paged out · ${fmtSpan(gpu.sinceS)}`,
+      };
+    }
+    if (view === 'loading' && s) {
+      const step = activeStep ? `${activeStep.label}${activeStep.detail ? ` · ${activeStep.detail}` : ''}` : s.phase === 'starting' ? 'starting' : 'loading';
+      return { ...base, label: 'STARTUP', tone: 'amb', fig: s.loading ? String(Math.floor(s.loading.fraction * 100)) : '—', unit: '%', line: step };
+    }
+    if (view === 'stopping') return { ...base, label: 'STOPPING', tone: 'amb', fig: '—', unit: '', dim: true, line: `releasing ${fmtGiB(vm.vram.usedGiB)} GiB` };
+    if (live && llm) {
+      if (prefilling && llm.prefill)
+        return { ...base, label: 'PREFILL PROGRESS', fig: String(Math.floor(preFrac * 100)), unit: '%', line: `${fmtInt(llm.prefill.doneTokens)} / ${fmtInt(llm.prefill.tokens)} tok` };
+      return {
+        ...base,
+        label: llm.activity === 'decode' ? 'DECODE SPEED' : 'LAST DECODE SPEED',
+        fig: fmtTps(llm.decodeTps),
+        unit: 'tok/s',
+        line: `${fmtInt(llm.generatedTokens)} tok generated${llm.activity === 'idle' ? ' · idle' : ''}`,
+      };
+    }
+    if (live && img) {
+      if (imgGen)
+        return { ...base, label: `DIFFUSION STEP${img.edit ? ' · EDIT' : ''}`, pre: 'step', fig: String(img.step), unit: `/ ${img.steps}`, line: `${img.sPerIt.toFixed(2)} s/it · ${img.width}×${img.height}` };
+      return { ...base, label: kindLabel, pre: 'step', fig: '—', unit: `/ ${img.steps}`, dim: true, line: 'waiting for the next job' };
+    }
+    if (s) return { ...base, label: kindLabel, fig: '—', unit: '', dim: true, line: 'waiting for data' };
+    // Idle: the selected tier, not running.
+    return {
+      ...base,
+      label: kindLabel,
+      pre: kind === 'image' ? 'step' : undefined,
+      fig: '—',
+      unit: kind === 'image' ? '' : 'tok/s',
+      dim: true,
+      line: why ? (slot?.reason ?? why) : lastText || 'not running',
+      lineTone: why ? 'amb' : '',
+    };
+  });
+
+  // ---- rows: two fixed facts per kind, the same labels in every phase --------------------------------------
+  type Row = { k: string; v: string; sub: string; red?: boolean };
+  const rows = $derived.by<Row[]>(() => {
+    if (kind === 'image') {
+      return [
+        { k: 'LAST IMAGE', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: lastJob?.edit ? 'edit' : '' },
+        { k: 'IMAGES', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
+    const pf = llm?.prefill;
+    return [
+      { k: 'CONTEXT', v: llm ? fmtPct(ctxFrac) : '—', sub: ctxTotal ? `of ${fmtCtx(ctxTotal)}` : '', red: ctxFrac >= 0.95 },
+      prefilling && pf
+        ? { k: 'PREFILL', v: fmtInt(pf.tps), sub: `tok/s · ${fmtEta(pf.etaS)} left` }
+        : { k: 'PREFILL', v: pf ? fmtInt(pf.tps) : '—', sub: pf ? 'tok/s' : '' },
+    ];
+  });
+
+  // ---- fault -----------------------------------------------------------------------------------------------
+  const fault = $derived(faulted ? (s?.fault ?? null) : null);
+  const exitText = $derived(fault ? (fault.exitCode === undefined ? 'no exit code' : `exit ${fault.exitCodeHex ?? fault.exitCode}`) : '');
+
+  // ---- VRAM strip: numbers only --------------------------------------------------------------------------
+  type Strip = { k: string; v: string; aux: string; tone: Tone };
+  const strip = $derived.by<Strip>(() => {
+    const used = `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`;
+    if (idle && slot?.expectedVram?.length) {
+      const top = baseGiB + sumGiB(slot.expectedVram);
+      const spare = vm.vram.totalGiB - top;
+      const aux = `${fmtGiB(top)} / ${fmtGiB(vm.vram.totalGiB)} expected`;
+      return spare >= 0 ? { k: 'FITS', v: `${fmtGiB(spare)} GiB spare`, aux, tone: '' } : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, aux, tone: 'red' };
+    }
+    if (vm.vram.spillMiB > 0) return { k: 'SPILL', v: `${fmtInt(vm.vram.spillMiB)} MiB`, aux: used, tone: 'red' };
+    if (gpu) return { k: 'RESIDENT', v: used, aux: `${fmtGiB(gpu.pagedOutGiB)} GiB in RAM`, tone: 'amb' };
+    if (faulted) {
+      const rel = releasedGiB(vm);
+      return { k: 'VRAM', v: used, aux: rel > 0.004 ? `${fmtGiB(rel)} GiB released` : '', tone: '' };
+    }
+    const free = vm.vram.totalGiB - vm.vram.usedGiB;
+    return { k: 'VRAM', v: used, aux: `${fmtGiB(Math.max(0, free))} GiB free`, tone: s && free < vm.vram.warnBelowGiB ? 'amb' : '' };
+  });
 </script>
 
-{#snippet ring(frac: number | null, k: string, v: number | string, unit: string = '')}
-  <div class="ring" role={frac === null ? undefined : 'meter'} aria-label={k} aria-valuemin="0" aria-valuemax="100" aria-valuenow={frac === null ? undefined : Math.round(frac * 100)}>
-    <svg viewBox="0 0 170 170" aria-hidden="true">
-      <circle cx="85" cy="85" r={R} class="trk" class:plain={frac === null} />
-      {#if frac !== null}
-        <circle
-          cx="85"
-          cy="85"
-          r={R}
-          class="arc"
-          stroke-dasharray="{(frac * CIRC).toFixed(1)} {CIRC.toFixed(1)}"
-          transform="rotate(-90 85 85)"
-        />
+<div class="mini" bind:clientWidth={w} bind:clientHeight={h}>
+  <div class="sheet" style="transform: translate({ox}px, {oy}px) scale({k})">
+    <!-- Header -->
+    <div class="hdr">
+      <span class="klif">KLIF</span>
+      <span class="sep"></span>
+      <span class="st {tone}">{#key vm.now}<i class="dot"></i>{/key}{statusText}</span>
+      <span class="grow"></span>
+      {#if s}<span class="clock">{clock}</span>{:else if vm.host?.appVersion}<span class="clock ver">v{vm.host.appVersion}</span>{/if}
+      {#if canLeave}
+        <button class="back" onclick={() => actions.togglePanel?.()} title="Leave panel mode" aria-label="Leave panel mode">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3v4.5H3M12.5 3v4.5H17M7.5 17v-4.5H3M12.5 17v-4.5H17" /></svg>
+        </button>
       {/if}
-    </svg>
-    <div class="rt"><span class="rk">{k}</span><span class="rv" class:long={`${v}${unit}`.length > 3}>{v}{unit}</span></div>
-  </div>
-{/snippet}
+    </div>
 
-<div class="mini" class:stale>
-  <div class="cliff-wrap">
-    <Cliff
-      variant="mini"
-      totalGiB={vm.vram.totalGiB}
-      usedGiB={vm.vram.usedGiB}
-      {layers}
-      spillMiB={vm.vram.spillMiB}
-      warnBelowGiB={vm.vram.warnBelowGiB}
-      device={vm.vram.device}
-      {mode}
-      {baseGiB}
-      faultSinceS={f?.sinceS}
-      releasedGiB={releasedGiB(vm)}
-      {gpu}
-    />
-  </div>
+    <!-- Tier strip -->
+    <div class="tiers">
+      {#each vm.slots as t (t.id)}
+        {@const sel = t.id === (s?.slot ?? vm.selected)}
+        {@const na = t.availability !== 'ready'}
+        {@const running = !!s && s.slot === t.id && !faulted}
+        <div class="tier" class:sel class:na class:locked={busy && !running} class:fault={faulted && s?.slot === t.id}>
+          <i class="td" class:run={running} class:bad={na}></i>{tierWord(t.label)}
+        </div>
+      {/each}
+    </div>
 
-  <div class="word">KLIF</div>
-  <div class="tr">
-    {#if canLeave}
-      <!-- fades in on hover/focus of the panel; out of the flow, so the status stays exactly where it was -->
-      <button class="back" title="Leave panel mode" aria-label="Leave panel mode" onclick={() => actions.togglePanel?.()}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 3v4.5H3M12.5 3v4.5H17M7.5 17v-4.5H3M12.5 17v-4.5H17" /></svg>
-        <span>Window</span>
-      </button>
-    {/if}
-    <div class="status {st.tone}">{#key vm.now}<i class="dot"></i>{/key}<span>{st.text}</span></div>
-  </div>
+    <!-- Model line -->
+    <div class="mline panel" class:dim={idle}><span>{modelText}</span></div>
 
-  {#if view === 'llm' && s?.llm}
-    <div class="model">{s.model.name}</div>
-    {#if pf}
-      <div class="hero"><span class="big">{Math.round(pfFrac * 100)}</span><span class="unit">%</span><span class="unit2">prefill</span></div>
-      <div class="sub"><span class="hv">{fmtTps(pf.tps)}</span> tok/s · <span class="hv">{fmtSeconds(pf.etaS)}</span> left</div>
-      {@render ring(ctxFrac, 'ctx', Math.round(ctxFrac * 100), '%')}
-    {:else}
-      <div class="hero"><span class="big">{fmtTps(s.llm.decodeTps)}</span><span class="unit">tok/s</span></div>
-      <div class="swell"><Swell history={s.llm.decodeHistory} variant="mini" /></div>
-      {@render ring(ctxFrac, 'ctx', Math.round(ctxFrac * 100), '%')}
-    {/if}
-  {:else if view === 'image' && img}
-    <div class="model">{s?.model.name}</div>
-    {#if gen}
-      <div class="hero"><span class="unit2 lead">step</span><span class="big">{img.step}/{img.steps}</span></div>
-      <div class="sub">
-        {#if img.sPerIt > 0}<span class="hv">{img.sPerIt.toFixed(2)}</span>{' s/it · '}{/if}{'last image '}<span class="hv"
-          >{lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—'}</span
-        >
+    <!-- The cliff -->
+    <div class="draw panel">
+      <Cliff
+        variant="mini"
+        totalGiB={vm.vram.totalGiB}
+        usedGiB={vm.vram.usedGiB}
+        {layers}
+        spillMiB={vm.vram.spillMiB}
+        warnBelowGiB={vm.vram.warnBelowGiB}
+        device={vm.vram.device}
+        {mode}
+        {baseGiB}
+        faultSinceS={s?.fault?.sinceS}
+        releasedGiB={releasedGiB(vm)}
+        {gpu}
+      />
+    </div>
+
+    {#if faulted}
+      <!-- Fault: covers the hero and the rows -->
+      <div class="fpanel panel" role="alert">
+        <div class="lbl red">FAULT · {fmtAgo(fault?.sinceS ?? 0)}</div>
+        <div class="ftitle">{fault?.title ?? 'The server stopped unexpectedly.'}</div>
+        <div class="fexit">{exitText}</div>
       </div>
-      {@render ring(jobFrac, 'job', Math.round(jobFrac * 100), '%')}
     {:else}
-      <div class="hero"><span class="big dim">idle</span></div>
-      <div class="sub">{'last image '}<span class="hv">{lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—'}</span></div>
-      {@render ring(null, 'images', fmtInt(img.imagesThisSession))}
-    {/if}
-  {:else if view === 'loading' && s}
-    <div class="model">{running?.label ?? s.model.name}</div>
-    <div class="hero">
-      <span class="big">{s.loading ? Math.round(s.loading.fraction * 100) : '—'}</span><span class="unit">{s.loading ? '%' : ''}</span>
-    </div>
-    <div class="sub">
-      {activeStep?.label ?? (s.phase === 'starting' ? 'starting' : 'loading')}{#if activeStep?.detail}<span class="dt"
-          >{` · ${activeStep.detail}`}</span
-        >{/if}
-    </div>
-  {:else if view === 'fault' && s}
-    <div class="model">{running?.label ?? s.model.name}</div>
-    <div class="hero fault">
-      <svg class="warn" viewBox="0 0 48 44" aria-hidden="true"
-        ><path d="M24 4 45 40H3Z" /><path d="M24 17v11" /><circle cx="24" cy="33.5" r="2.2" /></svg
-      ><span class="big">FAULT</span>
-    </div>
-    <div class="sub fault-t">{f?.title ?? 'The server stopped unexpectedly.'}</div>
-    <div class="fcode">
-      {#if f?.exitCodeHex || f?.exitCode !== undefined}{'exit '}<span class="hv">{f?.exitCodeHex ?? f?.exitCode}</span
-        >{' · '}{/if}{f ? fmtAgo(f.sinceS) : ''}
-    </div>
-  {:else}
-    <div class="model">{sel?.label ?? 'KLIF'}</div>
-    <div class="hero idle"><span class="big sm">{sel?.model.name ?? ''}</span></div>
-    <div class="sub" class:na={!!why}><i class="av"></i>{why ?? 'ready to launch'}</div>
-    {#if last}
-      <div class="last">
-        last · {lastLabel} · {fmtSpan(last.uptimeS)}{#if last.requests !== undefined}{` · ${fmtInt(last.requests)} req`}{/if}{#if last.images !== undefined}{` · ${fmtInt(last.images)} img`}{/if}
+      <!-- Hero -->
+      <div class="hero panel">
+        <div class="lbl {hero.tone}">{hero.label}</div>
+        <div class="fig" class:dim={hero.dim} class:faded={hero.faded}>
+          {#if hero.pre}<span class="unit">{hero.pre}</span>{/if}<b>{hero.fig}</b>{#if hero.unit}<span class="unit">{hero.unit}</span>{/if}
+        </div>
+        <div class="line {hero.lineTone}">{hero.line}</div>
+      </div>
+
+      <!-- Rows -->
+      <div class="rows panel" class:dim={!live} class:img={kind === 'image'}>
+        {#each rows as r (r.k)}
+          <div class="row">
+            <span class="k">{r.k}</span>
+            <span class="v"><b class:red={r.red}>{r.v}</b>{#if r.sub}<small>{r.sub}</small>{/if}</span>
+          </div>
+        {/each}
       </div>
     {/if}
-  {/if}
+
+    <!-- VRAM strip -->
+    <div class="vram panel">
+      <span class="k {strip.tone}">{strip.k}</span>
+      <span class="v {strip.tone}">{strip.v}</span>
+      {#if strip.aux}<span class="aux">{strip.aux}</span>{/if}
+    </div>
+  </div>
 </div>
 
 <style>
@@ -161,101 +268,77 @@
     position: absolute;
     inset: 0;
     z-index: 1;
+    overflow: hidden;
+    user-select: none;
+  }
+  .sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 960px;
+    height: 640px;
+    transform-origin: 0 0;
     font-family: var(--f-ui);
+    font-variant-numeric: tabular-nums;
     color: var(--foam);
   }
-  .cliff-wrap {
+  .panel {
     position: absolute;
-    inset: 0;
+    box-sizing: border-box;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
   }
-  /* GPU asleep, nothing in flight: last request's numbers are history, not a reading */
-  .stale .hero,
-  .stale .swell,
-  .stale .ring {
-    opacity: 0.5;
+  .red {
+    color: var(--danger);
   }
-  .word {
+  .amb {
+    color: var(--amber);
+  }
+
+  /* Header: 0..62 */
+  .hdr {
     position: absolute;
-    left: calc(var(--m) * 26);
-    top: calc(var(--m) * 16);
-    font-family: var(--f-disp);
-    font-stretch: 125%;
-    font-weight: 500;
-    font-size: max(30px, calc(var(--m) * 30));
-    letter-spacing: 0.16em;
-    color: var(--sky);
-  }
-  .tr {
-    position: absolute;
-    right: calc(var(--m) * 24);
-    top: calc(var(--m) * 16);
-  }
-  .status {
+    left: 24px;
+    right: 24px;
+    top: 0;
+    height: 62px;
     display: flex;
     align-items: center;
-    gap: calc(var(--m) * 16);
+    gap: 20px;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--s1);
+  }
+  .klif {
     font-family: var(--f-disp);
-    font-stretch: 112%;
+    font-stretch: 125%;
     font-weight: 600;
-    font-size: max(30px, calc(var(--m) * 30));
-    letter-spacing: 0.07em;
+    font-size: 36px;
+    letter-spacing: 0.12em;
+    line-height: 1;
     color: var(--sky);
   }
-  /* "back to window": hidden (and not clickable) until the panel is hovered or the button is focused */
-  .back {
-    position: absolute;
-    right: 100%;
-    top: 50%;
-    margin-right: calc(var(--m) * 22);
-    transform: translateY(-50%);
-    display: inline-flex;
-    align-items: center;
-    gap: calc(var(--m) * 12);
-    height: calc(var(--m) * 54);
-    padding: 0 calc(var(--m) * 20) 0 calc(var(--m) * 16);
-    border-radius: calc(var(--m) * 12);
-    border: calc(var(--m) * 2) solid rgba(220, 239, 248, 0.3);
-    background: rgba(29, 37, 42, 0.92);
-    color: var(--foam);
-    font-family: var(--f-ui);
-    font-weight: 500;
-    font-size: max(30px, calc(var(--m) * 30));
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms ease-out;
-  }
-  .mini:hover .back,
-  .back:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .back:hover {
-    background: rgba(44, 54, 60, 0.96);
-    border-color: var(--sky);
-  }
-  .back svg {
-    width: calc(var(--m) * 30);
-    height: calc(var(--m) * 30);
+  .sep {
+    width: 1px;
+    height: 30px;
+    background: var(--s2);
     flex: none;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.7;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+  }
+  .st {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--sky);
   }
   .dot {
-    width: calc(var(--m) * 24);
-    height: calc(var(--m) * 24);
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
-    background: var(--sky);
+    background: currentColor;
     animation: beat 700ms ease-out 1;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot {
-      animation: none;
-    }
   }
   @keyframes beat {
     0% {
@@ -265,242 +348,362 @@
       opacity: 1;
     }
   }
-  .idle .dot,
-  .stop .dot {
+  .st.busy {
+    color: var(--amber);
+  }
+  .st.idle,
+  .st.stop {
+    color: var(--muted);
+  }
+  .st.idle .dot,
+  .st.stop .dot {
     background: transparent;
     box-shadow: inset 0 0 0 3px currentColor;
   }
-  .idle,
-  .stop {
+  .st.fault {
+    color: var(--danger);
+  }
+  .grow {
+    flex: 1 1 auto;
+  }
+  .clock {
+    font-size: 34px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--foam);
+  }
+  .clock.ver {
+    font-size: 28px;
     color: var(--muted);
   }
-  .busy {
-    color: var(--amber);
-  }
-  .busy .dot {
-    background: var(--amber);
-  }
-  .status.fault {
-    color: var(--amber);
-  }
-  .status.fault .dot {
-    background: var(--amber);
-  }
-  .model {
+
+  /* Tier strip: 72..128 */
+  .tiers {
     position: absolute;
-    left: calc(var(--m) * 24);
-    top: calc(var(--m) * 70);
-    max-width: calc(var(--m) * 900);
-    font-family: var(--f-disp);
-    font-stretch: 122%;
-    font-weight: 650;
-    font-size: max(30px, calc(var(--m) * 64));
-    line-height: 1.1;
-    letter-spacing: 0.005em;
-    color: var(--foam);
+    left: 24px;
+    right: 24px;
+    top: 72px;
+    height: 56px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .tier {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: var(--panel);
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--mist);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
-  .hero {
-    position: absolute;
-    left: calc(var(--m) * 20);
-    top: calc(var(--m) * 150);
-    display: flex;
-    align-items: baseline;
-    gap: calc(var(--m) * 22);
-    white-space: nowrap;
+  .tier.sel {
+    border-color: var(--sky);
+    background: rgba(90, 182, 235, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(90, 182, 235, 0.3);
+    color: var(--foam);
   }
-  .big {
-    font-family: var(--f-disp);
-    font-stretch: 125%;
-    font-weight: 800;
-    font-size: calc(var(--m) * 150);
-    line-height: 1;
-    letter-spacing: -0.012em;
-    color: #f2f9fc;
+  .tier.na,
+  .tier.locked {
+    color: #6c7d86;
   }
-  .big.sm {
-    font-size: calc(var(--m) * 72);
-    font-stretch: 112%;
+  .tier.locked {
+    border-color: #222b30;
   }
-  .big.dim {
-    color: #5d6e77;
+  .tier.fault {
+    border-color: var(--danger);
+    background: rgba(232, 100, 90, 0.12);
+    color: var(--danger);
   }
-  .hero.fault {
-    align-items: center;
-    gap: calc(var(--m) * 26);
-    top: calc(var(--m) * 148);
-  }
-  .hero.fault .big {
-    font-size: calc(var(--m) * 128);
-    color: var(--amber);
-  }
-  .warn {
-    width: calc(var(--m) * 108);
-    height: calc(var(--m) * 99);
+  .td {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--kelp);
     flex: none;
   }
-  .warn path {
-    fill: none;
-    stroke: var(--amber);
-    stroke-width: 3.6;
-    stroke-linejoin: round;
-    stroke-linecap: round;
+  .td.bad {
+    background: transparent;
+    box-shadow: inset 0 0 0 2.5px var(--amber);
   }
-  .warn circle {
-    fill: var(--amber);
+  .td.run {
+    background: var(--sky);
+    box-shadow: 0 0 0 4px rgba(90, 182, 235, 0.25);
+  }
+  .tier.locked .td:not(.run) {
+    background: #3a4850;
+  }
+  .tier.fault .td {
+    background: var(--danger);
+    box-shadow: none;
+  }
+
+  /* Model line: 138..178 */
+  .mline {
+    left: 24px;
+    right: 24px;
+    top: 138px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    font-size: 26px;
+    color: var(--foam);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .mline.dim {
+    color: #a9bcc6;
+  }
+  .mline span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The cliff: 188..550, left. The drawing runs to the box's edges, like an inset map. */
+  .draw {
+    left: 24px;
+    top: 188px;
+    width: 412px;
+    height: 362px;
+    overflow: hidden;
+    background: rgba(15, 19, 22, 0.6);
+  }
+
+  /* Hero: 188..398, right */
+  .hero {
+    left: 448px;
+    right: 24px;
+    top: 188px;
+    height: 210px;
+    padding: 14px 22px 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .lbl {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lbl.amb {
+    color: var(--amber);
+  }
+  .lbl.red {
+    color: var(--danger);
+  }
+  .fig {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    align-self: center;
+    white-space: nowrap;
+    overflow: hidden;
+    line-height: 1;
+    font-family: var(--f-disp);
+    font-stretch: 100%;
+  }
+  .fig b {
+    font-size: 116px;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+    color: #f2f9fc;
   }
   .unit {
-    font-family: var(--f-disp);
-    font-stretch: 100%;
-    font-weight: 700;
-    font-size: calc(var(--m) * 82);
-    color: var(--sky);
-  }
-  .unit2 {
-    font-family: var(--f-disp);
-    font-stretch: 100%;
-    font-weight: 600;
-    font-size: calc(var(--m) * 52);
-    color: var(--sky);
-  }
-  .unit2.lead {
-    color: #c3d3db;
-  }
-  /* stops short of the lip label (the cliff's "N GiB free" sits right of the lip at the same height) */
-  .sub {
-    position: absolute;
-    left: calc(var(--m) * 26);
-    top: calc(var(--m) * 300);
-    max-width: calc(var(--m) * 600);
-    font-size: max(30px, calc(var(--m) * 32));
-    color: #c3d3db;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .sub .hv {
-    color: var(--foam);
-    font-family: var(--f-data);
-    font-weight: 500;
-  }
-  .sub .dt {
-    font-family: var(--f-data);
-    color: var(--foam);
-  }
-  .sub .av {
-    display: inline-block;
-    width: calc(var(--m) * 18);
-    height: calc(var(--m) * 18);
-    margin-right: calc(var(--m) * 14);
-    border-radius: 50%;
-    background: var(--sky);
-    vertical-align: 0.05em;
-  }
-  .sub.na {
-    color: var(--amber);
-  }
-  .sub.na .av {
-    background: var(--amber);
-  }
-  .fault-t {
-    top: calc(var(--m) * 282);
-    color: var(--foam);
-    max-width: calc(var(--m) * 910);
-  }
-  .fcode {
-    position: absolute;
-    left: calc(var(--m) * 26);
-    top: calc(var(--m) * 372);
-    font-size: max(30px, calc(var(--m) * 32));
-    color: #c3d3db;
-    white-space: nowrap;
-    paint-order: stroke;
-    -webkit-text-stroke: 0;
-    text-shadow: 0 0 6px rgba(12, 16, 19, 0.9);
-  }
-  .fcode .hv {
-    font-family: var(--f-data);
-    font-weight: 500;
-    color: var(--amber);
-  }
-  .last {
-    position: absolute;
-    left: calc(var(--m) * 26);
-    bottom: calc(var(--m) * 14);
-    max-width: calc(var(--m) * 600);
-    font-size: max(30px, calc(var(--m) * 30));
-    color: #c3d3db;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-shadow:
-      0 0 4px rgba(12, 16, 19, 0.95),
-      0 0 10px rgba(12, 16, 19, 0.8);
-  }
-  /* Kept above the cap height of "tok/s" so a low trend never runs through the unit. */
-  .swell {
-    position: absolute;
-    left: calc(var(--m) * 430);
-    top: calc(var(--m) * 134);
-    width: calc(var(--m) * 330);
-    height: calc(var(--m) * 68);
-  }
-  .ring {
-    position: absolute;
-    left: calc(var(--m) * 768);
-    top: calc(var(--m) * 120);
-    width: calc(var(--m) * 170);
-    height: calc(var(--m) * 170);
-  }
-  .ring svg {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-  .trk {
-    fill: rgba(15, 19, 22, 0.55);
-    stroke: #2a353c;
-    stroke-width: 11;
-  }
-  .trk.plain {
-    stroke-width: 3;
-  }
-  .arc {
-    fill: none;
-    stroke: var(--sky);
-    stroke-width: 11;
-    stroke-linecap: butt;
-  }
-  .rt {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    gap: calc(var(--m) * 4);
-  }
-  .rk {
-    font-family: var(--f-ui);
-    font-weight: 500;
-    font-size: max(30px, calc(var(--m) * 30));
+    font-size: 38px;
+    font-weight: 400;
     color: var(--muted);
-    letter-spacing: 0.04em;
   }
-  .rv {
-    font-family: var(--f-disp);
-    font-stretch: 112%;
-    font-weight: 700;
-    font-size: max(30px, calc(var(--m) * 46));
+  .fig.dim b,
+  .fig.dim .unit {
+    color: #4b5a62;
+  }
+  .fig.faded b,
+  .fig.faded .unit {
+    color: #75878f;
+  }
+  .line {
+    height: 48px;
+    display: flex;
+    align-items: center;
+    border-top: 1px solid var(--edge);
+    margin: 0 -22px;
+    padding: 0 22px;
+    font-size: 26px;
+    color: #a9bcc6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .line.amb {
+    color: var(--amber);
+  }
+
+  /* Rows: 408..550, right */
+  .rows {
+    left: 448px;
+    right: 24px;
+    top: 408px;
+    height: 142px;
+    display: grid;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 164px minmax(0, 1fr);
+    align-items: center;
+    min-height: 0;
+  }
+  .img .row {
+    grid-template-columns: 206px minmax(0, 1fr);
+  }
+  .row + .row {
+    border-top: 1px solid var(--edge);
+  }
+  .row .k {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding-left: 22px;
+    border-right: 1px solid var(--edge);
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--label);
+    white-space: nowrap;
+  }
+  .row .v {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 0 18px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .row .v b {
+    font-size: 40px;
+    font-weight: 500;
     color: var(--foam);
   }
-  /* "100%" and longer counts stay inside the ring */
-  .rv.long {
-    font-stretch: 100%;
-    font-size: max(30px, calc(var(--m) * 38));
+  .row .v small {
+    font-size: 26px;
+    color: #a9bcc6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rows.dim .v b {
+    color: #5d6e77;
+  }
+
+  /* Fault: the hero and the rows together */
+  .fpanel {
+    left: 448px;
+    right: 24px;
+    top: 188px;
+    height: 362px;
+    padding: 16px 22px;
+    border-color: rgba(232, 100, 90, 0.85);
+    background: linear-gradient(180deg, rgba(48, 22, 20, 0.85), rgba(21, 24, 27, 0.88) 70%);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    row-gap: 12px;
+  }
+  .ftitle {
+    font-size: 36px;
+    font-weight: 500;
+    line-height: 1.2;
+    color: #f2f9fc;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 5;
+    line-clamp: 5;
+    -webkit-box-orient: vertical;
+  }
+  .fexit {
+    font-size: 30px;
+    color: var(--danger);
+  }
+
+  /* VRAM strip: 560..620 */
+  .vram {
+    left: 24px;
+    right: 24px;
+    top: 560px;
+    height: 60px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    padding: 0 22px;
+    line-height: 58px;
+    white-space: nowrap;
+  }
+  .vram .k {
+    width: 150px;
+    flex: none;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--label);
+  }
+  .vram .k.red,
+  .vram .v.red {
+    color: var(--danger);
+  }
+  .vram .k.amb,
+  .vram .v.amb {
+    color: var(--amber);
+  }
+  .vram .v {
+    font-size: 34px;
+    font-weight: 500;
+    color: var(--foam);
+  }
+  .vram .aux {
+    margin-left: auto;
+    font-size: 34px;
+    color: #a9bcc6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Leave panel mode: shown while the pointer is over the panel or it has focus. */
+  .back {
+    width: 48px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--s2);
+    border-radius: 8px;
+    background: var(--slate);
+    color: var(--mist);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    flex: none;
+  }
+  .mini:hover .back,
+  .back:focus-visible {
+    opacity: 1;
+  }
+  .back:hover {
+    border-color: var(--sky);
+    color: var(--foam);
+  }
+  .back svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 </style>

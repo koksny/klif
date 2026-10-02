@@ -1,6 +1,6 @@
 // Small geometry and text helpers shared by the Phosphor widgets.
-import type { GpuMemory, ModelRef } from '../../lib/model/types';
-import { fmtCtx } from '../../lib/model/format';
+import type { Availability, GpuMemory, LastSession, ModelRef, Slot } from '../../lib/model/types';
+import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 
 export type Pt = [number, number];
 
@@ -106,7 +106,24 @@ export const AVAIL_TEXT: Record<string, string> = {
   'script-missing': 'script missing',
   'model-missing': 'model missing',
   'build-required': 'build required',
+  busy: 'port busy',
 };
+
+/** Availability in words, 'ready' included. */
+export function availText(a: Availability): string {
+  return a === 'ready' ? 'ready' : (AVAIL_TEXT[a] ?? a);
+}
+
+/** The previous session as one line: label · uptime · counts · speed, from LastSession fields only. */
+export function lastSessionLine(ls: LastSession, slots: Slot[]): string {
+  const p: string[] = [slots.find((x) => x.id === ls.slot)?.label ?? ls.model.name, fmtDur(ls.uptimeS)];
+  if (ls.requests !== undefined) p.push(`${fmtInt(ls.requests)} requests`);
+  if (ls.generatedTokens !== undefined) p.push(`${fmtInt(ls.generatedTokens)} tok`);
+  if (ls.decodeTps !== undefined) p.push(`${fmtTps(ls.decodeTps)} tok/s`);
+  if (ls.images !== undefined) p.push(`${fmtInt(ls.images)} images`);
+  if (ls.secondsPerImage !== undefined) p.push(`${ls.secondsPerImage.toFixed(1)} s/image`);
+  return p.join(' · ');
+}
 
 /** Short model line for a tier card: name · quant · ctx (LLM) or name · quant · size (image). */
 export function modelLine(m: ModelRef): string[] {
@@ -128,6 +145,14 @@ export function fmtAgo(seconds: number): string {
   if (s < 60) return `${s} s ago`;
   if (s < 3600) return `${Math.floor(s / 60)} min ago`;
   return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min ago`;
+}
+
+/** Compact remaining time: 8.43 -> "8.4 s", 88 -> "1:28". */
+export function fmtEta(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 60) return `${s.toFixed(1)} s`;
+  const r = Math.round(s);
+  return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`;
 }
 
 /** Seconds per iteration: 2 decimals below 10 s, 1 above. */

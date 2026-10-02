@@ -1,259 +1,152 @@
 <script lang="ts">
-  // Starting / loading: where the live hero will be, a dim "not measured yet" placeholder (so the
-  // layout does not jump when the session goes live), then the load steps and the overall progress.
-  import type { Session, SlotKind } from '../../../lib/model/types';
-  import { fmtSeconds } from '../../../lib/model/format';
+  // Starting / loading: the hero is the startup progress (overall %, the active step, the overall bar, the
+  // VRAM filled so far and the elapsed time); the six startup steps fill the two detail rows, three each,
+  // in the order they run.
+  import type { Session } from '../../../lib/model/types';
+  import { fmtClock, fmtGiB } from '../../../lib/model/format';
   import { detailFraction } from '../util';
 
-  let { session, label, kind }: { session: Session; label: string; kind: SlotKind } = $props();
+  let { session, usedGiB, totalGiB }: { session: Session; usedGiB: number; totalGiB: number } = $props();
   const lp = $derived(session.loading);
   const frac = $derived(lp ? Math.max(0, Math.min(1, lp.fraction)) : 0);
-  const verb = $derived(session.phase === 'starting' ? 'Starting' : 'Loading');
+  const steps = $derived(lp?.steps ?? []);
+  const active = $derived(steps.find((x) => x.state === 'active') ?? null);
+  const activeFrac = $derived(active ? detailFraction(active.detail) : null);
 </script>
 
-<section class="ph">
-  <div class="c-lbl">{kind === 'image' ? 'Current job' : 'Decode speed'}<span class="q">{' · not running yet'}</span></div>
-  <div class="row">
-    <span class="dash">—</span><span class="unit">{kind === 'image' ? 's/it' : 'tok/s'}</span>
-    <span class="flat" aria-hidden="true"></span>
+<!-- Hero -->
+<section class="c-hero c-panel">
+  <div class="c-hl amb">
+    <span class="c-lbl">{session.phase === 'starting' ? 'Starting' : 'Startup'}</span>
+    <div class="c-fig" class:dim={!lp}><b>{lp ? Math.floor(frac * 100) : '—'}</b><span class="u">%</span></div>
+  </div>
+  <div class="c-hr">
+    <div class="c-hline">
+      <span><b>{active?.label ?? (session.phase === 'starting' ? 'Starting the process' : 'Waiting for the process')}</b>{active?.detail ? ` · ${active.detail}` : ''}</span>
+      <span class="end">elapsed <b>{fmtClock(lp?.elapsedS ?? session.uptimeS)}</b></span>
+    </div>
+    <span class="c-bar tall" role="meter" aria-label="Overall startup progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(frac * 100)}>
+      <i style:transform="scaleX({frac})"></i>
+    </span>
+    <div class="c-hline sm">
+      <span>VRAM so far {fmtGiB(usedGiB)} / {fmtGiB(totalGiB)} GiB</span>
+      {#if activeFrac !== null}<span class="end">{active?.label.toLowerCase()} {Math.round(activeFrac * 100)}%</span>{/if}
+    </div>
   </div>
 </section>
 
-<div class="c-rule"></div>
-
-<section class="load">
-  <div class="grid">
-    <div class="lhs">
-      <div class="c-lbl">{verb} {label}</div>
-      {#if lp && lp.steps.length}
-        <ol class="steps">
-          {#each lp.steps as st (st.id)}
-            {@const f = st.state === 'active' ? detailFraction(st.detail) : null}
-            <li class={st.state}>
-              <i class="mk" aria-hidden="true"
-                >{#if st.state === 'done'}<svg viewBox="0 0 16 16"><path d="M4.2 8.4l2.5 2.4 5-5.4" /></svg>{/if}</i
-              >
-              <span class="l">{st.label}</span>{#if st.detail}<span class="d c-data">{st.detail}</span>{/if}
-              {#if f !== null}
-                <span class="sbar" role="meter" aria-label="{st.label} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(f * 100)}
-                  ><i style:transform="scaleX({f})"></i></span
-                >
-              {/if}
-            </li>
-          {/each}
-        </ol>
+<!-- Rows: the six startup steps -->
+<section class="c-rows c-panel steps">
+  {#each [steps.slice(0, 3), steps.slice(3, 6)] as line, li (li)}
+    <div class="srow">
+      {#each line as st (st.id)}
+        <div class="sc {st.state}">
+          <i class="mk" aria-hidden="true"
+            >{#if st.state === 'done'}<svg viewBox="0 0 16 16"><path d="M4.2 8.4l2.5 2.4 5-5.4" /></svg>{/if}</i
+          >
+          <span class="l">{st.label}</span>{#if st.detail}<span class="d">{st.detail}</span>{/if}
+        </div>
       {:else}
-        <div class="none">waiting for the process…</div>
-      {/if}
+        <div class="sc pending"><span class="l">{li ? '' : 'waiting for the process…'}</span></div>
+      {/each}
     </div>
-    <div class="vr" aria-hidden="true"></div>
-    <div class="rhs">
-      <div class="big" role="meter" aria-label="Overall load progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(frac * 100)}>
-        {lp ? Math.round(frac * 100) : '—'}<span class="pct">{lp ? '%' : ''}</span>
-      </div>
-      <div class="ov">Overall</div>
-      <div class="bar" aria-hidden="true"><i style:transform="scaleX({frac})"></i></div>
-      {#if lp}<div class="el c-data">{fmtSeconds(lp.elapsedS)} elapsed</div>{/if}
-    </div>
-  </div>
+  {/each}
 </section>
 
 <style>
-  .ph {
-    padding-top: max(7px, calc(var(--u) * 12));
-    padding-bottom: max(6px, calc(var(--u) * 10));
-  }
-  .q {
-    color: var(--muted);
-  }
-  .row {
-    display: flex;
-    align-items: baseline;
-    gap: max(10px, calc(var(--u) * 16));
-    margin-top: max(1px, calc(var(--u) * 2));
-  }
-  .dash {
-    font-family: var(--f-disp);
-    font-stretch: 100%;
-    font-weight: 300;
-    font-size: max(34px, calc(var(--u) * 50));
-    line-height: 1;
-    color: #56666f;
-  }
-  .unit {
-    font-family: var(--f-disp);
-    font-weight: 600;
-    font-size: max(20px, calc(var(--u) * 30));
-    color: #4f6b7c;
-  }
-  .flat {
-    flex: 1 1 auto;
-    align-self: center;
-    height: 0;
-    margin-left: max(8px, calc(var(--u) * 16));
-    border-top: 1px dashed #3a474e;
-  }
-
-  .load {
-    padding-top: max(8px, calc(var(--u) * 13));
-    padding-bottom: max(10px, calc(var(--u) * 16));
-  }
-  .grid {
+  .srow {
     display: grid;
-    grid-template-columns: 1fr 1px minmax(0, 0.42fr);
-    column-gap: max(18px, calc(var(--u) * 40));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-height: 0;
   }
-  .vr {
-    background: var(--rule);
+  .srow + .srow {
+    border-top: 1px solid var(--edge);
   }
-  .steps {
-    list-style: none;
-    margin: max(6px, calc(var(--u) * 10)) 0 0;
-    padding: 0;
+  .sc {
     display: flex;
-    flex-direction: column;
-    gap: max(5px, calc(var(--u) * 8));
-    font-size: max(12.5px, calc(var(--u) * 16.5));
-  }
-  li {
-    position: relative;
-    display: grid;
-    grid-template-columns: auto auto 1fr;
     align-items: center;
-    column-gap: max(10px, calc(var(--u) * 16));
-    color: var(--muted);
+    gap: max(8px, calc(var(--u) * 10));
+    padding: 0 max(12px, calc(var(--u) * 16));
     min-width: 0;
+    font-size: var(--fs-m);
+    color: var(--muted);
+    white-space: nowrap;
+    border-left: 1px solid var(--edge);
   }
-  /* the thread joining the markers (the markers sit on top of it) */
-  .steps {
-    position: relative;
+  .sc:first-child {
+    border-left: 0;
   }
-  .steps::before {
-    content: '';
-    position: absolute;
-    left: calc(max(16px, calc(var(--u) * 21)) / 2 - 1px);
-    top: calc(max(16px, calc(var(--u) * 21)) / 2);
-    bottom: calc(max(16px, calc(var(--u) * 21)) / 2);
-    width: 2px;
-    background: #33424a;
+  .sc.done {
+    color: var(--mist);
+  }
+  .sc.active {
+    color: var(--foam);
+  }
+  .sc.failed {
+    color: var(--danger);
+  }
+  .l {
+    flex: none;
+  }
+  .active .l {
+    font-weight: 500;
+  }
+  .d {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--fs-s);
+    color: #8a9ca5;
+  }
+  .active .d {
+    color: var(--mist);
   }
   .mk {
     position: relative;
-    background: var(--basalt);
-    width: max(16px, calc(var(--u) * 21));
-    height: max(16px, calc(var(--u) * 21));
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 1.5px #5d6e77;
+    flex: none;
     display: grid;
     place-items: center;
+    width: max(13px, calc(var(--u) * 15));
+    height: max(13px, calc(var(--u) * 15));
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px #56666f;
   }
   .mk svg {
-    width: 80%;
-    height: 80%;
+    width: 82%;
+    height: 82%;
     fill: none;
     stroke: var(--basalt);
-    stroke-width: 2.2;
+    stroke-width: 2.4;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  li.done {
-    color: #c3d3db;
-  }
-  li.done .mk {
+  .done .mk {
     background: var(--sky);
     box-shadow: none;
   }
-  li.active {
-    color: var(--foam);
-  }
-  li.active .mk {
+  .active .mk {
     box-shadow:
-      inset 0 0 0 2.5px var(--sky),
-      0 0 10px rgba(90, 182, 235, 0.45);
+      inset 0 0 0 2px var(--sky),
+      0 0 8px rgba(90, 182, 235, 0.45);
   }
-  li.failed {
-    color: var(--amber);
-  }
-  .l {
-    white-space: nowrap;
-  }
-  .d {
-    font-size: 0.9em;
-    color: #9fb2bc;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-  }
-  li.active .d {
-    color: var(--foam);
-  }
-  .sbar {
-    grid-column: 2 / 4;
-    position: relative;
-    height: max(6px, calc(var(--u) * 8));
-    margin: max(3px, calc(var(--u) * 5)) 0 max(2px, calc(var(--u) * 3));
-    border-radius: 99px;
-    background: var(--s1);
-    overflow: hidden;
-    max-width: 92%;
-  }
-  .sbar i,
-  .bar i {
+  .active .mk::after {
+    content: '';
     position: absolute;
-    inset: 0;
+    inset: 30%;
+    border-radius: 50%;
     background: var(--sky);
-    border-radius: 99px;
-    transform-origin: left;
-    transition: transform 400ms ease-out;
+    animation: pulse 1.6s ease-in-out infinite;
   }
-  .none {
-    margin-top: 10px;
-    font-size: max(12.5px, calc(var(--u) * 16));
-    color: var(--muted);
+  .failed .mk {
+    box-shadow: inset 0 0 0 1.5px var(--danger);
   }
-  .rhs {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: flex-start;
-    min-width: 0;
-  }
-  .big {
-    font-family: var(--f-disp);
-    font-stretch: 125%;
-    font-weight: 800;
-    font-size: max(54px, calc(var(--u) * 92));
-    line-height: 0.95;
-    letter-spacing: -0.01em;
-    color: #f2f9fc;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .pct {
-    font-size: 0.62em;
-    margin-left: 0.04em;
-    color: var(--sky);
-  }
-  .ov {
-    margin-top: max(2px, calc(var(--u) * 4));
-    font-family: var(--f-ui);
-    font-weight: 500;
-    font-size: max(14px, calc(var(--u) * 19));
-    color: var(--foam);
-  }
-  .bar {
-    position: relative;
-    align-self: stretch;
-    height: max(6px, calc(var(--u) * 8));
-    margin-top: max(8px, calc(var(--u) * 12));
-    border-radius: 99px;
-    background: var(--s1);
-    overflow: hidden;
-  }
-  .el {
-    margin-top: max(6px, calc(var(--u) * 9));
-    font-size: max(12px, calc(var(--u) * 14.5));
-    color: #9fb2bc;
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
   }
 </style>

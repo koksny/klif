@@ -1,6 +1,8 @@
 // Cliff (Urwisko): coastal topography. VRAM as a sea cliff, system RAM as the sea.
 import '@fontsource-variable/archivo/wdth.css';
 import '@fontsource-variable/ibm-plex-sans/wght.css';
+// Italic: hydrography labels in the scene (the sea is System RAM).
+import '@fontsource-variable/ibm-plex-sans/wght-italic.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import './cliff.css';

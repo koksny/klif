@@ -341,6 +341,7 @@
     border-left: 1px solid var(--k-line, #2e2e2e);
     box-shadow: -14px 0 40px rgba(0, 0, 0, 0.4);
     font-family: var(--k-font-ui, system-ui, sans-serif);
+    font-variant-numeric: tabular-nums;
   }
   header {
     display: flex;
@@ -363,7 +364,7 @@
   .slotmodel {
     margin-top: 6px;
     color: var(--k-muted, #8a8a8a);
-    font: 500 12px/1.2 var(--k-font-data, ui-monospace, monospace);
+    font: 500 12px/1.2 var(--k-font-ui, system-ui, sans-serif);
   }
   .tabs {
     display: flex;
@@ -399,7 +400,7 @@
   }
   .field > span.ro {
     color: var(--k-ink, #e6e6e6);
-    font: 500 13px/1.2 var(--k-font-data, ui-monospace, monospace);
+    font: 500 13px/1.2 var(--k-font-ui, system-ui, sans-serif);
     letter-spacing: 0;
   }
   .ro small {
@@ -449,7 +450,7 @@
   }
   .seg3 button {
     flex: 1;
-    font-family: var(--k-font-data, ui-monospace, monospace);
+    font-family: var(--k-font-ui, system-ui, sans-serif);
   }
   .seg3 button.na:not(.on) {
     border-style: dashed;
@@ -549,7 +550,7 @@
   }
   .legend li b {
     margin-left: auto;
-    font: 500 12px/1 var(--k-font-data, ui-monospace, monospace);
+    font: 500 12px/1 var(--k-font-ui, system-ui, sans-serif);
     color: var(--k-ink, #e6e6e6);
   }
   .legend i {

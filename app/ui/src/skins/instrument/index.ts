@@ -1,4 +1,7 @@
 // Instrument (Zegar): industrial hardware panel. Fonts are imported here so they code-split with the skin.
+import '@fontsource/barlow/400.css';
+import '@fontsource/barlow/500.css';
+import '@fontsource/barlow/600.css';
 import '@fontsource/barlow-condensed/400.css';
 import '@fontsource/barlow-condensed/500.css';
 import '@fontsource/barlow-condensed/600.css';
@@ -22,7 +25,8 @@ export const tokens: SkinTokens = {
   accentInk: PAL.cyanInk,
   warn: '#F2A33A',
   danger: PAL.orange,
-  fontUi: FONT.label,
+  // The drawers read as the panel: Barlow text, engraved Barlow Condensed headings, mono for the console.
+  fontUi: FONT.text,
   fontData: FONT.mono,
   fontDisplay: FONT.label,
   radius: '5px',

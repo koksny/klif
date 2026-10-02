@@ -331,7 +331,7 @@
     position: absolute;
     left: 0;
     transform: translateY(-115%);
-    font: max(10.5px, calc(12.5px * var(--k, 1))) / 1 var(--ph-ui);
+    font: var(--ph-fs-xs, 10px) / 1 var(--ph-ui);
     color: var(--ph-muted);
     opacity: 0.8;
     pointer-events: none;

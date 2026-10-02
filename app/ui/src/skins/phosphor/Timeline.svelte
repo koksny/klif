@@ -5,6 +5,7 @@
   // only widths carry data. The lead-in and tail are plain baseline (rule colour), so no colour is
   // spent on anything that is not a measured duration. Hover a glyph for its numbers.
   // fault: the requests are left-aligned and the row ends in a red marker and a dashed line.
+  // No requests: the empty cells only (the panel caption says why).
   import type { RequestRecord } from '../../lib/model/types';
   import { fmtInt } from '../../lib/model/format';
 
@@ -71,8 +72,10 @@
       {:else}
         <line class="base0" x1="0" x2={w} y1={h - 3} y2={h - 3} />
       {/if}
-      {#if requests.length === 0}
-        <text class="empty" x={w / 2} y={h / 2} text-anchor="middle" dominant-baseline="middle">no requests yet</text>
+      {#if !mini && !fault}
+        {#each Array.from({ length: cells - requests.length }, (_, i) => i) as i (i)}
+          <line class="base0" x1={(i * w) / cells + 6} x2={((i + 1) * w) / cells - 6} y1={h - 4} y2={h - 4} />
+        {/each}
       {/if}
       {#each glyphs as g (g.id)}
         <g>
@@ -112,14 +115,6 @@
     fill: none;
     stroke-linejoin: round;
     vector-effect: non-scaling-stroke;
-  }
-  .empty {
-    font: calc(15px * var(--k, 1)) var(--ph-ui);
-    fill: var(--ph-muted);
-    letter-spacing: 0.06em;
-  }
-  .mini .empty {
-    font-size: calc(30px * var(--k, 1));
   }
   .sep {
     stroke: var(--ph-grat);

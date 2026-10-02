@@ -1,45 +1,49 @@
 <script lang="ts">
+  // One line, always shown: the running model, or (idle) the selected tier's.
   import type { ModelRef, SlotKind } from '../../../lib/model/types';
   import { modelFacts } from '../util';
 
-  let { model, kind, label }: { model: ModelRef; kind: SlotKind; label: string } = $props();
-  const facts = $derived(modelFacts(model, kind));
+  let { model, kind, label, dim = false }: { model: ModelRef | null; kind: SlotKind; label: string; dim?: boolean } = $props();
+  const facts = $derived(model ? modelFacts(model, kind) : []);
 </script>
 
-<section class="ml">
-  <div class="c-lbl">{label}</div>
-  <div class="line c-data" title="{model.engine} · {facts.join(' · ')}">
-    {#each facts as f, i (i)}
-      {#if i}<span class="sep" aria-hidden="true">·</span>{/if}<span class="f" class:name={i === 0}>{f}</span>
-    {/each}
-  </div>
+<section class="ml c-panel" class:dim title={model ? `${model.engine} · ${facts.join(' · ')}` : ''}>
+  <span class="c-lbl">{label}</span>
+  <span class="line">
+    {#each facts as f, i (i)}{#if i}<span class="sep" aria-hidden="true">·</span>{/if}<span class:name={i === 0}>{f}</span>{/each}
+  </span>
 </section>
 
 <style>
   .ml {
-    padding-top: max(7px, calc(var(--u) * 12));
-    padding-bottom: max(8px, calc(var(--u) * 13));
+    display: flex;
+    align-items: center;
+    gap: max(12px, calc(var(--u) * 16));
+    height: max(28px, calc(var(--u) * 30));
+    padding: 0 max(10px, calc(var(--u) * 14));
+  }
+  .ml .c-lbl {
+    flex: none;
+    min-width: max(70px, calc(var(--u) * 92));
   }
   .line {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    align-items: baseline;
-    margin-top: max(3px, calc(var(--u) * 6));
-    font-size: max(12.5px, calc(var(--u) * 17.5));
-    color: var(--foam);
-    letter-spacing: 0.03em;
-  }
-  .f {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: var(--fs-m);
+    color: var(--mist);
   }
-  /* Separators share the spare width (a long LLM line spans the row like the mockup) but cap at
-     2.4em, so a short image-model line stays compact instead of spreading across the window. */
+  .name {
+    font-weight: 500;
+    color: var(--foam);
+  }
+  .dim .line,
+  .dim .name {
+    color: #9fb2bc;
+  }
   .sep {
-    flex: 1 1 auto;
-    min-width: 1.3em;
-    max-width: 2.4em;
-    text-align: center;
-    color: var(--muted);
+    margin: 0 0.55em;
+    color: var(--dim);
   }
 </style>

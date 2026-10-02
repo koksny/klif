@@ -122,13 +122,12 @@
   .cap {
     align-self: flex-end;
     font-family: var(--f-ui);
-    font-size: max(11.5px, calc(var(--u) * 13.5));
+    font-size: var(--fs-s);
     color: var(--muted);
     letter-spacing: 0.01em;
     white-space: nowrap;
   }
   .rng {
-    font-family: var(--f-data);
-    font-size: 0.95em;
+    color: #74868f;
   }
 </style>

@@ -157,7 +157,7 @@
       else while (k > 0 && hist[k - 1] >= acc - 0.02) k--;
       const solidX = xOf(k, N);
       const text = `${l.label}  ${fmtLayer(l.gib)}`;
-      const textW = text.length * 17;
+      const textW = text.length * 14.5;
       const lx = Math.max(BOX.x0 + (sleep ? 92 : 40), solidX + 28);
       const left = XC - 24 - lx >= textW;
       // Too little solid rock for the label either way (a dipping history): it becomes a callout.
@@ -522,27 +522,27 @@
   }
   .num {
     fill: rgba(237, 230, 214, 0.7);
-    font-size: 30px;
+    font-size: 27px;
     font-weight: 500;
     text-anchor: middle;
   }
   .title {
     fill: #ede6d6;
-    font-size: 62px;
+    font-size: 54px;
     font-weight: 600;
     letter-spacing: 3px;
     text-anchor: middle;
   }
   .sub {
     fill: #ede6d6;
-    font-size: 37px;
+    font-size: 31px;
     font-weight: 400;
     letter-spacing: 1.5px;
     text-anchor: middle;
   }
   .fitlbl {
     fill: #ede6d6;
-    font-size: 38px;
+    font-size: 32px;
     font-weight: 600;
     letter-spacing: 4px;
     text-anchor: middle;
@@ -602,7 +602,7 @@
   }
   .targetlbl {
     fill: rgba(90, 182, 235, 0.95);
-    font-size: 29px;
+    font-size: 26px;
     font-weight: 500;
     letter-spacing: 1px;
   }
@@ -627,7 +627,7 @@
   }
   .fell {
     fill: #ff6b2c;
-    font-size: 31px;
+    font-size: 28px;
     font-weight: 500;
     letter-spacing: 1px;
   }
@@ -649,7 +649,7 @@
   }
   .free {
     fill: #ede6d6;
-    font-size: 35px;
+    font-size: 30px;
     font-weight: 400;
     letter-spacing: 1px;
   }
@@ -658,13 +658,13 @@
   }
   .layer {
     fill: #f1ebdd;
-    font-size: 37px;
+    font-size: 31px;
     font-weight: 400;
     letter-spacing: 1px;
     white-space: pre;
   }
   .layer.small {
-    font-size: 31px;
+    font-size: 27px;
     fill: rgba(237, 230, 214, 0.9);
   }
   .leader {
@@ -677,13 +677,13 @@
   }
   .axis {
     fill: rgba(237, 230, 214, 0.58);
-    font-size: 27px;
+    font-size: 24px;
     font-weight: 500;
     letter-spacing: 1px;
   }
   .spill {
     fill: rgba(237, 230, 214, 0.92);
-    font-size: 35px;
+    font-size: 30px;
     font-weight: 400;
     letter-spacing: 1px;
     text-anchor: middle;
@@ -713,19 +713,19 @@
   }
   .sleepword {
     fill: #ffb02e;
-    font-size: 34px;
+    font-size: 30px;
     font-weight: 600;
     letter-spacing: 3px;
   }
   .paged {
     fill: #ffb02e;
-    font-size: 33px;
+    font-size: 29px;
     font-weight: 500;
     letter-spacing: 1px;
   }
   .sleepline {
     fill: rgba(255, 176, 46, 0.85);
-    font-size: 30px;
+    font-size: 27px;
     font-weight: 500;
     letter-spacing: 1.5px;
     text-anchor: middle;

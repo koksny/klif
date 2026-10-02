@@ -2,16 +2,18 @@
   // Load steps as a checklist: done (filled check), active (amber ring, spinning only while the
   // scheduler tier allows CSS motion), pending (empty ring), failed (red cross). The weights step can
   // carry a progress bar; its fraction is supplied by the caller from real bytes.
+  // layout: 'compact' = three rows flowing into columns (the fault panel), 'grid' = two rows of three
+  // cells with rules between them (the status block's detail rows while loading).
   import type { LoadStep } from '../../lib/model/types';
 
   let {
     steps,
     weightsFrac = null,
-    compact = false,
-  }: { steps: LoadStep[]; weightsFrac?: number | null; compact?: boolean } = $props();
+    layout = 'compact',
+  }: { steps: LoadStep[]; weightsFrac?: number | null; layout?: 'compact' | 'grid' } = $props();
 </script>
 
-<ol class="steps" class:compact>
+<ol class="steps {layout}">
   {#each steps as st (st.id)}
     <li class={st.state}>
       <svg class="ic" class:spin={st.state === 'active'} viewBox="0 0 24 24" aria-label={st.state}>
@@ -29,7 +31,7 @@
         {/if}
       </svg>
       <span class="txt">
-        <span class="nm">{st.label}</span>{#if st.detail}<span class="sep" aria-hidden="true">·</span><span class="dt">{st.detail}</span>{/if}
+        <span class="nm">{st.label}</span>{#if st.detail}<span class="dt">{st.detail}</span>{/if}
       </span>
       {#if st.id === 'weights' && st.state === 'active' && weightsFrac !== null}
         <span class="bar" role="img" aria-label="Weights loaded {Math.round(weightsFrac * 100)}%">
@@ -47,31 +49,39 @@
     margin: 0;
     padding: 0;
     display: grid;
-    align-content: start;
-    gap: calc(5px * var(--k));
-    font-size: calc(19px * var(--k));
-    letter-spacing: 0.04em;
     min-width: 0;
+    font-size: var(--ph-fs-m);
   }
   .compact {
+    align-content: start;
     grid-template-rows: repeat(3, auto);
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
-    gap: calc(6px * var(--k)) calc(28px * var(--k));
-    font-size: calc(17px * var(--k));
+    gap: calc(7px * var(--k)) calc(22px * var(--k));
+  }
+  .grid {
+    height: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
   li {
+    position: relative;
     display: grid;
-    grid-template-columns: calc(26px * var(--k)) minmax(0, 1fr);
+    grid-template-columns: calc(16px * var(--k)) minmax(0, 1fr);
     align-items: center;
-    column-gap: calc(16px * var(--k));
-    row-gap: calc(6px * var(--k));
+    column-gap: calc(10px * var(--k));
     color: var(--ph-muted);
     min-width: 0;
   }
-  .compact li {
-    grid-template-columns: calc(22px * var(--k)) minmax(0, 1fr);
-    column-gap: calc(12px * var(--k));
+  .grid li {
+    padding: 0 calc(12px * var(--k));
+    border-right: 1px solid var(--ph-grat);
+  }
+  .grid li:nth-child(3n) {
+    border-right: 0;
+  }
+  .grid li:nth-child(n + 4) {
+    border-top: 1px solid var(--ph-grat);
   }
   li.done {
     color: var(--ph-cyan);
@@ -83,13 +93,11 @@
     color: #ff8f88;
   }
   .ic {
-    width: calc(24px * var(--k));
-    height: calc(24px * var(--k));
+    width: calc(16px * var(--k));
+    height: calc(16px * var(--k));
+    min-width: 13px;
+    min-height: 13px;
     overflow: visible;
-  }
-  .compact .ic {
-    width: calc(20px * var(--k));
-    height: calc(20px * var(--k));
   }
   .ic circle,
   .ic path {
@@ -106,7 +114,7 @@
   .ck {
     fill: none;
     stroke: var(--ph-glass);
-    stroke-width: 2.4;
+    stroke-width: 2.2;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -118,7 +126,7 @@
   .arc {
     fill: none;
     stroke: var(--ph-amber);
-    stroke-width: 2.4;
+    stroke-width: 2.2;
     stroke-linecap: round;
   }
   /* the whole icon box turns (a compositor transform); the ring under the arc is symmetric */
@@ -139,13 +147,13 @@
   .c-pend {
     fill: none;
     stroke: var(--ph-muted);
-    stroke-width: 1.6;
+    stroke-width: 1.5;
     opacity: 0.8;
   }
   .txt {
     display: flex;
     align-items: baseline;
-    gap: calc(10px * var(--k));
+    gap: calc(8px * var(--k));
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -157,22 +165,31 @@
   .active .nm {
     text-shadow: var(--ph-glow-soft);
   }
-  .sep {
-    color: var(--ph-muted);
-  }
   .dt {
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--ph-muted);
+  }
+  .active .dt {
+    color: #d9c49a;
   }
   .bar {
     grid-column: 2;
     position: relative;
-    height: calc(12px * var(--k));
-    margin-bottom: calc(6px * var(--k));
+    height: calc(5px * var(--k));
+    margin-top: calc(4px * var(--k));
     border: 1px solid #2a7f93;
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
     background: rgba(3, 9, 12, 0.7);
+  }
+  /* grid cell: the weights bar runs along the bottom edge of its cell */
+  .grid .bar {
+    position: absolute;
+    left: calc(38px * var(--k));
+    right: calc(12px * var(--k));
+    bottom: calc(5px * var(--k));
+    margin: 0;
   }
   .fill {
     position: absolute;

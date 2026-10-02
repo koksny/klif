@@ -1,4 +1,7 @@
 <script lang="ts">
+  // Compact header, one row: mark + KLIF + tagline on the left; on the right the server phase (and the GPU's
+  // sleep state while dormant), uptime / elapsed or the app version when idle, the panel-mode button, and the
+  // window controls when the host is frameless. The whole bar is the window's drag region.
   import type { Actions, HostInfo, Session } from '../../lib/model/types';
   import { fmtClock } from '../../lib/model/format';
   import Mark from './Mark.svelte';
@@ -29,33 +32,34 @@
 </script>
 
 <header class="hdr" class:fl={frameless} data-tauri-drag-region>
-  <div class="mark" data-tauri-drag-region><Mark size={Math.round(70 * k)} /></div>
+  <div class="mark" data-tauri-drag-region><Mark size={Math.round(38 * k)} /></div>
   <div class="brand" data-tauri-drag-region>
     <div class="title" data-tauri-drag-region>KLIF</div>
     <div class="tag" data-tauri-drag-region>Koksny.com LOCAL INFERENCE FORNICATOR</div>
   </div>
-  {#if panel && !frameless}<div class="pbox"><PanelButton {actions} {panel} /></div>{/if}
   <div class="status" data-tauri-drag-region>
-    {#if frameless}
-      <div class="winrow">
-        {#if panel}<PanelButton {actions} {panel} /><span class="vrule" aria-hidden="true"></span>{/if}
-        <WinControls {actions} maximized={!!host?.maximized} />
-      </div>
-    {/if}
     {#if gpu}
       <!-- dormant GPU: ASLEEP (or WAKING while the VRAM is restored) in amber, next to the server's own state -->
-      <div class="stline" data-tauri-drag-region>
-        <div class="st amber sleepw {gpu.state}" data-tauri-drag-region><span class="dot ring"></span>{gpu.state === 'waking' ? 'WAKING' : 'ASLEEP'}</div>
-        <span class="vrule" aria-hidden="true"></span>
-        <div class="st {st.tone}" data-tauri-drag-region><span class="dot"></span>{st.word}</div>
-      </div>
-    {:else}
-      <div class="st {st.tone}" data-tauri-drag-region><span class="dot"></span>{st.word}</div>
+      <span class="st amber sleepw {gpu.state}" data-tauri-drag-region><span class="dot ring"></span>{gpu.state === 'waking' ? 'WAKING' : 'ASLEEP'}</span>
+      <span class="vrule" aria-hidden="true"></span>
     {/if}
+    <span class="st {st.tone}" data-tauri-drag-region><span class="dot" class:pulse={booting}></span>{st.word}</span>
     {#if session}
-      <div class="up" data-tauri-drag-region>
-        {#if booting}elapsed {fmtClock(session.loading?.elapsedS ?? session.uptimeS)}{:else}uptime {fmtClock(session.uptimeS)}{/if}
-      </div>
+      <span class="vrule" aria-hidden="true"></span>
+      <span class="up" data-tauri-drag-region
+        >{booting ? 'elapsed' : 'uptime'} <b>{fmtClock(booting ? (session.loading?.elapsedS ?? session.uptimeS) : session.uptimeS)}</b></span
+      >
+    {:else if host?.appVersion}
+      <span class="vrule" aria-hidden="true"></span>
+      <span class="up ver" data-tauri-drag-region>v{host.appVersion}</span>
+    {/if}
+    {#if panel}
+      <span class="vrule" aria-hidden="true"></span>
+      <PanelButton {actions} {panel} />
+    {/if}
+    {#if frameless}
+      <span class="vrule" aria-hidden="true"></span>
+      <WinControls {actions} maximized={!!host?.maximized} />
     {/if}
   </div>
 </header>
@@ -64,20 +68,16 @@
   .hdr {
     display: flex;
     align-items: center;
-    gap: calc(22px * var(--k));
-    height: calc(76px * var(--k));
+    gap: calc(14px * var(--k));
+    height: calc(56px * var(--k));
     flex: none;
-    padding: 0 calc(4px * var(--k));
-  }
-  .hdr.fl {
-    height: calc(90px * var(--k));
-    align-items: flex-end;
-    padding-bottom: calc(4px * var(--k));
+    padding: 0 calc(2px * var(--k));
+    border-bottom: 1px solid var(--ph-rule);
   }
   .mark {
     flex: none;
-    border-radius: calc(14px * var(--k));
-    box-shadow: 0 0 calc(12px * var(--k)) rgba(90, 182, 235, 0.22);
+    border-radius: calc(8px * var(--k));
+    box-shadow: 0 0 calc(10px * var(--k)) rgba(90, 182, 235, 0.22);
   }
   .brand {
     min-width: 0;
@@ -87,18 +87,19 @@
     font-family: var(--ph-display);
     font-stretch: 125%;
     font-weight: 500;
-    font-size: calc(52px * var(--k));
-    line-height: 0.95;
-    letter-spacing: 0.06em;
+    font-size: calc(25px * var(--k));
+    line-height: 1;
+    letter-spacing: 0.08em;
     color: var(--ph-cyan);
     text-shadow:
       0 0 8px rgba(127, 227, 255, 0.55),
       0 0 22px rgba(90, 182, 235, 0.3);
   }
   .tag {
-    margin-top: calc(6px * var(--k));
-    font-size: calc(16px * var(--k));
-    letter-spacing: 0.08em;
+    margin-top: calc(4px * var(--k));
+    font-size: var(--ph-fs-xs);
+    font-stretch: 87.5%;
+    letter-spacing: 0.1em;
     color: var(--ph-brand);
     opacity: 0.9;
     white-space: nowrap;
@@ -107,62 +108,42 @@
   }
   .status {
     flex: none;
-    align-self: stretch;
-    text-align: right;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: calc(6px * var(--k));
-    align-items: flex-end;
-  }
-  .fl .status {
-    justify-content: flex-start;
-    gap: calc(4px * var(--k));
-  }
-  .winrow {
     display: flex;
     align-items: center;
-    gap: calc(10px * var(--k));
-    margin: calc(-8px * var(--k)) calc(-12px * var(--k)) calc(4px * var(--k)) 0;
+    gap: calc(12px * var(--k));
+    white-space: nowrap;
   }
   .vrule {
     width: 1px;
-    height: calc(20px * var(--k));
+    height: calc(18px * var(--k));
     background: var(--ph-rule);
-  }
-  /* windowed (not frameless): the button sits in the right cluster, left of the status readout */
-  .pbox {
-    flex: none;
-    align-self: center;
-    margin-right: calc(-4px * var(--k));
   }
   .st {
     display: flex;
     align-items: center;
-    gap: calc(12px * var(--k));
-    font-size: calc(19px * var(--k));
-    letter-spacing: 0.12em;
+    gap: calc(9px * var(--k));
+    font-size: var(--ph-fs-m);
+    font-weight: 500;
+    font-stretch: 87.5%;
+    letter-spacing: 0.14em;
     color: var(--ph-cyan);
     text-shadow: var(--ph-glow);
   }
   .dot {
-    width: calc(11px * var(--k));
-    height: calc(11px * var(--k));
+    width: calc(8px * var(--k));
+    height: calc(8px * var(--k));
+    min-width: 7px;
+    min-height: 7px;
     border-radius: 50%;
     background: currentColor;
     box-shadow: 0 0 8px currentColor;
   }
-  .stline {
-    display: flex;
-    align-items: center;
-    gap: calc(16px * var(--k));
-  }
-  .stline .vrule {
-    margin: 0;
+  .dot.pulse {
+    animation: ph-breathe 1.1s ease-in-out infinite;
   }
   .dot.ring {
     background: transparent;
-    border: calc(2.5px * var(--k)) solid currentColor;
+    border: calc(2px * var(--k)) solid currentColor;
     box-shadow: 0 0 8px currentColor;
     animation: ph-breathe 3.2s ease-in-out infinite;
   }
@@ -176,6 +157,7 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
+    .dot.pulse,
     .dot.ring,
     .sleepw.waking .dot.ring {
       animation: none;
@@ -194,10 +176,15 @@
     text-shadow: none;
   }
   .up {
-    font-size: calc(16px * var(--k));
-    letter-spacing: 0.06em;
+    font-size: var(--ph-fs-m);
+    color: var(--ph-brand);
+  }
+  .up b {
+    font-weight: 400;
     color: var(--ph-cyan);
-    opacity: 0.9;
-    white-space: nowrap;
+    text-shadow: var(--ph-glow-soft);
+  }
+  .up.ver {
+    color: var(--ph-muted);
   }
 </style>

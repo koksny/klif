@@ -1,4 +1,6 @@
 <script lang="ts">
+  // One compact row: mark, wordmark and tagline; then the session's status (and the GPU's while it is
+  // dormant), uptime / elapsed or the version when idle, panel mode, and the window controls when frameless.
   import type { Actions, ViewModel } from '../../../lib/model/types';
   import { fmtClock } from '../../../lib/model/format';
   import { gpuDetail, gpuStatus, type GpuView } from '../power';
@@ -8,7 +10,7 @@
   const st = $derived(statusOf(vm));
   const s = $derived(vm.session);
   const booting = $derived(!!s && (s.phase === 'starting' || s.phase === 'loading'));
-  /** While loading the clock is the load's own elapsed time (the mockup's "elapsed"). */
+  /** While loading the clock is the load's own elapsed time. */
   const clock = $derived(
     s ? (booting && s.loading ? { k: 'elapsed', v: s.loading.elapsedS } : { k: 'uptime', v: s.uptimeS }) : null,
   );
@@ -19,40 +21,41 @@
   const panelTip = $derived(`Panel mode: show on the small screen${panel?.target ? ` (${panel.target})` : ''}`);
 </script>
 
-<header class="hdr" class:frameless class:has-panel={!!panel?.available} data-tauri-drag-region>
+<header class="hdr" class:frameless data-tauri-drag-region>
   <img class="mark" src="/koksny-mark.png" alt="" draggable="false" data-tauri-drag-region />
   <div class="brand" data-tauri-drag-region>
     <span class="word" data-tauri-drag-region>KLIF</span>
-    <span class="tag" data-tauri-drag-region><span class="dom">Koksny.com</span> LOCAL INFERENCE FORNICATOR</span>
+    <span class="tag" data-tauri-drag-region>Koksny.com LOCAL INFERENCE FORNICATOR</span>
   </div>
   <div class="right" data-tauri-drag-region>
-    <span class="stw">
-      <span class="status {st.tone}">
-        <!-- the dot re-pulses on every telemetry snapshot (vm.now): a real heartbeat -->
-        {#key vm.now}<i class="dot"></i>{/key}
-        <span class="st">{st.text}</span>
-      </span>
-      {#if gpu}
-        <!-- the inference GPU is powered down (or coming back): amber, next to the session's status -->
-        <span class="gpu {gpu.phase}" title={gpuDetail(gpu)}>
-          <svg class="gi" viewBox="0 0 20 20" aria-hidden="true">
-            {#if gpu.phase === 'waking'}
-              <!-- waking: the disc fills in as the VRAM comes back (area follows the resident fraction) -->
-              <circle class="ring" cx="10" cy="10" r="7.6" />
-              <circle class="fill" cx="10" cy="10" r={(7.6 * Math.sqrt(gpu.frac)).toFixed(2)} />
-            {:else}
-              <path d="M12.6 2.6A7.6 7.6 0 1 0 17.4 12.6 6 6 0 0 1 12.6 2.6Z" />
-            {/if}
-          </svg>
-          <span class="st">{gpuStatus(gpu)}</span>
-        </span>
-      {/if}
+    <span class="status {st.tone}">
+      <!-- the dot re-pulses on every telemetry snapshot (vm.now): a real heartbeat -->
+      {#key vm.now}<i class="dot"></i>{/key}
+      <span>{st.text}</span>
     </span>
+    {#if gpu}
+      <!-- the inference GPU is powered down (or coming back): amber, beside the session's status -->
+      <span class="gpu" title={gpuDetail(gpu)}>
+        <svg class="gi" viewBox="0 0 20 20" aria-hidden="true">
+          {#if gpu.phase === 'waking'}
+            <!-- waking: the disc fills in as the VRAM comes back (area follows the resident fraction) -->
+            <circle class="ring" cx="10" cy="10" r="7.6" />
+            <circle cx="10" cy="10" r={(7.6 * Math.sqrt(gpu.frac)).toFixed(2)} />
+          {:else}
+            <path d="M12.6 2.6A7.6 7.6 0 1 0 17.4 12.6 6 6 0 0 1 12.6 2.6Z" />
+          {/if}
+        </svg>
+        <span>{gpuStatus(gpu)}</span>
+      </span>
+    {/if}
+    <span class="vr" aria-hidden="true"></span>
     {#if clock}
       <span class="up"><span class="k">{clock.k}</span><span class="v">{fmtClock(clock.v)}</span></span>
+    {:else if vm.host?.appVersion}
+      <span class="up"><span class="k">v{vm.host.appVersion}</span></span>
     {/if}
     {#if panel?.available}
-      <button class="pb" title={panelTip} aria-label={panelTip} onclick={() => actions.togglePanel?.()}>
+      <button class="pb" class:on={panel.active} title={panelTip} aria-label={panelTip} aria-pressed={panel.active} onclick={() => actions.togglePanel?.()}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="10" rx="1.6" /><path d="M7.5 17h5M10 13.5V17" /></svg>
         <span class="pl">Panel</span>
       </button>
@@ -84,13 +87,14 @@
   .hdr {
     display: flex;
     align-items: center;
-    gap: max(10px, calc(var(--u) * 16));
-    padding-top: max(7px, calc(var(--u) * 9));
+    gap: max(10px, calc(var(--u) * 12));
+    height: max(44px, calc(var(--u) * 52));
     min-width: 0;
+    border-bottom: 1px solid var(--rule);
   }
   .mark {
-    width: max(40px, calc(var(--u) * 58));
-    height: max(40px, calc(var(--u) * 58));
+    width: max(28px, calc(var(--u) * 34));
+    height: max(28px, calc(var(--u) * 34));
     flex: none;
     border-radius: 22%;
     box-shadow: 0 0 0 1px rgba(220, 239, 248, 0.06);
@@ -98,83 +102,55 @@
   .brand {
     display: flex;
     align-items: baseline;
-    gap: max(10px, calc(var(--u) * 18));
+    gap: max(10px, calc(var(--u) * 14));
     min-width: 0;
   }
   .word {
     font-family: var(--f-disp);
     font-stretch: 125%;
-    font-weight: 800;
-    font-size: max(36px, calc(var(--u) * 56));
+    font-weight: 700;
+    font-size: max(22px, calc(var(--u) * 26));
     line-height: 1;
-    letter-spacing: -0.005em;
+    letter-spacing: 0.02em;
     color: var(--foam);
   }
   .tag {
     font-family: var(--f-ui);
     font-weight: 500;
-    font-size: max(11px, calc(var(--u) * 14.5));
-    letter-spacing: 0.04em;
-    color: #b4c6cf;
+    font-size: var(--fs-xs);
+    letter-spacing: 0.08em;
+    color: var(--muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
   }
-  .dom {
-    font-weight: 400;
-    letter-spacing: 0.01em;
-    margin-right: 0.25em;
-  }
   .right {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: max(18px, calc(var(--u) * 36));
+    gap: max(10px, calc(var(--u) * 14));
     flex: none;
-    align-self: flex-start;
-    padding-top: max(6px, calc(var(--u) * 14));
+    white-space: nowrap;
   }
-  /* the panel chip eats into the tagline's room: tighter spacing in the right cluster, and (like with
-     window controls) the tagline drops under the wordmark rather than being cut off */
-  .has-panel .brand {
-    flex-wrap: wrap;
-    row-gap: 0;
-  }
-  .has-panel .right {
-    gap: max(14px, calc(var(--u) * 22));
-  }
-  /* with window controls a narrow window cannot hold the tagline beside the wordmark: it goes under it */
-  .frameless .brand {
-    flex-wrap: wrap;
-    row-gap: 0;
-  }
-  .frameless .right {
-    gap: max(12px, calc(var(--u) * 18));
-    padding-top: max(4px, calc(var(--u) * 6));
-  }
-  .status {
+  .status,
+  .gpu {
     display: inline-flex;
     align-items: center;
-    gap: max(8px, calc(var(--u) * 11));
-    font-family: var(--f-disp);
-    font-stretch: 112%;
+    gap: max(7px, calc(var(--u) * 8));
+    font-family: var(--f-ui);
     font-weight: 600;
-    font-size: max(15px, calc(var(--u) * 20.5));
-    letter-spacing: 0.07em;
+    font-size: var(--fs-s);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
     color: var(--sky);
   }
   .dot {
-    width: max(12px, calc(var(--u) * 16));
-    height: max(12px, calc(var(--u) * 16));
+    width: max(8px, calc(var(--u) * 9));
+    height: max(8px, calc(var(--u) * 9));
     border-radius: 50%;
     background: var(--sky);
     animation: beat 700ms ease-out 1;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot {
-      animation: none;
-    }
   }
   @keyframes beat {
     0% {
@@ -184,7 +160,7 @@
       opacity: 1;
     }
   }
-  /* starting / loading: amber, like the approved loading mockup */
+  /* starting / loading: amber */
   .busy {
     color: var(--amber);
   }
@@ -198,39 +174,21 @@
   .idle .dot,
   .stop .dot {
     background: transparent;
-    box-shadow: inset 0 0 0 2px var(--muted);
+    box-shadow: inset 0 0 0 1.5px var(--muted);
   }
   .fault {
-    color: var(--amber);
+    color: var(--danger);
   }
   .fault .dot {
-    background: var(--amber);
+    background: var(--danger);
   }
-  /* GPU asleep / waking: the status's type in amber, a crescent (or a filling disc) for a mark. It hangs
-     under the status row (out of the flow) so the wordmark and the tagline keep their room. */
-  .stw {
-    position: relative;
-    display: inline-flex;
-  }
+  /* GPU asleep / waking: amber, a crescent (or a filling disc) for a mark */
   .gpu {
-    position: absolute;
-    left: 0;
-    top: 100%;
-    margin-top: calc(var(--u) * 3);
-    display: inline-flex;
-    align-items: center;
-    gap: max(7px, calc(var(--u) * 9));
-    font-family: var(--f-disp);
-    font-stretch: 112%;
-    font-weight: 600;
-    font-size: max(15px, calc(var(--u) * 20.5));
-    letter-spacing: 0.07em;
     color: var(--amber);
-    white-space: nowrap;
   }
   .gi {
-    width: max(14px, calc(var(--u) * 19));
-    height: max(14px, calc(var(--u) * 19));
+    width: max(12px, calc(var(--u) * 14));
+    height: max(12px, calc(var(--u) * 14));
     flex: none;
     fill: var(--amber);
   }
@@ -239,64 +197,65 @@
     stroke: var(--amber);
     stroke-width: 1.6;
   }
+  .vr {
+    width: 1px;
+    height: max(14px, calc(var(--u) * 18));
+    background: var(--s1);
+  }
   .up {
     display: inline-flex;
     align-items: baseline;
     gap: 0.5em;
-    font-size: max(13px, calc(var(--u) * 16.5));
-    white-space: nowrap;
+    font-size: var(--fs-m);
   }
   .up .k {
-    font-family: var(--f-ui);
-    color: #c3d3db;
+    color: var(--muted);
   }
   .up .v {
-    font-family: var(--f-data);
     font-weight: 500;
-    letter-spacing: 0.02em;
     color: var(--foam);
   }
 
-  /* panel mode: the same slate chip as the action bar, scaled down to sit beside the status */
+  /* panel mode: the same slate chip as the action bar */
   .pb {
     display: inline-flex;
     align-items: center;
-    gap: max(6px, calc(var(--u) * 9));
-    align-self: center;
-    height: max(28px, calc(var(--u) * 34));
-    padding: 0 max(10px, calc(var(--u) * 14)) 0 max(8px, calc(var(--u) * 11));
-    border-radius: 8px;
-    border: 1px solid #2a353b;
+    gap: max(6px, calc(var(--u) * 7));
+    height: max(26px, calc(var(--u) * 28));
+    padding: 0 max(9px, calc(var(--u) * 10)) 0 max(7px, calc(var(--u) * 8));
+    border-radius: 6px;
+    border: 1px solid var(--edge);
     background: var(--slate);
-    color: #c3d3db;
+    color: var(--mist);
     font-family: var(--f-ui);
-    font-weight: 500;
-    font-size: max(12px, calc(var(--u) * 15.5));
-    letter-spacing: 0.06em;
-    white-space: nowrap;
+    font-weight: 600;
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
   }
   .pb:hover {
     background: var(--slate-2);
     border-color: #36434a;
     color: var(--foam);
   }
+  .pb.on {
+    border-color: var(--sky);
+    color: var(--sky);
+  }
   .pb svg {
-    width: max(15px, calc(var(--u) * 20));
-    height: max(15px, calc(var(--u) * 20));
+    width: max(13px, calc(var(--u) * 15));
+    height: max(13px, calc(var(--u) * 15));
     flex: none;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.7;
+    stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
   /* too narrow for the word: the glyph and its tooltip carry it */
-  @container (max-width: 900px) {
+  @container (max-width: 760px) {
     .pl {
       display: none;
-    }
-    .pb {
-      padding: 0 max(8px, calc(var(--u) * 11));
     }
   }
 
@@ -305,15 +264,14 @@
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    padding-left: max(8px, calc(var(--u) * 10));
+    padding-left: max(6px, calc(var(--u) * 8));
     border-left: 1px solid var(--rule);
-    align-self: center;
   }
   .wb {
     display: inline-grid;
     place-items: center;
-    width: max(28px, calc(var(--u) * 32));
-    height: max(26px, calc(var(--u) * 30));
+    width: max(28px, calc(var(--u) * 30));
+    height: max(26px, calc(var(--u) * 28));
     border-radius: 6px;
     color: var(--muted);
   }
@@ -326,8 +284,8 @@
     color: #fff;
   }
   .wb svg {
-    width: max(13px, calc(var(--u) * 15));
-    height: max(13px, calc(var(--u) * 15));
+    width: max(12px, calc(var(--u) * 13));
+    height: max(12px, calc(var(--u) * 13));
     fill: none;
     stroke: currentColor;
     stroke-width: 1.3;

@@ -1,5 +1,5 @@
 // Instrument (Zegar): palette, fonts, the machined panel texture and small shared helpers.
-import type { GpuMemory, Phase, Session, Slot, SlotId, ViewModel } from '../../lib/model/types';
+import type { GpuMemory, ModelRef, Phase, Session, Slot, SlotId, SlotKind, ViewModel } from '../../lib/model/types';
 import { fmtCtx } from '../../lib/model/format';
 
 export const PAL = {
@@ -17,8 +17,12 @@ export const PAL = {
   segOff: '#33353A',
 } as const;
 
+// Industrial equipment lettering: engraved captions in Barlow Condensed caps, text and values in Barlow
+// with tabular figures, the drum counters in their own mechanical faces. Mono only for the console line,
+// ports, API keys and fault log lines.
 export const FONT = {
   label: "'Barlow Condensed', 'Oswald Variable', 'Arial Narrow', sans-serif",
+  text: "'Barlow', 'Barlow Condensed', 'Segoe UI', sans-serif",
   hero: "'Archivo Variable', 'Barlow Condensed', sans-serif",
   mono: "'Share Tech Mono', ui-monospace, monospace",
 } as const;
@@ -113,8 +117,58 @@ const AVAIL_LABEL: Record<string, string> = {
   'script-missing': 'script missing',
   'model-missing': 'model missing',
   'build-required': 'build required',
+  busy: 'port busy',
 };
 export const availLabel = (a: string) => AVAIL_LABEL[a] ?? a;
+
+/**
+ * What the panel shows, one word per phase. 'other' = a live session that has not reported its kind's
+ * data yet. Every region of the full window keeps its place in all of them; only the contents change.
+ */
+export type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'stopping' | 'fault' | 'other';
+
+/** The kind the panel reads: the running slot's, or (idle) the selected slot's. */
+export function kindOf(vm: ViewModel): SlotKind {
+  const slot = slotById(vm, pointerSlot(vm));
+  return slot?.kind ?? (vm.session?.image ? 'image' : 'llm');
+}
+
+export function viewOf(vm: ViewModel): View {
+  const s = vm.session;
+  if (!s) return 'idle';
+  if (s.phase === 'fault') return 'fault';
+  if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
+  if (s.phase === 'stopping') return 'stopping';
+  const kind = kindOf(vm);
+  if (kind === 'llm' && s.llm) return 'live-llm';
+  if (kind === 'image' && s.image) return 'live-img';
+  return 'other';
+}
+
+/** "Qwen 3.8 Flash-Next · IQ2_XXS · 128k · Thinking": the mini's model line. */
+export function modelShort(m: ModelRef | undefined): string {
+  if (!m) return '';
+  const parts = [m.name, m.quant];
+  if (m.ctxTokens) parts.push(fmtCtx(m.ctxTokens));
+  if (m.imageSize) parts.push(m.imageSize);
+  if (m.mode) parts.push(m.mode);
+  return parts.join(' · ');
+}
+
+/** The previous session as one line for the timeline caption: label, facts, how it ended. */
+export function lastSessionText(vm: ViewModel): { text: string; fault: boolean } | null {
+  const ls = vm.lastSession;
+  if (!ls) return null;
+  const label = slotById(vm, ls.slot)?.label ?? ls.model.name;
+  const facts = [fmtDur(ls.uptimeS)];
+  if (ls.requests !== undefined) facts.push(`${fmtIntLocal(ls.requests)} requests`);
+  if (ls.generatedTokens !== undefined) facts.push(`${fmtIntLocal(ls.generatedTokens)} tok`);
+  if (ls.decodeTps !== undefined) facts.push(`${ls.decodeTps >= 100 ? Math.round(ls.decodeTps) : ls.decodeTps.toFixed(1)} tok/s`);
+  if (ls.images !== undefined) facts.push(`${fmtIntLocal(ls.images)} images`);
+  if (ls.secondsPerImage !== undefined) facts.push(`${fmtJobS(ls.secondsPerImage)} per image`);
+  const end = ls.ended === 'fault' ? `ended in a fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
+  return { text: `last session: ${label} · ${facts.join(' · ')} · ${end}`, fault: ls.ended === 'fault' };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Machined panel texture: generated ONCE per page into an offscreen canvas, then reused as a

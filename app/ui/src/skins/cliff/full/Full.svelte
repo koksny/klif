@@ -1,14 +1,23 @@
 <script lang="ts">
+  // Cliff, full window. One fixed skeleton in every phase, scaled by --u (1 design px): header, tier strip,
+  // model line, status block (hero + two detail rows, or the fault panel in the same box), the cliff scene
+  // (absorbs the remaining height), system row, request timeline / recent jobs, controls. A phase change
+  // only changes what the regions say, never where they are:
+  //   idle      - the selected tier: dim hero and rows with its configured values, fit preview, Launch
+  //   loading   - startup % in the hero, the six startup steps in the rows, other tiers locked
+  //   live      - decode speed (prefill progress while prefilling) / diffusion progress, the scene live
+  //   stopping  - dim hero "STOPPING · RELEASING x GiB"; waiting = live with no telemetry yet
+  //   fault     - fault panel over the status block, debris off the emptied face, Restart / Dismiss
+  //   dormant   - (live, vram.dormant set) the GPU asleep or waking: amber status, the last figure faded
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { fmtFixed } from '../../../lib/model/format';
+  import { fmtFixed, fmtGiB } from '../../../lib/model/format';
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
   import type { GpuView } from '../power';
-  import { releasedGiB, selectedSlot, sessionKind, sessionSlot, viewState } from '../util';
+  import { availabilityText, blockView, lastSessionLine, releasedGiB, selectedSlot, sessionKind, sessionSlot } from '../util';
   import Bottom from './Bottom.svelte';
   import FaultPanel from './FaultPanel.svelte';
   import Header from './Header.svelte';
-  import IdlePanel from './IdlePanel.svelte';
   import ImagePanel from './ImagePanel.svelte';
   import LlmPanel from './LlmPanel.svelte';
   import LoadingPanel from './LoadingPanel.svelte';
@@ -20,20 +29,23 @@
   let { vm, actions, gpu = null }: { vm: ViewModel; actions: Actions; gpu?: GpuView | null } = $props();
 
   const s = $derived(vm.session);
-  const view = $derived(viewState(vm));
+  const view = $derived(blockView(vm));
+  /** The running slot's kind, or (idle) the selected slot's. */
   const kind = $derived(sessionKind(vm));
   const sel = $derived(selectedSlot(vm));
   const running = $derived(sessionSlot(vm));
+  const llm = $derived(s?.llm ?? null);
+  const img = $derived(s?.image ?? null);
+  /** The status block follows the running session, or (idle) the selected tier with its configured values. */
   const model = $derived(s?.model ?? sel?.model ?? null);
-  const mode = $derived<SceneMode>(
-    view === 'idle' ? 'fit' : view === 'fault' ? 'fault' : view === 'loading' ? 'building' : 'live',
-  );
+  const recipe = $derived((running ?? sel)?.recipe);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || recipe?.ctxTokens || 0);
+
+  const mode = $derived<SceneMode>(view === 'idle' ? 'fit' : view === 'fault' ? 'fault' : view === 'loading' ? 'building' : 'live');
   const fit = $derived(mode === 'fit');
   /** VRAM held by others; with nothing running that is everything in use (older cores lack the field). */
   const baseGiB = $derived(vm.vram.baselineGiB ?? (s ? 0 : vm.vram.usedGiB));
   const cliffLayers = $derived(fit ? (sel?.expectedVram ?? []) : vm.vram.layers);
-  /** The GPU is asleep with nothing in flight: the numbers on the hero are the last request's, not live. */
-  const stale = $derived(!!gpu && gpu.phase === 'asleep' && (s?.llm ? s.llm.activity === 'idle' : s?.image?.activity === 'idle'));
   const kicker = $derived(
     fit
       ? `VRAM cliff · fit preview for ${sel?.label ?? 'job'}`
@@ -49,36 +61,47 @@
                 : 'VRAM cliff · paged out to system RAM'
             : 'VRAM cliff',
   );
+
+  // The hero's word when there is nothing to measure.
+  const why = $derived(sel ? availabilityText(sel.availability) : null);
+  const word = $derived(
+    view === 'idle'
+      ? (why ?? 'not running').toUpperCase()
+      : view === 'stopping'
+        ? `STOPPING · RELEASING ${fmtGiB(vm.vram.usedGiB)} GiB`
+        : view === 'waiting'
+          ? 'WAITING FOR DATA'
+          : null,
+  );
+  const wordAmber = $derived((view === 'idle' && !!why) || view === 'stopping');
+  /** Image GPU asleep with nothing in flight: the last job's figures, faded. */
+  const imgStale = $derived(!!gpu && img?.activity === 'idle');
+
+  // Timeline / recent jobs.
+  const hadWork = $derived(view === 'fault' && (!!llm || !!img));
+  const died = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
+  const lastText = $derived(vm.lastSession ? lastSessionLine(vm.lastSession, vm.slots) : '');
+  const lastFault = $derived(vm.lastSession?.ended === 'fault');
+  const ramFrac = $derived(vm.system.ramTotalGiB > 0 ? Math.min(1, vm.system.ramUsedGiB / vm.system.ramTotalGiB) : 0);
 </script>
 
-<div class="full">
-  <div class="pad top">
-    <Header {vm} {actions} {gpu} />
-    <Tabs {vm} {actions} />
-  </div>
+<div class="full" data-view={view}>
+  <div class="pad"><Header {vm} {actions} {gpu} /></div>
+  <div class="pad"><Tabs {vm} {actions} /></div>
+  <div class="pad"><ModelLine {model} {kind} label={s ? 'Active model' : 'Selected'} dim={!s} /></div>
 
-  {#if view === 'idle'}
-    <div class="pad"><IdlePanel {vm} {actions} /></div>
-    <div class="pad"><div class="c-rule"></div></div>
-  {:else if view === 'fault' && s}
-    <div class="pad"><FaultPanel session={s} history={vm.vram.history} totalGiB={vm.vram.totalGiB} /></div>
-    <div class="pad"><div class="c-rule"></div></div>
-  {:else}
-    {#if model}
-      <div class="pad"><ModelLine {model} {kind} label={s ? 'Active model' : 'Selected model'} /></div>
-      <div class="pad"><div class="c-rule"></div></div>
+  <!-- Status block: its box never moves; a fault covers it whole. -->
+  <div class="pad block">
+    {#if view === 'fault' && s}
+      <FaultPanel session={s} label={running?.label ?? s.model.name} history={vm.vram.history} totalGiB={vm.vram.totalGiB} />
+    {:else if view === 'loading' && s}
+      <LoadingPanel session={s} usedGiB={vm.vram.usedGiB} totalGiB={vm.vram.totalGiB} />
+    {:else if kind === 'image'}
+      <ImagePanel image={img} {model} {word} {wordAmber} stale={imgStale} />
+    {:else}
+      <LlmPanel {llm} {model} {ctxTotal} {word} {wordAmber} {gpu} />
     {/if}
-    <div class="pad mid">
-      {#if view === 'llm' && s?.llm}
-        <LlmPanel llm={s.llm} {stale} />
-      {:else if view === 'image' && s?.image}
-        <ImagePanel image={s.image} />
-      {:else if s}
-        <LoadingPanel session={s} label={running?.label ?? s.model.name} {kind} />
-      {/if}
-    </div>
-    <div class="pad"><div class="c-rule"></div></div>
-  {/if}
+  </div>
 
   <div class="scene">
     <Cliff
@@ -98,25 +121,29 @@
     />
   </div>
 
-  <div class="pad"><div class="c-rule strong"></div></div>
   <div class="pad sys">
-    <span class="k">RAM</span>
-    <span class="c-data v">{fmtFixed(vm.system.ramUsedGiB, 1)} / {fmtFixed(vm.system.ramTotalGiB, 1)} GiB</span>
+    <span class="c-lbl">RAM</span>
+    <span class="v">{fmtFixed(vm.system.ramUsedGiB, 1)} / {fmtFixed(vm.system.ramTotalGiB, 1)} GiB{vm.system.ramType ? ` ${vm.system.ramType}` : ''}</span>
+    <span class="c-bar" role="meter" aria-label="System RAM" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(ramFrac * 100)}
+      ><i style:transform="scaleX({ramFrac})"></i></span
+    >
     <span class="vr" aria-hidden="true"></span>
-    <span class="k">CPU</span>
-    <span class="c-data v">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
+    <span class="c-lbl">CPU</span>
+    <span class="v">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
+    <span class="c-bar" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(vm.system.cpuPct)}
+      ><i style:transform="scaleX({Math.min(1, vm.system.cpuPct / 100)})"></i></span
+    >
   </div>
-  <div class="pad"><div class="c-rule"></div></div>
 
-  {#if view === 'llm' && s?.llm}
-    <div class="pad"><Timeline requests={s.llm.requests} /></div>
-    <div class="pad"><div class="c-rule"></div></div>
-  {:else if view === 'image' && s?.image}
-    <div class="pad"><RecentJobs recent={s.image.recent} /></div>
-    <div class="pad"><div class="c-rule"></div></div>
-  {/if}
+  <div class="pad">
+    {#if kind === 'image'}
+      <RecentJobs recent={img?.recent ?? []} total={img?.imagesThisSession ?? 0} {view} {hadWork} {lastText} {lastFault} />
+    {:else}
+      <Timeline requests={llm?.requests ?? []} {view} {hadWork} {died} {lastText} {lastFault} />
+    {/if}
+  </div>
 
-  <div class="pad"><Bottom {vm} {actions} /></div>
+  <div class="pad last"><Bottom {vm} {actions} /></div>
 </div>
 
 <style>
@@ -125,44 +152,51 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
+    gap: var(--gap);
     height: 100%;
     min-height: 0;
+    font-size: var(--fs-m);
   }
   .pad {
-    padding-inline: max(16px, 2.35cqi);
+    padding-inline: max(14px, calc(var(--u) * 20));
     flex: none;
     min-width: 0;
   }
+  .last {
+    padding-bottom: max(10px, calc(var(--u) * 12));
+  }
+  .block {
+    display: grid;
+    grid-template-rows: max(76px, calc(var(--u) * 92)) minmax(0, 1fr);
+    row-gap: var(--gap);
+    height: max(152px, calc(var(--u) * 172));
+  }
+  /* the drawing absorbs the remaining height; it runs edge to edge like a chart's neat line */
   .scene {
     flex: 1 1 0;
-    min-height: max(200px, calc(var(--u) * 250));
+    min-height: max(200px, calc(var(--u) * 240));
     position: relative;
-  }
-  .c-rule.strong {
-    background: #2c373e;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid #2c373e;
   }
   .sys {
     display: flex;
-    align-items: baseline;
-    gap: max(12px, calc(var(--u) * 26));
-    padding-top: max(10px, calc(var(--u) * 15));
-    padding-bottom: max(10px, calc(var(--u) * 15));
-    font-size: max(13px, calc(var(--u) * 18));
-  }
-  .sys .k {
-    font-family: var(--f-ui);
-    font-weight: 500;
-    color: var(--foam);
-    letter-spacing: 0.04em;
+    align-items: center;
+    gap: max(10px, calc(var(--u) * 12));
+    height: max(24px, calc(var(--u) * 26));
+    white-space: nowrap;
   }
   .sys .v {
     color: var(--foam);
-    letter-spacing: 0.04em;
+    flex: none;
+  }
+  .sys .c-bar {
+    flex: 0 1 max(60px, calc(var(--u) * 120));
   }
   .sys .vr {
     align-self: stretch;
     width: 1px;
+    margin: 0 max(8px, calc(var(--u) * 14));
     background: var(--rule);
-    margin: 0 max(10px, calc(var(--u) * 26));
   }
 </style>

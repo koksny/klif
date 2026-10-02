@@ -80,7 +80,7 @@
     nBase ? [{ id: 'other', label: 'other', gib: baseGiB }, ...layers] : layers,
   );
   const sidePad = $derived(Math.max(16, w * 0.0235));
-  const lipTop = $derived(full ? Math.round(titleH + Math.max(8, h * 0.02)) : Math.round(h * 0.531));
+  const lipTop = $derived(full ? Math.round(titleH + Math.max(8, h * 0.02)) : Math.round(h * 0.17));
   const stacked = $derived(sumGiB(stackLayers));
   /** Headroom: measured free VRAM, or the spare a fit preview predicts (dormant: what the allocations leave). */
   const free = $derived(fit ? totalGiB - stacked : dorm ? Math.max(0, totalGiB - stacked) : Math.max(0, totalGiB - usedGiB));
@@ -202,8 +202,8 @@
   });
 
   // ---- overlay layout (full)
-  const fsL = $derived(Math.max(12.5, Math.min(19, w * 0.0162)));
-  const fsS = $derived(Math.max(11.5, Math.min(15, w * 0.0128)));
+  const fsL = $derived(Math.max(11.5, Math.min(14, w * 0.0109)));
+  const fsS = $derived(Math.max(10.5, Math.min(12.5, w * 0.0097)));
   const bx = $derived(Math.max(10, w * 0.016));
   const lx = $derived(bx + Math.max(14, w * 0.02));
 
@@ -328,7 +328,7 @@
     const yL = (gib: number) => L.y + (L.hi - gib) * L.k;
     const ticks: number[] = [];
     for (let v = Math.ceil(L.lo * 4) / 4; v <= L.hi + 1e-6; v += 0.25) ticks.push(yL(v));
-    const fs = Math.max(11, Math.min(13.5, w * 0.0122));
+    const fs = Math.max(10.5, Math.min(12, w * 0.0094));
     const slices: { y: number; text: string; value: string; free?: boolean }[] = [];
     const top = Math.max(g.stackTop, L.lo);
     if (L.hi - top > 0 && yL(top) - yL(L.hi) >= fs * 1.25)
@@ -359,43 +359,6 @@
   const seaLabel = $derived.by(() => {
     if (!g) return null;
     return { x: w - Math.max(sidePad, w * 0.06), y: g.waterY + (g.baseY - g.waterY) * 0.52 };
-  });
-
-  // ---- overlay layout (mini)
-  const miniUse = $derived.by(() => {
-    if (!g || full) return null;
-    const y = Math.min(g.baseY - h * 0.06, Math.max(g.lipY + h * 0.17, g.rockY + (g.baseY - g.rockY) * 0.55));
-    return { x: w * 0.026, y };
-  });
-
-  /** Dormant, mini: the state in words large enough to read from a metre, on the (ghost) rock. */
-  const mdorm = $derived.by(() => {
-    if (!g || full || !dorm || !gpu) return null;
-    const waking = gpu.phase === 'waking';
-    const a = Math.max(30, h * 0.1);
-    const b = Math.max(30, h * 0.06);
-    const c = Math.max(30, h * 0.052);
-    const x = w * 0.026;
-    // One block, a little above the middle of the rock zone (under the lip, clear of the foot).
-    const block = a * 0.72 + b * 1.4 + c * 1.45;
-    const top = g.lipY + Math.max(h * 0.02, (g.baseY - g.lipY - block) * 0.3);
-    const yA = top + a * 0.72;
-    const yB = yA + b * 1.4;
-    const yC = yB + c * 1.45;
-    return {
-      x,
-      a,
-      b,
-      c,
-      yA,
-      yB,
-      yC,
-      title: gpuStatus(gpu),
-      value: fmtGiB(gpu.pagedOutGiB),
-      unit: waking ? 'GiB still paged out' : 'GiB paged out',
-      res: `${fmtGiB(gpu.residentGiB)} / ${totalGiB.toFixed(2)} GiB resident`,
-      pct: waking ? `${Math.round(gpu.frac * 100)}%` : null,
-    };
   });
 
   const aria = $derived(
@@ -567,38 +530,9 @@
           {/if}
         {/if}
       {:else}
-        <!-- mini: lip marker, headroom number (not after a fault: the panel's line is the failure), usage on the rock -->
+        <!-- mini: the lip marker only; the numbers are in the panel's VRAM strip, not scattered on the drawing -->
         {#if !fault}
           <path class="mark" d="M{g.lipX - 9} {g.lipY - 22} H{g.lipX + 9} L{g.lipX} {g.lipY - 9} Z" />
-          <text class="mfree" x={g.lipX + 18} y={g.lipY - 13} style:font-size="{Math.max(30, h * 0.05)}px"
-            ><tspan class="fv">{freeText}</tspan><tspan class="fu" dx="0.25em"
-              >{fit || dorm ? (free >= 0 ? 'GiB spare' : 'GiB over') : 'GiB free'}</tspan
-            ></text
-          >
-        {/if}
-        {#if miniUse && fit}
-          <!-- nothing is loaded yet: the number under this is what the selected job would take -->
-          <text class="mexp" x={miniUse.x + 2} y={miniUse.y - Math.max(30, h * 0.084) * 0.72 - 16} style:font-size="{Math.max(30, h * 0.05)}px"
-            >expected if launched</text
-          >
-        {/if}
-        {#if mdorm}
-          <text class="mgpu" x={mdorm.x} y={mdorm.yA} style:font-size="{mdorm.a}px">{mdorm.title}</text>
-          <text class="mpaged" x={mdorm.x + 2} y={mdorm.yB} style:font-size="{mdorm.b}px"
-            ><tspan class="v">{mdorm.value}</tspan><tspan class="u" dx="0.3em">{mdorm.unit}</tspan></text
-          >
-          <text class="mres" x={mdorm.x + 2} y={mdorm.yC} style:font-size="{mdorm.c}px"
-            >{mdorm.res}{#if mdorm.pct}<tspan class="p" dx="0.5em">{mdorm.pct}</tspan>{/if}</text
-          >
-        {:else if miniUse}
-          <text class="muse" x={miniUse.x} y={miniUse.y} style:font-size="{Math.max(30, h * 0.084)}px"
-            >{(fit ? stacked : usedGiB).toFixed(2)} / {totalGiB.toFixed(2)} GiB</text
-          >
-        {/if}
-        {#if spilling}
-          <text class="mspill" x={w - w * 0.03} y={g.baseY - h * 0.045} text-anchor="end" style:font-size="{Math.max(30, h * 0.05)}px"
-            >spill {fmtInt(spillMiB)} MiB</text
-          >
         {/if}
       {/if}
     </svg>
@@ -639,27 +573,35 @@
     position: absolute;
     left: 0;
     top: 0;
-    padding-top: max(7px, calc(var(--u) * 10));
+    padding-top: max(6px, calc(var(--u) * 8));
   }
+  /* map title: a small caption over the sheet name */
   .kicker {
-    font: 400 max(12px, calc(var(--u) * 14.5)) / 1.25 var(--f-ui);
-    color: var(--muted);
+    font: 600 var(--fs-xs) / 1.2 var(--f-ui);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--label);
   }
   .ttl {
-    margin-top: max(2px, calc(var(--u) * 5));
-    font: 500 max(15px, calc(var(--u) * 21)) / 1.15 var(--f-ui);
-    letter-spacing: 0.035em;
-    color: var(--foam);
+    margin-top: max(2px, calc(var(--u) * 3));
+    font: 400 var(--fs-l) / 1.2 var(--f-ui);
+    letter-spacing: 0.01em;
+    color: var(--mist);
     white-space: nowrap;
+  }
+  .ttl .num {
+    font-weight: 500;
+    color: var(--foam);
   }
   .ttl .sep {
     margin: 0 0.45em;
-    color: var(--muted);
+    color: var(--dim);
   }
   .ttl .exp {
-    margin-left: 0.6em;
-    font-size: 0.7em;
-    letter-spacing: 0.06em;
+    margin-left: 0.7em;
+    font-weight: 600;
+    font-size: var(--fs-xs);
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--muted);
   }
@@ -667,6 +609,7 @@
   /* svg text */
   text {
     font-family: var(--f-ui);
+    font-variant-numeric: tabular-nums;
     fill: var(--foam);
     paint-order: stroke;
     stroke: rgba(12, 16, 19, 0.6);
@@ -682,8 +625,7 @@
   .spill .v,
   .ltick,
   .capt {
-    font-family: var(--f-data);
-    font-weight: 500;
+    font-weight: 600;
   }
   .col {
     fill: none;
@@ -772,7 +714,6 @@
   }
   .lhead {
     fill: var(--muted);
-    font-family: var(--f-data);
     letter-spacing: 0.02em;
     stroke: rgba(12, 16, 19, 0.9);
   }
@@ -796,11 +737,13 @@
   .lsl.lfree .v {
     fill: var(--foam);
   }
+  /* hydrography: water is labelled in italic */
   .sea {
+    font-style: italic;
     fill: #9db4c0;
     fill-opacity: 0.85;
     stroke: none;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.03em;
   }
   /* dormant: the sea holds the model */
   .sea.lit {
@@ -809,8 +752,7 @@
   }
   .flab {
     fill: var(--sky);
-    font-family: var(--f-data);
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: 0.01em;
     stroke: rgba(12, 16, 19, 0.85);
   }
@@ -846,70 +788,5 @@
   /* mini */
   .mark {
     fill: var(--foam);
-  }
-  .mfree {
-    font-weight: 500;
-    stroke: rgba(12, 16, 19, 0.85);
-    stroke-width: 4px;
-  }
-  .mfree .fv {
-    font-family: var(--f-data);
-    fill: var(--foam);
-  }
-  .mfree .fu {
-    fill: var(--sky);
-  }
-  .warn .mfree .fu,
-  .warn .mfree .fv {
-    fill: var(--amber);
-  }
-  .muse {
-    font-family: var(--f-data);
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    stroke: rgba(12, 16, 19, 0.5);
-    stroke-width: 4px;
-  }
-  .mexp {
-    fill: #9fb2bc;
-    stroke: rgba(12, 16, 19, 0.7);
-    stroke-width: 4px;
-  }
-  .mgpu {
-    font-family: var(--f-disp);
-    font-stretch: 112%;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    fill: var(--amber);
-    stroke: rgba(12, 16, 19, 0.85);
-    stroke-width: 5px;
-  }
-  .mpaged {
-    font-weight: 500;
-    stroke: rgba(12, 16, 19, 0.85);
-    stroke-width: 4px;
-  }
-  .mpaged .v {
-    font-family: var(--f-data);
-    fill: var(--foam);
-  }
-  .mpaged .u {
-    fill: var(--sky);
-  }
-  .mres {
-    font-family: var(--f-data);
-    font-weight: 500;
-    fill: #b9cad3;
-    stroke: rgba(12, 16, 19, 0.8);
-    stroke-width: 4px;
-  }
-  .mres .p {
-    fill: var(--sky);
-  }
-  .mspill {
-    fill: var(--amber);
-    font-weight: 500;
-    stroke: rgba(12, 16, 19, 0.85);
-    stroke-width: 4px;
   }
 </style>

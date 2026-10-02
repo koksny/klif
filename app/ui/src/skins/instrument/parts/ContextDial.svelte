@@ -126,7 +126,7 @@
   }
   .end {
     fill: rgba(237, 230, 214, 0.6);
-    font-size: 27px;
+    font-size: 23px;
     font-weight: 500;
     text-anchor: middle;
   }

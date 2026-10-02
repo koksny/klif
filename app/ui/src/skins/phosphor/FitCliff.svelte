@@ -16,7 +16,7 @@
   let h = $state(0);
   const uid = nextUid();
   const mini = $derived(variant === 'mini');
-  const fs = $derived(Math.max(11, 13.5 * k));
+  const fs = $derived(Math.max(11.5, 11.75 * k));
 
   /** VRAM held by others. With no session running everything in use is the baseline. */
   const base = $derived(Math.max(0, vram.baselineGiB ?? vram.usedGiB));
@@ -278,7 +278,9 @@
   }
   .t.ram {
     fill: var(--ph-cyan);
-    letter-spacing: 0.08em;
+    font-weight: 500;
+    font-stretch: 87.5%;
+    letter-spacing: 0.12em;
   }
   .ann-t {
     fill: var(--ph-amber);

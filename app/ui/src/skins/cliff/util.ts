@@ -1,10 +1,25 @@
-import type { Availability, ModelRef, Slot, SlotKind, ViewModel, VramLayer } from '../../lib/model/types';
-import { fmtCtx } from '../../lib/model/format';
+import type { Availability, LastSession, ModelRef, Slot, SlotKind, ViewModel, VramLayer } from '../../lib/model/types';
+import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 
 /** What the main area shows. 'stopping' renders the live view of its kind. */
 export type ViewState = 'idle' | 'loading' | 'fault' | 'llm' | 'image';
 
 export type Tone = 'live' | 'busy' | 'idle' | 'stop' | 'fault';
+
+/**
+ * What the status block shows. The skeleton is the same in every one of these; only its contents change.
+ * 'waiting' = live, but the first telemetry of its kind has not arrived yet.
+ */
+export type BlockView = 'idle' | 'loading' | 'live' | 'stopping' | 'waiting' | 'fault';
+
+export function blockView(vm: ViewModel): BlockView {
+  const s = vm.session;
+  if (!s) return 'idle';
+  if (s.phase === 'fault') return 'fault';
+  if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
+  if (s.phase === 'stopping') return 'stopping';
+  return (sessionKind(vm) === 'image' ? s.image : s.llm) ? 'live' : 'waiting';
+}
 
 export function selectedSlot(vm: ViewModel): Slot | null {
   return vm.slots.find((s) => s.id === vm.selected) ?? vm.slots[0] ?? null;
@@ -46,6 +61,19 @@ export function statusOf(vm: ViewModel): { text: string; tone: Tone } {
     case 'fault':
       return { text: 'FAULT', tone: 'fault' };
   }
+}
+
+/** The tier word without the family prefix: "AGENT MEDIUM" -> "MEDIUM". */
+export function tierWord(label: string): string {
+  return label.replace(/^AGENT\s+/i, '');
+}
+
+/** The tier strip's model line: "Qwen 3.8 27B · GSQ-RCO IQ3_S · 96k" / "Krea 2 Realism Turbo · Q8_0 · 512x768". */
+export function modelShort(m: ModelRef): string {
+  const f = [m.name, m.quant];
+  if (m.ctxTokens) f.push(fmtCtx(m.ctxTokens));
+  else if (m.imageSize) f.push(m.imageSize);
+  return f.join(' · ');
 }
 
 /** The facts line under "Active model". */
@@ -100,6 +128,8 @@ export function availabilityText(a: Availability): string | null {
       return 'script missing';
     case 'unsupported':
       return 'unsupported';
+    case 'busy':
+      return 'port busy';
     default:
       return String(a);
   }
@@ -118,6 +148,26 @@ export function fmtSpan(seconds: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/** Compact time left: "8.4 s", "1:28". */
+export function fmtEta(sec: number): string {
+  if (sec < 60) return `${Math.max(0, sec).toFixed(1)} s`;
+  const m = Math.floor(sec / 60);
+  const r = Math.round(sec % 60);
+  return `${m}:${r.toString().padStart(2, '0')}`;
+}
+
+/** The previous session in one line: "AGENT MEDIUM · 2 h 14 min · 12 requests · ... · stopped 21 min ago". */
+export function lastSessionLine(last: LastSession, slots: Slot[]): string {
+  const f = [slots.find((x) => x.id === last.slot)?.label ?? last.model.name, fmtSpan(last.uptimeS)];
+  if (last.requests !== undefined) f.push(`${fmtInt(last.requests)} requests`);
+  if (last.generatedTokens !== undefined) f.push(`${fmtInt(last.generatedTokens)} tok`);
+  if (last.decodeTps !== undefined) f.push(`${fmtTps(last.decodeTps)} tok/s`);
+  if (last.images !== undefined) f.push(`${fmtInt(last.images)} images`);
+  if (last.secondsPerImage !== undefined) f.push(`${last.secondsPerImage.toFixed(1)} s / image`);
+  f.push(`${last.ended === 'fault' ? 'ended in a fault' : 'stopped'} ${fmtAgo(last.endedAgoS)}`);
+  return f.join(' · ');
 }
 
 /** "8.4 / 11.6 GiB" -> 0.72: progress encoded in a load step's own detail text, if any. */

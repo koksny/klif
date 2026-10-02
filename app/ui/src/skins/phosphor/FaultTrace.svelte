@@ -140,7 +140,7 @@
     position: absolute;
     left: 0;
     transform: translateY(-115%);
-    font: max(10.5px, calc(12.5px * var(--k, 1))) / 1 var(--ph-ui);
+    font: var(--ph-fs-xs) / 1 var(--ph-ui);
     color: var(--ph-muted);
     opacity: 0.85;
     pointer-events: none;
@@ -153,7 +153,7 @@
     position: absolute;
     right: calc(10px * var(--k, 1));
     top: 0;
-    font: max(10.5px, calc(13px * var(--k, 1))) / 1 var(--ph-ui);
+    font: var(--ph-fs-xs) / 1 var(--ph-ui);
     letter-spacing: 0.05em;
     color: var(--ph-muted);
   }

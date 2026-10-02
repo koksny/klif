@@ -1,299 +1,165 @@
 <script lang="ts">
-  import type { LlmLive } from '../../../lib/model/types';
-  import { fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../../lib/model/format';
+  // LLM status block: the hero (decode speed with its 5-minute swell; the prefill progress while the prompt
+  // is processed, never "0.0 tok/s") over two fixed rows: PREFILL / DECODE and CONTEXT / SPECULATIVE.
+  // With nothing to measure (idle, stopping, no data yet) the same boxes stay, dimmed: the hero carries a
+  // word and the rows show the configured facts of the tier (context window, speculative mode).
+  import type { LlmLive, ModelRef } from '../../../lib/model/types';
+  import { fmtGiB, fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../../lib/model/format';
+  import type { GpuView } from '../power';
   import Swell from '../Swell.svelte';
+  import { fmtEta } from '../util';
 
-  /** `stale`: the GPU is asleep and nothing is running, so the hero is the last request's number, dimmed. */
-  let { llm, stale = false }: { llm: LlmLive; stale?: boolean } = $props();
+  let {
+    llm,
+    model,
+    ctxTotal,
+    word = null,
+    wordAmber = false,
+    gpu = null,
+  }: {
+    llm: LlmLive | null;
+    model: ModelRef | null;
+    /** Context window in tokens: the live one, or the configured one. */
+    ctxTotal: number;
+    /** Set when there is nothing to measure: the hero is dimmed with this word over it. */
+    word?: string | null;
+    wordAmber?: boolean;
+    /** The GPU is dormant (asleep, waking, or paging out). */
+    gpu?: GpuView | null;
+  } = $props();
 
   const SEGS = 16;
-
-  const prefillText = $derived.by(() => {
-    const p = llm.prefill;
-    if (!p) return '—';
-    // While prefilling, speed and time left are in the hero above; this line keeps the token counts.
-    if (llm.activity === 'prefill')
-      return `${fmtInt(p.doneTokens)} / ${fmtInt(p.tokens)} tok${p.cachedTokens ? ` · ${fmtInt(p.cachedTokens)} cached` : ''} · in progress`;
-    return `${fmtInt(p.tokens)} tok · ${fmtTps(p.tps)} tok/s · done in ${fmtSeconds(p.elapsedS)}`;
-  });
-  const ctxFrac = $derived(
-    llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0,
-  );
-  const prefillFrac = $derived(
-    llm.prefill && llm.prefill.tokens > 0 ? Math.min(1, llm.prefill.doneTokens / llm.prefill.tokens) : 0,
-  );
+  const live = $derived(!!llm && word === null);
   /** The prefill hero: only while the prompt is being processed. */
-  const pf = $derived(llm.activity === 'prefill' && llm.prefill && llm.prefill.tokens > 0 ? llm.prefill : null);
-  const specOn = $derived(llm.spec ? Math.round((llm.spec.acceptancePct / 100) * SEGS) : 0);
+  const pf = $derived(live && llm && llm.activity === 'prefill' && llm.prefill && llm.prefill.tokens > 0 ? llm.prefill : null);
+  const pfFrac = $derived(pf ? Math.min(1, pf.doneTokens / pf.tokens) : 0);
+  /** A request waiting for the restore: nothing has been prefilled yet. */
+  const waitGpu = $derived(!!gpu && !!pf && pf.doneTokens === 0);
+  /** GPU asleep with nothing in flight: the figure is the last request's, not a reading. */
+  const stale = $derived(!!gpu && !!llm && llm.activity === 'idle');
+  const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0);
+  const specOn = $derived(llm?.spec ? Math.round((llm.spec.acceptancePct / 100) * SEGS) : 0);
 </script>
 
-<section class="hero" class:stale>
-  {#if pf}
-    <!-- prompt processing is the news while it runs: progress, speed and time left, never "0.0 tok/s" -->
-    <div class="c-lbl">Prefill<span class="q">{' · current request'}</span></div>
-    <div class="row">
-      <div class="num">
-        <span class="big">{Math.round(prefillFrac * 100)}</span><span class="unit">%</span>
-      </div>
-      <div class="pfx">
-        <div class="pft c-data">
-          <span><span class="hv">{fmtTps(pf.tps)}</span> tok/s</span><span class="sep">·</span><span
-            ><span class="hv">{fmtSeconds(pf.etaS)}</span> left</span
-          >
-        </div>
-        <div class="pfbar" role="meter" aria-label="Prefill progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(prefillFrac * 100)}>
-          <i style:transform="scaleX({prefillFrac})"></i>
-        </div>
-        <div class="pfc">
-          {fmtInt(pf.doneTokens)} / {fmtInt(pf.tokens)} tok{#if pf.cachedTokens}<span class="q">{` · ${fmtInt(pf.cachedTokens)} cached`}</span>{/if}<span
-            class="q">{` · ${fmtSeconds(pf.elapsedS)} elapsed`}</span
-          >
-        </div>
-      </div>
+<!-- Hero -->
+{#if !live || !llm}
+  <section class="c-hero c-panel">
+    <div class="c-hl">
+      <span class="c-lbl">Decode speed</span>
+      <div class="c-fig dim"><b>—</b><span class="u">tok/s</span></div>
     </div>
-  {:else}
-    <div class="c-lbl">Decode speed{#if llm.activity !== 'decode'}<span class="q">{' · last request'}</span>{/if}</div>
-    <div class="row">
-      <div class="num">
-        <span class="big">{fmtTps(llm.decodeTps)}</span><span class="unit">tok/s</span>
-      </div>
-      <div class="sw"><Swell history={llm.decodeHistory} /></div>
+    <div class="c-hr one"><div class="c-wait" class:amb={wordAmber}><span>{word ?? 'waiting for data'}</span></div></div>
+  </section>
+{:else if pf}
+  <section class="c-hero c-panel">
+    <div class="c-hl" class:amb={waitGpu}>
+      <span class="c-lbl">Prefill progress</span>
+      <div class="c-fig" class:faded={waitGpu}><b>{Math.floor(pfFrac * 100)}</b><span class="u">%</span></div>
     </div>
-  {/if}
-</section>
-
-<div class="c-rule"></div>
-
-<section class="req">
-  <div class="c-lbl">{llm.activity === 'idle' ? 'Last request' : 'Current request'}</div>
-  <div class="line">
-    <div class="pf">
-      <span class="k">Prefill</span>
-      <span class="c-data">{prefillText}</span>
-    </div>
-    <div class="dc">
-      <i class="dot" class:on={llm.activity === 'decode'}></i>
-      <span class="k">Decode</span>
-      <span class="c-data">{fmtInt(llm.generatedTokens)} tok generated</span>
-    </div>
-  </div>
-
-  <div class="two">
-    <div class="cell">
-      <div class="c-lbl">Context fill</div>
-      <div class="val c-data">
-        {fmtInt(llm.context.usedTokens)} / {fmtInt(llm.context.totalTokens)} tokens · {fmtPct(ctxFrac)}
-      </div>
-      <div class="bar" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(ctxFrac * 100)} aria-label="Context fill">
-        <i style:transform="scaleX({ctxFrac})"></i>
-      </div>
-    </div>
-    <div class="vr" aria-hidden="true"></div>
-    <div class="cell">
-      <div class="c-lbl">Speculative decoding</div>
-      {#if llm.spec}
-        <div class="val c-data">{Math.round(llm.spec.acceptancePct)}% accepted · {llm.spec.mode}</div>
-        <div class="segs" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(llm.spec.acceptancePct)} aria-label="Speculative acceptance">
-          {#each { length: SEGS } as _, i (i)}<i class:on={i < specOn}></i>{/each}
-        </div>
+    <div class="c-hr">
+      {#if waitGpu && gpu}
+        <div class="c-hline"><span class="amb">waiting for the GPU to wake</span><span class="end">{fmtGiB(gpu.pagedOutGiB)} GiB still in system RAM</span></div>
       {:else}
-        <div class="val c-data off">off</div>
-        <div class="segs" aria-hidden="true">{#each { length: SEGS } as _, i (i)}<i></i>{/each}</div>
+        <div class="c-hline">
+          <span><b>{fmtTps(pf.tps)}</b> tok/s</span><span><b>{fmtEta(pf.etaS)}</b> left</span><span class="end">{fmtSeconds(pf.elapsedS)} elapsed</span>
+        </div>
       {/if}
+      <div class="c-bar tall" role="meter" aria-label="Prefill progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(pfFrac * 100)}>
+        <i style:transform="scaleX({pfFrac})"></i>
+      </div>
+      <div class="c-hline sm">
+        <span>prompt processing · {fmtInt(pf.doneTokens)} / {fmtInt(pf.tokens)} tok{pf.cachedTokens ? ` · ${fmtInt(pf.cachedTokens)} from the prompt cache` : ''}</span>
+      </div>
     </div>
+  </section>
+{:else}
+  <section class="c-hero c-panel">
+    <div class="c-hl">
+      <span class="c-lbl">{llm.activity === 'decode' ? 'Decode speed' : 'Last decode speed'}</span>
+      <div class="c-fig" class:faded={stale}><b>{fmtTps(llm.decodeTps)}</b><span class="u">tok/s</span></div>
+    </div>
+    <div class="c-hr one sw" class:faded={stale}><Swell history={llm.decodeHistory} /></div>
+  </section>
+{/if}
+
+<!-- Rows -->
+<section class="c-rows c-panel" class:dim={!live}>
+  <div class="c-row">
+    <span class="c-lbl">Prefill</span>
+    <span class="c-v">
+      {#if !llm?.prefill}
+        <span class="t q">{llm ? 'no request yet' : '—'}</span>
+      {:else if llm.activity === 'prefill'}
+        <span class="t"><b>{fmtInt(llm.prefill.doneTokens)}</b> / {fmtInt(llm.prefill.tokens)} tok · in progress</span>
+      {:else}
+        <span class="t"><b>{fmtInt(llm.prefill.tokens)}</b> tok · <b>{fmtTps(llm.prefill.tps)}</b> tok/s · done in {fmtSeconds(llm.prefill.elapsedS)}</span>
+      {/if}
+    </span>
+    <span class="c-lbl">Decode</span>
+    <span class="c-v">
+      {#if !llm}
+        <span class="t q">—</span>
+      {:else if llm.activity === 'prefill'}
+        <span class="t q">waiting for prefill</span>
+      {:else}
+        <span class="t"><b>{fmtInt(llm.generatedTokens)}</b> tok generated{llm.activity === 'idle' ? ' · idle' : ''}</span>
+      {/if}
+    </span>
+  </div>
+  <div class="c-row">
+    <span class="c-lbl">Context</span>
+    <span class="c-v">
+      <span class="t">
+        {#if llm}<b class:red={ctxFrac >= 0.95}>{fmtInt(llm.context.usedTokens)}</b>{:else}—{/if} / {ctxTotal ? fmtInt(ctxTotal) : '—'}
+        tokens{#if llm}{` · ${fmtPct(ctxFrac)}`}{/if}
+      </span>
+      <span class="c-bar" class:warn={ctxFrac >= 0.95} role="meter" aria-label="Context fill" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(ctxFrac * 100)}>
+        <i style:transform="scaleX({ctxFrac})"></i>
+      </span>
+    </span>
+    <span class="c-lbl">Speculative</span>
+    <span class="c-v">
+      {#if llm?.spec}
+        <span class="t"><b>{Math.round(llm.spec.acceptancePct)}%</b> accepted · {llm.spec.mode}</span>
+      {:else}
+        <span class="t q">{llm ? 'off' : (model?.specMode ?? 'off')}</span>
+      {/if}
+      <span class="segs" class:off={!llm?.spec} role="meter" aria-label="Speculative acceptance" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(llm?.spec?.acceptancePct ?? 0)}>
+        {#each { length: SEGS } as _, i (i)}<i class:on={i < specOn}></i>{/each}
+      </span>
+    </span>
   </div>
 </section>
 
 <style>
-  .hero {
-    padding-top: max(7px, calc(var(--u) * 13));
-    padding-bottom: max(5px, calc(var(--u) * 8));
-  }
-  .q {
-    color: var(--muted);
-  }
-  /* GPU asleep, nothing in flight: the last request's speed is history, not a reading */
-  .hero.stale .num,
-  .hero.stale .sw {
-    opacity: 0.5;
-  }
-  .row {
-    display: flex;
-    align-items: stretch;
-    gap: max(14px, calc(var(--u) * 24));
-    margin-top: max(2px, calc(var(--u) * 4));
-  }
-  .num {
-    display: flex;
-    align-items: baseline;
-    gap: max(10px, calc(var(--u) * 16));
-    flex: none;
-  }
-  .big {
-    font-family: var(--f-disp);
-    font-stretch: 125%;
-    font-weight: 800;
-    font-size: max(58px, calc(var(--u) * 85));
-    line-height: 0.9;
-    letter-spacing: -0.01em;
-    color: #f2f9fc;
-    font-variant-numeric: tabular-nums;
-  }
-  .unit {
-    font-family: var(--f-disp);
-    font-stretch: 100%;
-    font-weight: 600;
-    font-size: max(28px, calc(var(--u) * 41));
-    color: var(--sky);
-    letter-spacing: 0.005em;
-  }
-  .pfx {
-    flex: 1 1 auto;
-    min-width: 0;
-    height: max(64px, calc(var(--u) * 82));
-    align-self: flex-end;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    gap: max(5px, calc(var(--u) * 8));
-  }
-  .pft {
-    font-size: max(15px, calc(var(--u) * 22));
-    color: #c3d3db;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .pft .hv {
-    color: var(--foam);
-    font-weight: 500;
-  }
-  .pft .sep {
-    margin: 0 0.6em;
-    color: var(--muted);
-  }
-  .pfbar {
-    position: relative;
-    height: max(9px, calc(var(--u) * 12));
-    border-radius: 99px;
-    background: var(--s1);
-    overflow: hidden;
-  }
-  .pfbar i {
-    position: absolute;
-    inset: 0;
-    background: var(--sky);
-    border-radius: 99px;
-    transform-origin: left;
-    transition: transform 400ms ease-out;
-  }
-  .pfc {
-    font-family: var(--f-data);
-    font-size: max(11.5px, calc(var(--u) * 13.5));
-    color: var(--foam);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .c-hr.one {
+    grid-template-rows: minmax(0, 1fr);
+    align-content: stretch;
   }
   .sw {
-    flex: 1 1 auto;
-    min-width: 0;
-    height: max(64px, calc(var(--u) * 82));
-    align-self: flex-end;
+    padding-top: max(6px, calc(var(--u) * 8));
+    padding-bottom: max(4px, calc(var(--u) * 6));
   }
-
-  .req {
-    padding-top: max(7px, calc(var(--u) * 12));
-    padding-bottom: max(9px, calc(var(--u) * 17));
-  }
-  .line {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
-    margin-top: max(4px, calc(var(--u) * 7));
-    font-size: max(12.5px, calc(var(--u) * 16.5));
-  }
-  .k {
-    font-family: var(--f-ui);
-    font-weight: 450;
-    font-size: 1.07em;
-    color: var(--foam);
-    margin-right: max(10px, calc(var(--u) * 26));
-  }
-  .pf {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    min-width: 0;
-  }
-  .dc {
-    display: flex;
-    align-items: baseline;
-    flex: none;
-    margin-right: max(0px, calc(var(--u) * 120));
-  }
-  .dc .k {
-    margin-right: max(14px, calc(var(--u) * 30));
-  }
-  .dot {
-    width: max(10px, calc(var(--u) * 13));
-    height: max(10px, calc(var(--u) * 13));
-    border-radius: 50%;
-    align-self: center;
-    margin-right: max(10px, calc(var(--u) * 18));
-    box-shadow: inset 0 0 0 2px var(--muted);
-  }
-  .dot.on {
-    background: var(--sky);
-    box-shadow: 0 0 10px rgba(90, 182, 235, 0.55);
-  }
-  .two {
-    display: grid;
-    grid-template-columns: 1fr 1px 1fr;
-    column-gap: max(20px, calc(var(--u) * 42));
-    margin-top: max(9px, calc(var(--u) * 15));
-  }
-  .vr {
-    background: var(--rule);
-  }
-  .val {
-    margin-top: max(3px, calc(var(--u) * 6));
-    font-size: max(12.5px, calc(var(--u) * 17));
-    color: var(--foam);
-    white-space: nowrap;
-  }
-  .val.off {
-    color: var(--muted);
-  }
-  .bar {
-    position: relative;
-    height: max(8px, calc(var(--u) * 11));
-    margin-top: max(7px, calc(var(--u) * 12));
-    border-radius: 99px;
-    background: var(--s1);
-    overflow: hidden;
-  }
-  .bar i {
-    position: absolute;
-    inset: 0;
-    background: var(--sky);
-    border-radius: 99px;
-    transform-origin: left;
-    transition: transform 400ms ease-out;
+  .sw.faded {
+    opacity: 0.5;
   }
   .segs {
+    flex: 1 1 auto;
+    min-width: max(40px, calc(var(--u) * 60));
+    max-width: max(120px, calc(var(--u) * 150));
     display: grid;
-    grid-template-columns: repeat(16, 1fr);
-    gap: max(2px, calc(var(--u) * 3.5));
-    height: max(8px, calc(var(--u) * 11));
-    margin-top: max(7px, calc(var(--u) * 12));
+    grid-template-columns: repeat(16, minmax(0, 1fr));
+    gap: max(2px, calc(var(--u) * 2.5));
+    height: max(6px, calc(var(--u) * 7));
   }
   .segs i {
-    border-radius: 2px;
+    border-radius: 1.5px;
     background: var(--s1);
   }
   .segs i.on {
     background: var(--sky);
+  }
+  .segs.off {
+    opacity: 0.6;
   }
 </style>

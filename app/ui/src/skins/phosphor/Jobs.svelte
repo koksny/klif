@@ -78,8 +78,10 @@
       {:else}
         <line class="base0" x1="0" x2={w} y1={geo.yb} y2={geo.yb} />
       {/if}
-      {#if items.length === 0}
-        <text class="empty" x={w / 2} y={h / 2} text-anchor="middle" dominant-baseline="middle">no images yet</text>
+      {#if !mini && !fault}
+        {#each Array.from({ length: cells - items.length }, (_, i) => i) as i (i)}
+          <line class="base0" x1={(i * w) / cells + 6} x2={((i + 1) * w) / cells - 6} y1={geo.yb} y2={geo.yb} />
+        {/each}
       {/if}
       {#each geo.glyphs as g (g.i)}
         <g class:edit={g.edit} class:run={!g.done}>
@@ -89,8 +91,7 @@
           <path d={g.pulse} class="ln pulse" />
           {#if !g.done}<circle cx={g.xe} cy={geo.yt} r={mini ? 4 : 3} class="dot" />{/if}
           {#if !mini && g.i === longest}
-            <text class="lab" x={g.cx} y={geo.yt - (g.edit ? 24 : 9)} text-anchor="middle">{g.s.toFixed(0)} s</text>
-            {#if g.edit}<text class="lab" x={g.cx} y={geo.yt - 8} text-anchor="middle">edit</text>{/if}
+            <text class="lab" x={g.cx} y={geo.yt - 6} text-anchor="middle">{g.s.toFixed(0)} s{g.edit ? ' · edit' : ''}</text>
           {/if}
         </g>
       {/each}
@@ -131,14 +132,6 @@
     stroke-width: 1.5;
     stroke-dasharray: 2 6;
   }
-  .empty {
-    font: calc(15px * var(--k, 1)) var(--ph-ui);
-    fill: var(--ph-muted);
-    letter-spacing: 0.06em;
-  }
-  .mini .empty {
-    font-size: calc(30px * var(--k, 1));
-  }
   .ln {
     stroke-width: 1.6;
   }
@@ -177,9 +170,9 @@
     fill: var(--ph-hot);
   }
   .lab {
-    font: calc(14px * var(--k, 1)) var(--ph-ui);
+    font: var(--ph-fs-xs, 10px) var(--ph-ui);
     fill: var(--ph-cyan);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
   }
   .edit .lab {
     fill: var(--ph-amber);

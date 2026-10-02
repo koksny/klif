@@ -16,9 +16,10 @@ export const tokens: SkinTokens = {
   accentInk: '#04121B',
   warn: '#F2B33A',
   danger: '#FF5A36',
-  // DIN 1451 (Bahnschrift, part of Windows) for the shell drawers too; see palette.ts.
+  // DIN 1451 (Bahnschrift, part of Windows) for the shell drawers too (see palette.ts); the mono face for
+  // console log lines.
   fontUi: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
-  fontData: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
+  fontData: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace',
   fontDisplay: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
   radius: '3px',
 };

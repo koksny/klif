@@ -13,8 +13,15 @@
   --amber: #ffb02e;
   --seg-off: #33353a;
   --font-label: 'Barlow Condensed', 'Oswald Variable', 'Arial Narrow', sans-serif;
+  --font-text: 'Barlow', 'Barlow Condensed', 'Segoe UI', sans-serif;
   --font-hero: 'Archivo Variable', 'Barlow Condensed', sans-serif;
   --font-mono: 'Share Tech Mono', ui-monospace, monospace;
+  /* Type scale of the full window: engraved captions, body text and values, tier names. */
+  --fs-lbl: max(10px, calc(var(--u) * 10));
+  --fs-small: max(10.5px, calc(var(--u) * 10.75));
+  --fs-body: max(11.5px, calc(var(--u) * 11.75));
+  --fs-tier: max(11.5px, calc(var(--u) * 12.5));
+  --fs-read: max(13px, calc(var(--u) * 16));
 
   position: relative;
   width: 100%;
@@ -60,10 +67,11 @@
   min-height: 0;
 }
 
-/* Screen-printed label */
+/* Engraved caption: condensed caps, small, spaced. */
 .ins .lbl {
-  font-weight: 500;
-  font-size: calc(15.5 * var(--u));
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: var(--fs-lbl);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cream-2);
@@ -84,20 +92,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: calc(12 * var(--u));
-  height: calc(50 * var(--u));
-  padding: 0 calc(18 * var(--u));
+  gap: calc(8 * var(--u));
+  height: calc(34 * var(--u));
+  padding: 0 calc(12 * var(--u));
   min-width: 0;
-  border-radius: calc(5 * var(--u));
+  border-radius: calc(4 * var(--u));
   border: 1px solid #08090a;
   background: linear-gradient(180deg, #2c2d31, #1d1e21);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.07),
     0 1px 0 rgba(255, 255, 255, 0.03),
-    0 0 0 calc(2 * var(--u)) rgba(0, 0, 0, 0.35);
+    0 0 0 calc(1.5 * var(--u)) rgba(0, 0, 0, 0.35);
+  font-family: var(--font-text);
   font-weight: 500;
-  font-size: calc(19 * var(--u));
-  letter-spacing: 0.03em;
+  font-size: var(--fs-body);
+  letter-spacing: 0.01em;
   color: var(--cream);
   cursor: pointer;
   white-space: nowrap;
@@ -120,26 +129,39 @@
   opacity: 0.45;
   cursor: default;
 }
+.ins .btn[disabled]:hover,
+.ins .btn[disabled]:active {
+  background: linear-gradient(180deg, #2c2d31, #1d1e21);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 1px 0 rgba(255, 255, 255, 0.03),
+    0 0 0 calc(1.5 * var(--u)) rgba(0, 0, 0, 0.35);
+}
 
 /* Recessed chip (endpoint, API key) */
 .ins .chip {
   display: inline-flex;
   align-items: center;
-  height: calc(44 * var(--u));
-  border-radius: calc(5 * var(--u));
+  height: calc(30 * var(--u));
+  border-radius: calc(4 * var(--u));
   background: #121315;
   border: 1px solid #08090a;
   box-shadow:
     inset 0 2px 4px rgba(0, 0, 0, 0.7),
     0 1px 0 rgba(255, 255, 255, 0.05);
   color: var(--cream);
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
   cursor: pointer;
   padding: 0;
   overflow: hidden;
   white-space: nowrap;
 }
-.ins .chip:hover {
+.ins .chip:hover:not([disabled]) {
   background: #17181b;
+}
+.ins .chip[disabled] {
+  cursor: default;
 }
 
 .ins .mono {

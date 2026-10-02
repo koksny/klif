@@ -12,11 +12,11 @@
 </script>
 
 <div class="wc">
-  <button class="b" onclick={onmin} aria-label="Minimize" title="Minimize"><Icon name="min" size="calc(26 * var(--u))" /></button>
+  <button class="b" onclick={onmin} aria-label="Minimize" title="Minimize"><Icon name="min" size="calc(20 * var(--u))" /></button>
   <button class="b" onclick={onmax} aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore' : 'Maximize'}>
-    <Icon name={maximized ? 'restore' : 'max'} size="calc(24 * var(--u))" />
+    <Icon name={maximized ? 'restore' : 'max'} size="calc(18 * var(--u))" />
   </button>
-  <button class="b x" onclick={onclose} aria-label="Close" title="Close"><Icon name="close" size="calc(24 * var(--u))" /></button>
+  <button class="b x" onclick={onclose} aria-label="Close" title="Close"><Icon name="close" size="calc(18 * var(--u))" /></button>
 </div>
 
 <style>
@@ -26,8 +26,8 @@
     gap: calc(4 * var(--u));
   }
   .b {
-    width: calc(44 * var(--u));
-    height: calc(40 * var(--u));
+    width: calc(36 * var(--u));
+    height: calc(30 * var(--u));
     display: flex;
     align-items: center;
     justify-content: center;
