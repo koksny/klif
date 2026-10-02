@@ -599,7 +599,10 @@ fn sampler(shared: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, inference: Option<
             };
             s.layers = comp.layers;
             s.baseline_gib = comp.baseline_gib;
-            s.spill_mib = if in_session { gpu.map(|g| g.session_shared_bytes / text::MIB).unwrap_or(0.0) } else { 0.0 };
+            // An image server's shared memory is its host staging buffers (sd-server keeps the weights in RAM by
+            // design and copies them per stage), not VRAM overflow: only an LLM session reports spill.
+            let llm_session = s.session.as_ref().is_some_and(|t| t.spec().kind == SlotKind::Llm);
+            s.spill_mib = if llm_session { gpu.map(|g| g.session_shared_bytes / text::MIB).unwrap_or(0.0) } else { 0.0 };
         }
         tick += 1;
         next += period;

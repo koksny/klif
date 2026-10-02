@@ -443,7 +443,8 @@
     stroke-width: 1;
   }
   text {
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
+    font-family: 'Bahnschrift', 'DIN Alternate', 'Barlow', 'Segoe UI', sans-serif;
+    font-variant-numeric: tabular-nums;
   }
   .lbl {
     font-size: 12.5px;

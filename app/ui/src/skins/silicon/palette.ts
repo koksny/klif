@@ -25,6 +25,9 @@ export const C = {
   amber: '#F2B33A',
 } as const;
 
-export const FONT_DATA = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace';
-export const FONT_DISPLAY = '"Iosevka", "JetBrains Mono Variable", ui-monospace, monospace';
-export const FONT_MINI = '"Barlow Condensed", "Iosevka", sans-serif';
+// DIN 1451 (Bahnschrift, shipped with Windows) is the lettering standard of technical drawings: labels,
+// numbers and hero readouts. The mono face is left for console text, ports and keys.
+export const FONT_UI = '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif';
+export const FONT_MONO = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace';
+export const FONT_DATA = FONT_UI;
+export const FONT_DISPLAY = FONT_UI;

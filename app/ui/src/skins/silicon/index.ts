@@ -1,11 +1,7 @@
 import type { SkinTokens } from '../contract';
-// Fonts are imported here so they code-split with the skin.
+// Fonts are imported here so they code-split with the skin. The UI face is Bahnschrift (part of Windows);
+// the mono face is bundled for console text, ports and keys.
 import '@fontsource-variable/jetbrains-mono';
-import '@fontsource/iosevka/500.css';
-import '@fontsource/iosevka/700.css';
-import '@fontsource/barlow-condensed/500.css';
-import '@fontsource/barlow-condensed/600.css';
-import '@fontsource/barlow-condensed/700.css';
 
 export { default } from './Skin.svelte';
 
@@ -20,8 +16,9 @@ export const tokens: SkinTokens = {
   accentInk: '#04121B',
   warn: '#F2B33A',
   danger: '#FF5A36',
-  fontUi: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace',
-  fontData: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace',
-  fontDisplay: '"Iosevka", "JetBrains Mono Variable", ui-monospace, monospace',
+  // DIN 1451 (Bahnschrift, part of Windows) for the shell drawers too; see palette.ts.
+  fontUi: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
+  fontData: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
+  fontDisplay: '"Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", sans-serif',
   radius: '3px',
 };

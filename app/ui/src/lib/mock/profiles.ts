@@ -141,7 +141,7 @@ export function bootDurations(model: ModelRef, rng: Rng): BootDurations {
 
 export function deviceDetail(model: ModelRef): string {
   // The device detail is whatever the real core reports at runtime; the mock shows a generic one.
-  return 'ROCm Â· gfx1201';
+  return 'ROCm · gfx1201';
 }
 
 /** Resident system RAM a running model adds on top of the idle desktop (GiB). */

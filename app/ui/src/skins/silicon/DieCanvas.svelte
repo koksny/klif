@@ -112,7 +112,7 @@
 
   onMount(() => {
     mounted = true;
-    const fam = '"JetBrains Mono Variable"';
+    const fam = '"Bahnschrift"';
     Promise.all([document.fonts.load(`500 12px ${fam}`), document.fonts.load(`700 12px ${fam}`)])
       .catch(() => undefined)
       .then(() => (fontsReady = true));
