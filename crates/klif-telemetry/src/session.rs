@@ -531,10 +531,12 @@ impl SessionTracker {
             fatal_hint: None,
             starter_exit: None,
             median_decode_tps: None,
+            arch: None,
         };
         match &self.parser {
             Parser::Llama(p) => {
                 sig.llm = self.llm_live(now);
+                sig.arch = p.arch();
                 sig.median_decode_tps = self.median_decode_tps();
                 sig.error_tail = p.error_tail.iter().cloned().collect();
                 sig.fatal_hint = p.fatal_hint.clone();

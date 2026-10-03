@@ -21,7 +21,7 @@ pub mod text;
 pub mod vram;
 mod win;
 
-use klif_common::vm::{Dormant, GpuMemory, ImageLive, LlmLive, LoadStep, SlotKind, SystemStats, VramLayer};
+use klif_common::vm::{Dormant, GpuMemory, ImageLive, LlmLive, LoadStep, ModelArch, SlotKind, SystemStats, VramLayer};
 use klif_common::Secret;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -192,6 +192,8 @@ pub struct ServerSignals {
     pub starter_exit: Option<i64>,
     /// Median decode speed over every finished request of the session (LLM), for the last-session summary.
     pub median_decode_tps: Option<f64>,
+    /// The LLM's shape from its `print_info` block (layers, experts, heads), once logged.
+    pub arch: Option<ModelArch>,
 }
 
 #[derive(Debug, Clone)]

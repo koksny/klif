@@ -1,4 +1,4 @@
-// A static snapshot that matches the approved mockups exactly (AGENT MEDIUM live, decoding).
+// A static snapshot that matches the approved mockups exactly (SYSTEM 2 live, decoding).
 // Used as the first frame and by skins while the mock player is not wired in.
 import type { ModelRef, Slot, ViewModel, VramLayer } from './types';
 
@@ -57,21 +57,8 @@ const MEDIUM_LAYERS: VramLayer[] = [
 
 export const SLOTS: Slot[] = [
   {
-    id: 'high',
-    label: 'AGENT HIGH',
-    kind: 'llm',
-    model: MODELS.high,
-    availability: 'ready',
-    expectedVram: [
-      { id: 'weights', label: 'weights', gib: 13.2 },
-      { id: 'kv', label: 'KV cache', gib: 1.6 },
-      { id: 'buffers', label: 'buffers', gib: 0.99 },
-    ],
-  },
-  { id: 'medium', label: 'AGENT MEDIUM', kind: 'llm', model: MODELS.medium, availability: 'ready', expectedVram: MEDIUM_LAYERS },
-  {
     id: 'low',
-    label: 'AGENT LOW',
+    label: 'SYSTEM 1',
     kind: 'llm',
     model: MODELS.low,
     availability: 'ready',
@@ -81,9 +68,22 @@ export const SLOTS: Slot[] = [
       { id: 'buffers', label: 'buffers', gib: 0.8 },
     ],
   },
+  { id: 'medium', label: 'SYSTEM 2', kind: 'llm', model: MODELS.medium, availability: 'ready', expectedVram: MEDIUM_LAYERS },
+  {
+    id: 'high',
+    label: 'SYSTEM 3',
+    kind: 'llm',
+    model: MODELS.high,
+    availability: 'ready',
+    expectedVram: [
+      { id: 'weights', label: 'weights', gib: 13.2 },
+      { id: 'kv', label: 'KV cache', gib: 1.6 },
+      { id: 'buffers', label: 'buffers', gib: 0.99 },
+    ],
+  },
   {
     id: 'krea',
-    label: 'KREA',
+    label: 'SYSTEM CGI',
     kind: 'image',
     model: MODELS.krea,
     availability: 'ready',

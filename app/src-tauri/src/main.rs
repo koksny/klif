@@ -122,6 +122,7 @@ fn main() {
             commands::klif_copy_api_key,
             commands::klif_ui_log,
             commands::klif_toggle_panel,
+            commands::klif_skins,
         ])
         .setup(move |app| {
             setup(app.handle(), cfg, cfg_err, browser_args, webview_dir)?;

@@ -6,7 +6,7 @@
 //! the smallest `arrival - ts` seen (or fixed by the caller for an adopted session read from start).
 
 use crate::text::{file_name, redact, round_to, MIB};
-use klif_common::vm::{LoadStepId, RequestRecord, StepState, Totals, VramLayer, VramLayerId};
+use klif_common::vm::{LoadStepId, ModelArch, RequestRecord, StepState, Totals, VramLayer, VramLayerId};
 use regex::Regex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -48,6 +48,10 @@ re!(L51, r"^srv\s+load_model: failed to load draft model, '(.+)'");
 re!(L53, r"^(.+):(\d+): GGML_ASSERT\((.+)\) failed$");
 re!(L54, r"^ggml_vulkan: Failed to allocate pinned memory \((.+)\)");
 re!(L61, r"^srv\s+init: init: chat template, thinking = (\d)");
+// model shape (`print_info` block and the GGUF kv dump; -lv 4)
+re!(L62, r"^print_info: (n_layer|n_expert|n_expert_used|n_head|n_head_kv|n_embd|n_vocab)\s+= (\d+)\s*$");
+re!(L63, r"^print_info: model params\s+= (.+?)\s*$");
+re!(L64, r"^llama_model_loader: - kv\s+\d+:\s+\S+\.expert_shared_(feed_forward_length|count) u32\s+= (\d+)");
 // ---- per request ----
 re!(R01, r"^slot get_availabl: id\s+(\d+) \| task -1 \| selected slot by LRU, t_last = (-?\d+)");
 re!(R02, r"^slot get_availabl: id\s+(\d+) \| task -1 \| selected slot by LCP similarity, f_sim_best = ([\d.]+) \(> ([\d.]+) thold\), f_keep = ([\d.]+)");
@@ -356,6 +360,21 @@ pub fn step_label(id: LoadStepId, image: bool) -> &'static str {
     }
 }
 
+/// Raw shape facts as the log names them (first model only).
+#[derive(Debug, Default)]
+struct Shape {
+    layers: Option<u32>,
+    experts: Option<u32>,
+    experts_used: Option<u32>,
+    heads: Option<u32>,
+    kv_heads: Option<u32>,
+    embd: Option<u32>,
+    vocab: Option<u32>,
+    params: Option<String>,
+    shared_count: Option<u32>,
+    shared_ff: Option<u32>,
+}
+
 #[derive(Debug)]
 pub struct LlamaParser {
     anchor: Option<f64>,
@@ -369,6 +388,7 @@ pub struct LlamaParser {
     pub primary_dev: Option<String>,
     pub primary_free_mib: Option<u64>,
     pub file_size_gib: Option<f64>,
+    shape: Shape,
     ctx_index: i32,
     draft_group_open: bool,
     weights_mib: f64,
@@ -424,6 +444,7 @@ impl LlamaParser {
             primary_dev: None,
             primary_free_mib: None,
             file_size_gib: None,
+            shape: Shape::default(),
             ctx_index: -1,
             draft_group_open: false,
             weights_mib: 0.0,
@@ -595,6 +616,34 @@ impl LlamaParser {
             if self.file_size_gib.is_none() {
                 self.file_size_gib = Some(gib);
                 self.steps.detail[2] = Some(format!("{gib:.1} GiB file"));
+            }
+        } else if let Some(c) = L62.captures(msg) {
+            // Only the first model's block: a draft model prints its own after the main context exists.
+            if self.ctx_index < 0 {
+                let v = cap_u64(&c, 2) as u32;
+                let f = match &c[1] {
+                    "n_layer" => &mut self.shape.layers,
+                    "n_expert" => &mut self.shape.experts,
+                    "n_expert_used" => &mut self.shape.experts_used,
+                    "n_head" => &mut self.shape.heads,
+                    "n_head_kv" => &mut self.shape.kv_heads,
+                    "n_embd" => &mut self.shape.embd,
+                    _ => &mut self.shape.vocab,
+                };
+                f.get_or_insert(v);
+            }
+        } else if let Some(c) = L63.captures(msg) {
+            if self.ctx_index < 0 && self.shape.params.is_none() {
+                self.shape.params = Some(c[1].to_string());
+            }
+        } else if let Some(c) = L64.captures(msg) {
+            if self.ctx_index < 0 {
+                let v = cap_u64(&c, 2) as u32;
+                if &c[1] == "count" {
+                    self.shape.shared_count.get_or_insert(v);
+                } else {
+                    self.shape.shared_ff.get_or_insert(v);
+                }
             }
         } else if L14.is_match(msg) {
             self.steps.reach(2);
@@ -952,6 +1001,31 @@ impl LlamaParser {
     }
 
     /// VRAM composition on the primary device from the buffer lines (lv4 only).
+    /// The main model's shape, once its `print_info` block named the layer count.
+    pub fn arch(&self) -> Option<ModelArch> {
+        let a = &self.shape;
+        let layers = a.layers.filter(|&n| n > 0)?;
+        let experts = a.experts.unwrap_or(0);
+        let (experts_used, shared_experts) = if experts == 0 {
+            (0, 0)
+        } else {
+            // Qwen-style MoE names a shared expert by its FFN width; DeepSeek-style by a count.
+            let shared = a.shared_count.unwrap_or(u32::from(a.shared_ff.unwrap_or(0) > 0));
+            (a.experts_used.unwrap_or(0), shared)
+        };
+        Some(ModelArch {
+            layers,
+            experts,
+            experts_used,
+            shared_experts,
+            heads: a.heads,
+            kv_heads: a.kv_heads,
+            embd: a.embd,
+            vocab: a.vocab,
+            params: a.params.clone(),
+        })
+    }
+
     pub fn layers(&self) -> Option<Vec<VramLayer>> {
         if !self.saw_buffers {
             return None;

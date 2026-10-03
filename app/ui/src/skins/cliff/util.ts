@@ -1,5 +1,5 @@
 import type { Availability, LastSession, ModelRef, Slot, SlotKind, ViewModel, VramLayer } from '../../lib/model/types';
-import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
 
 /** What the main area shows. 'stopping' renders the live view of its kind. */
 export type ViewState = 'idle' | 'loading' | 'fault' | 'llm' | 'image';
@@ -63,9 +63,9 @@ export function statusOf(vm: ViewModel): { text: string; tone: Tone } {
   }
 }
 
-/** The tier word without the family prefix: "AGENT MEDIUM" -> "MEDIUM". */
+/** The tier for tight places: "SYSTEM 2" -> "S2", "SYSTEM CGI" -> "CGI". */
 export function tierWord(label: string): string {
-  return label.replace(/^AGENT\s+/i, '');
+  return tierShort(label);
 }
 
 /** The tier strip's model line: "Qwen 3.8 27B · GSQ-RCO IQ3_S · 96k" / "Krea 2 Realism Turbo · Q8_0 · 512x768". */
@@ -158,7 +158,7 @@ export function fmtEta(sec: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-/** The previous session in one line: "AGENT MEDIUM · 2 h 14 min · 12 requests · ... · stopped 21 min ago". */
+/** The previous session in one line: "SYSTEM 2 · 2 h 14 min · 12 requests · ... · stopped 21 min ago". */
 export function lastSessionLine(last: LastSession, slots: Slot[]): string {
   const f = [slots.find((x) => x.id === last.slot)?.label ?? last.model.name, fmtSpan(last.uptimeS)];
   if (last.requests !== undefined) f.push(`${fmtInt(last.requests)} requests`);

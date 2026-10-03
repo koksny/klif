@@ -1,6 +1,6 @@
 // Instrument (Zegar): palette, fonts, the machined panel texture and small shared helpers.
 import type { GpuMemory, ModelRef, Phase, Session, Slot, SlotId, SlotKind, ViewModel } from '../../lib/model/types';
-import { fmtCtx } from '../../lib/model/format';
+import { fmtCtx, tierShort } from '../../lib/model/format';
 
 export const PAL = {
   window: '#141517',
@@ -82,9 +82,9 @@ export function slotById(vm: ViewModel, id: SlotId): Slot | undefined {
   return vm.slots.find((s) => s.id === id);
 }
 
-/** "AGENT MEDIUM" -> "MEDIUM" for the tiny panel. */
+/** "SYSTEM 2" -> "S2" for the tiny panel. */
 export function shortLabel(label: string): string {
-  return label.replace(/^AGENT\s+/i, '');
+  return tierShort(label);
 }
 
 /** Subtitle under a selector detent: "Qwen 3.8 27B · GSQ-RCO IQ3_S · 96k". */

@@ -14,6 +14,7 @@ import type {
   SlotId,
   SlotKind,
   VramLayer,
+  ModelArch,
 } from '../model/types';
 import { fitLayers, FIT_HEADROOM_GIB, type FitResult } from '../shell/fit';
 
@@ -57,6 +58,8 @@ export interface MockCard {
   cacheCapLongCtx?: number;
   /** Krea card: on HIP + the 9070 it runs through the fast starter (Precision + Edit). */
   krea?: boolean;
+  /** Shape as llama-server prints it at load (from real logs where we have them). */
+  arch?: ModelArch;
 }
 
 export interface MockHardware {
@@ -97,6 +100,7 @@ const qwen27 = (id: string, quant: string, weightsGiB: number, specMode: string,
   hasVision: true,
   specMode,
   hardware: { HIP: GPU_RAM, Vulkan: GPU_RAM },
+  arch: { layers: 64, experts: 0, expertsUsed: 0, sharedExperts: 0, heads: 24, kvHeads: 4, embd: 5120, vocab: 248320, params: '26.9 B' },
 });
 
 const flashNext = (id: string, name: string, quant: string, weightsGiB: number, extra: Partial<MockCard> = {}): MockCard => ({
@@ -112,6 +116,7 @@ const flashNext = (id: string, name: string, quant: string, weightsGiB: number, 
   buffersGiB: 0.99,
   specMode: 'ngram',
   hardware: { HIP: ['9070', '9950X3D'], Vulkan: ['9070', '9950X3D'] },
+  arch: { layers: 48, experts: 512, expertsUsed: 10, sharedExperts: 1, heads: 24, kvHeads: 2, embd: 2560, vocab: 248320, params: '176.94 B' },
   ...extra,
 });
 
@@ -127,6 +132,7 @@ const gemma = (id: string, name: string, quant: string, weightsGiB: number, kvPe
   kvGiBPerTokenQ8: kvPerTok,
   buffersGiB,
   hardware: { HIP: GPU_RAM, Vulkan: GPU_RAM },
+  arch: { layers: 30, experts: 128, expertsUsed: 8, sharedExperts: 1, heads: 16, kvHeads: 8, embd: 2816, vocab: 262144, params: '25.2 B' },
 });
 
 const image = (id: string, name: string, quant: string, weightsGiB: number, extra: Partial<MockCard> = {}): MockCard => ({
@@ -317,6 +323,7 @@ export function modelFromRecipe(r: Recipe): ModelRef {
     }
   }
   m.weightsGiB = card.weightsGiB;
+  if (card.arch) m.arch = card.arch;
   return m;
 }
 

@@ -12,7 +12,7 @@
   // drawn paged out on the cliff. Smallest text 24 px (labels), values 34 px and up.
   import { onDestroy } from 'svelte';
   import type { Actions, ViewModel } from '../../lib/model/types';
-  import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../lib/model/format';
+  import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps, tierShort } from '../../lib/model/format';
   import VramCliff from './VramCliff.svelte';
   import FitCliff from './FitCliff.svelte';
   import { availText, clamp, fmtAgo, fmtDur, fmtEta, fmtSPerIt, gpuSleep, loadSpanS } from './geom';
@@ -80,8 +80,8 @@
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
   });
 
-  // Tier strip: the short tier word ("AGENT MEDIUM" -> "MEDIUM").
-  const short = (label: string) => label.replace(/^AGENT\s+/i, '');
+  // Tier strip: the short tier word ("SYSTEM 2" -> "S2").
+  const short = tierShort;
 
   /** The model line: name · quant · context or size · mode. */
   const modelText = $derived.by(() => {
@@ -200,7 +200,7 @@
     const pick = vm.slots.find((x) => x.id === vm.selected);
     if (!ph) {
       const ok = pick?.availability === 'ready';
-      const word = (pick?.label ?? '').replace(/^AGENT\s+/i, '');
+      const word = tierShort(pick?.label ?? '');
       return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
     }
     if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };

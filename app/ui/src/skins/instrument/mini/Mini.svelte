@@ -2,7 +2,7 @@
   // Mini panel (960 x 640, read from 1 m): read-only. A fixed 960 x 640 sheet scaled to fit, laid out like the
   // full window in miniature and the same in every state (only the contents change):
   //   header      KLIF · status lamp + phase · uptime / elapsed (version while idle)
-  //   tier strip  HIGH · MEDIUM · LOW · KREA with their state lamps (selected, running, cannot launch, locked)
+  //   tier strip  HIGH · MEDIUM · LOW · IMAGE with their state lamps (selected, running, cannot launch, locked)
   //   model line  the running model, or the selected tier's
   //   left        the VRAM dial (idle: fit preview of the selected tier) over the backend toggle
   //   right       hero plate: label, the drum counter + unit, a status line; two fixed rows per kind
@@ -12,7 +12,7 @@
   // Smallest text 24 px (labels), values 34 px and up.
   import { onDestroy } from 'svelte';
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtTps } from '../../../lib/model/format';
+  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtTps, tierShort } from '../../../lib/model/format';
   import {
     PHASE_LABEL,
     availLabel,
@@ -187,7 +187,7 @@
     const pick = vm.slots.find((x) => x.id === vm.selected);
     if (!ph) {
       const ok = pick?.availability === 'ready';
-      const word = (pick?.label ?? '').replace(/^AGENT\s+/i, '');
+      const word = tierShort(pick?.label ?? '');
       return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
     }
     if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };

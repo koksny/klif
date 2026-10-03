@@ -12,10 +12,12 @@
 //                                                         screen and fills it, or comes back; the state
 //                                                         arrives as ViewModel.host.panel)
 //   invoke  klif_ui_log { line }                         (diagnostics into the shell log)
+//   invoke  klif_skins { skins: [{ id, name }] }          (the tray's Skin submenu follows the UI registry)
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Recipe, SlotId, ViewModel } from '../model/types';
+import { SKINS } from '../../skins/registry';
 
 /** klif_common::vm::Action, internally tagged by "type". */
 export type EngineAction =
@@ -74,6 +76,8 @@ export async function connect(h: NativeHandlers): Promise<NativeLink> {
   const onError = (e: ErrorEvent) => log(`error: ${e.message} (${e.filename}:${e.lineno})`);
   const onRejection = (e: PromiseRejectionEvent) => log(`unhandled rejection: ${errorText(e.reason)}`);
   window.addEventListener('error', onError);
+  // The tray's Skin submenu lists what this build has (built-in and local-only skins).
+  void invoke('klif_skins', { skins: SKINS.map((s) => ({ id: s.id, name: s.name })) }).catch((e) => log(`skins: ${errorText(e)}`));
   window.addEventListener('unhandledrejection', onRejection);
   const consoleError = console.error;
   console.error = (...args: unknown[]) => {

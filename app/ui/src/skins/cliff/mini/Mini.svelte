@@ -11,7 +11,7 @@
   // A fault covers the hero and the rows. Dormant GPU: amber status, the last figure faded.
   // Smallest text 24 px (labels), values 34 px and up.
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../../lib/model/format';
+  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps, tierShort } from '../../../lib/model/format';
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
   import type { GpuView } from '../power';
@@ -182,7 +182,7 @@
     const pick = vm.slots.find((x) => x.id === vm.selected);
     if (!ph) {
       const ok = pick?.availability === 'ready';
-      const word = (pick?.label ?? '').replace(/^AGENT\s+/i, '');
+      const word = tierShort(pick?.label ?? '');
       return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
     }
     if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };

@@ -15,7 +15,8 @@ pub enum SlotId {
 }
 
 impl SlotId {
-    pub const ALL: [SlotId; 4] = [SlotId::High, SlotId::Medium, SlotId::Low, SlotId::Krea];
+    /// Display order: System 1 (fast, cheap, always on), System 2 (slower, deeper), System 3 (every resource), CGI.
+    pub const ALL: [SlotId; 4] = [SlotId::Low, SlotId::Medium, SlotId::High, SlotId::Krea];
     pub fn as_str(self) -> &'static str {
         match self {
             SlotId::High => "high",
@@ -26,10 +27,10 @@ impl SlotId {
     }
     pub fn label(self) -> &'static str {
         match self {
-            SlotId::High => "AGENT HIGH",
-            SlotId::Medium => "AGENT MEDIUM",
-            SlotId::Low => "AGENT LOW",
-            SlotId::Krea => "KREA",
+            SlotId::High => "SYSTEM 3",
+            SlotId::Medium => "SYSTEM 2",
+            SlotId::Low => "SYSTEM 1",
+            SlotId::Krea => "SYSTEM CGI",
         }
     }
     pub fn kind(self) -> SlotKind {
@@ -88,6 +89,28 @@ pub struct ModelRef {
     pub image_size: Option<String>,
     #[serde(rename = "weightsGiB", skip_serializing_if = "Option::is_none")]
     pub weights_gib: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<ModelArch>,
+}
+
+/// The model's shape from the server log (llama.cpp `print_info`), mirrored in app/ui types.ts.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelArch {
+    pub layers: u32,
+    pub experts: u32,
+    pub experts_used: u32,
+    pub shared_experts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heads: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv_heads: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embd: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vocab: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

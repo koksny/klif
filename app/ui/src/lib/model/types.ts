@@ -51,11 +51,34 @@ export interface ModelRef {
   imageSize?: string;
   /** Weights size on disk in GiB, used to preview fit before launch. */
   weightsGiB?: number;
+  /** Transformer shape as the server reported it when it loaded (llama.cpp print_info); kept per model after that. */
+  arch?: ModelArch;
+}
+
+/** The model's shape from the server log: what the Loom skin draws. */
+export interface ModelArch {
+  /** Transformer blocks (n_layer). */
+  layers: number;
+  /** Routed experts per layer (n_expert); 0 for a dense model. */
+  experts: number;
+  /** Experts each token is routed to (n_expert_used). */
+  expertsUsed: number;
+  /** Always-on shared experts (1 when the model has a shared expert FFN). */
+  sharedExperts: number;
+  /** Attention heads and KV heads (n_head, n_head_kv). */
+  heads?: number;
+  kvHeads?: number;
+  /** Hidden size (n_embd). */
+  embd?: number;
+  /** Vocabulary size (n_vocab). */
+  vocab?: number;
+  /** "176.94 B" (model params). */
+  params?: string;
 }
 
 export interface Slot {
   id: SlotId;
-  /** "AGENT HIGH" */
+  /** "SYSTEM 3" */
   label: string;
   kind: SlotKind;
   model: ModelRef;

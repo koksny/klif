@@ -48,6 +48,20 @@ pub async fn klif_snapshot(shell: ShellState<'_>) -> Result<ViewModel, String> {
     Ok(e.snapshot())
 }
 
+/// One entry of the UI's skin registry, for the tray's Skin submenu.
+#[derive(serde::Deserialize)]
+pub struct SkinEntry {
+    id: String,
+    name: String,
+}
+
+/// The UI reports its skin list (built-in plus local-only skins); the tray's Skin submenu follows it.
+#[tauri::command]
+pub async fn klif_skins(app: AppHandle<tauri::Wry>, skins: Vec<SkinEntry>) -> Result<(), String> {
+    let list: Vec<(String, String)> = skins.into_iter().map(|s| (s.id, s.name)).collect();
+    on_main(&app, move |app| crate::tray::set_skins(app, &list).map_err(|e| format!("The tray menu could not be updated: {e}"))).await
+}
+
 #[tauri::command]
 pub async fn klif_act(shell: ShellState<'_>, action: Action) -> Result<(), String> {
     let e = engine(&shell)?;

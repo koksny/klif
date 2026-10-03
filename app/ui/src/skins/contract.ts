@@ -1,14 +1,16 @@
 // Skin contract. A skin is one complete visual language for KLIF.
 //
 // The state space is composed, never pre-baked:
-//   skin (4)  x  size class (full | mini)  x  phase (idle | loading | live | fault)  x  slot kind (llm | image)
+//   skin (9)  x  size class (full | mini)  x  phase (idle | loading | live | fault)  x  slot kind (llm | image)
 // A skin implements ONE root component that branches on size and phase internally and shares its
 // own widgets across them. Utility surfaces (console drawer, tune drawer, settings) are NOT part of
 // a skin: the shell draws them and themes them with the skin's tokens.
 import type { Component } from 'svelte';
 import type { Actions, ViewModel } from '../lib/model/types';
 
-export type SkinId = 'cliff' | 'silicon' | 'instrument' | 'phosphor';
+export type BuiltinSkinId = 'cliff' | 'silicon' | 'instrument' | 'phosphor' | 'decode' | 'loom' | 'ether' | 'rings' | 'spirit';
+/** A built-in skin, or a local-only one from skins/private/<id>/ (see registry.ts). */
+export type SkinId = BuiltinSkinId | (string & {});
 
 /**
  * full: the desktop window (typically ~1024x1152 CSS px, portrait, right half of a 1440p monitor).

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Tier strip: the same four tabs in every phase. LLM slots are tiers (AGENT HIGH / MEDIUM / LOW); the
+  // Tier strip: the same four tabs in every phase. LLM slots are tiers (SYSTEM 1 / 2 / 3); the
   // model behind each tier is the second line. The dot is the tier's state: kelp = ready, amber ring =
   // cannot launch, sky = this tier runs. Click selects; double-click launches when nothing runs (or after
   // a fault). While a session starts or stops the other tiers are locked; after a fault its tier is red.

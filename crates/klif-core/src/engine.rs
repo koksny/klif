@@ -20,7 +20,7 @@ use klif_catalog::{Catalog, LiveFacts, Recipes};
 use klif_common::config::Config;
 use klif_common::vm::{
     Availability, Backend, Endpoint, Ended, Fault, GpuMemory, HostInfo, ImageLive, LastSession, LlmLive, LoadProgress, LoadStep,
-    LoadStepId, ModelRef, Phase, Recipe, RecipePatch, Session, Slot, SlotId, SlotKind, StepState, SystemStats, ViewModel,
+    LoadStepId, ModelArch, ModelRef, Phase, Recipe, RecipePatch, Session, Slot, SlotId, SlotKind, StepState, SystemStats, ViewModel,
 };
 use klif_common::{now_s, Secret};
 use klif_supervisor::{Owned, PortOwner, ProcState, Supervisor};
@@ -126,6 +126,8 @@ pub(crate) struct State {
     /// Bumped whenever a session begins or ends (the telemetry snapshot must then be re-taken).
     session_seq: u64,
     last: Option<PersistedLast>,
+    /// Model shapes seen in server logs, by card id (persisted: the tiers show them before a launch).
+    arches: BTreeMap<String, ModelArch>,
     tier_ports: BTreeMap<SlotId, u16>,
     port_owners: BTreeMap<u16, PortOwner>,
     pending_launch: Option<SlotId>,
@@ -260,6 +262,7 @@ pub(crate) fn start(cfg: Config, host: HostInfo) -> Result<Arc<Inner>> {
         session: None,
         session_seq: 0,
         last: persisted.last_session.clone(),
+        arches: persisted.arches.clone(),
         tier_ports: ports,
         port_owners: BTreeMap::new(),
         pending_launch: None,
@@ -467,6 +470,7 @@ impl Inner {
             selected: Some(st.selected),
             session: st.session.as_ref().filter(|s| s.phase != Phase::Fault).map(|s| s.p.clone()),
             last_session: st.last.clone(),
+            arches: st.arches.clone(),
         };
         if let Err(e) = state::save(&self.cfg.state_path("state.json"), &ps) {
             log::warn!("could not write state.json: {e:#}");
@@ -706,6 +710,9 @@ impl Inner {
         let live = Self::live_facts(st);
         let mut slots = self.catalog.slots(&st.recipes, &live);
         for s in slots.iter_mut() {
+            if s.model.arch.is_none() {
+                s.model.arch = st.recipes.get(&s.id).and_then(|r| st.arches.get(&r.card_id)).cloned();
+            }
             if s.availability == Availability::Busy {
                 if let Some(r) = self.busy_reason(st, s.id) {
                     s.reason = Some(r);
@@ -769,7 +776,7 @@ impl Inner {
             kind: slot.kind(),
             card_id: plan.card_id.clone(),
             ctx_tokens: plan.model.ctx_tokens,
-            model: plan.model.clone(),
+            model: ModelRef { arch: plan.model.arch.clone().or_else(|| st.arches.get(&plan.card_id).cloned()), ..plan.model.clone() },
             recipe: Some(recipe),
             host: plan.host.clone(),
             spec_mode: plan.spec_mode.clone(),
@@ -918,8 +925,9 @@ impl Inner {
     }
 
     fn advance(&self, st: &mut State, snap: Option<&TelemetrySnapshot>, now: f64) {
+        let mut learned = false;
         let outcome = {
-            let State { sup, session, .. } = &mut *st;
+            let State { sup, session, arches, .. } = &mut *st;
             let Some(sess) = session.as_mut() else { return };
             let ps = sup.state(&sess.owned);
             let pids = match &ps {
@@ -941,6 +949,13 @@ impl Inner {
                     if sig.median_decode_tps.is_some() {
                         sess.median_tps = sig.median_decode_tps;
                     }
+                }
+                if let Some(a) = sig.arch.as_ref().filter(|a| sess.p.model.arch.as_ref() != Some(*a)) {
+                    sess.p.model.arch = Some(a.clone());
+                    if !sess.p.card_id.is_empty() {
+                        arches.insert(sess.p.card_id.clone(), a.clone());
+                    }
+                    learned = true;
                 }
             }
             if let Some(t) = snap {
@@ -1006,6 +1021,9 @@ impl Inner {
                 },
             }
         };
+        if learned {
+            self.persist(st);
+        }
         match outcome {
             Outcome::Nothing => {}
             Outcome::End(ended) => self.end_session(st, ended, now),

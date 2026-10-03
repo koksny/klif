@@ -3,9 +3,10 @@
 //! Written atomically (temp file, then rename).
 
 use klif_catalog::Recipes;
-use klif_common::vm::{LastSession, ModelRef, Recipe, SlotId, SlotKind};
+use klif_common::vm::{LastSession, ModelArch, ModelRef, Recipe, SlotId, SlotKind};
 use klif_supervisor::SessionRecord;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const STATE_VERSION: u32 = 1;
@@ -22,11 +23,14 @@ pub struct PersistedState {
     pub session: Option<PersistedSession>,
     #[serde(default)]
     pub last_session: Option<PersistedLast>,
+    /// Model shapes seen in server logs, by card id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub arches: BTreeMap<String, ModelArch>,
 }
 
 impl Default for PersistedState {
     fn default() -> Self {
-        PersistedState { version: STATE_VERSION, recipes: Recipes::new(), selected: None, session: None, last_session: None }
+        PersistedState { version: STATE_VERSION, recipes: Recipes::new(), selected: None, session: None, last_session: None, arches: BTreeMap::new() }
     }
 }
 

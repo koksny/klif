@@ -49,3 +49,10 @@ export function fmtSeconds(seconds: number): string {
 export function fmtPct(fraction01: number): string {
   return `${Math.round(fraction01 * 100)}%`;
 }
+
+/** A tier's label for tight places: "SYSTEM 2" -> "S2", "SYSTEM CGI" -> "CGI" (an older "AGENT MEDIUM" -> "MEDIUM"). */
+export function tierShort(label: string): string {
+  const n = /^SYSTEM\s+(\d+)$/i.exec(label.trim());
+  if (n) return `S${n[1]}`;
+  return label.replace(/^(SYSTEM|AGENT)\s+/i, '');
+}

@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Tier strip: the same four tabs in every phase. The three LLM slots are tiers (AGENT HIGH / MEDIUM /
-  // LOW); the model behind each tier is swappable, so its current model is printed under the tier name.
+  // Tier strip: the same four tabs in every phase. The three LLM slots are tiers (SYSTEM 1 / 2 /
+  // 3); the model behind each tier is swappable, so its current model is printed under the tier name.
   // State dot: ready (cyan), cannot launch (amber ring, and the reason in amber), running (hot, ringed).
   // Click selects; double-click launches when nothing runs or after a fault. While a session starts or
   // stops the other tiers are locked (padlock); in a fault the failed tier is drawn in the fault colour.

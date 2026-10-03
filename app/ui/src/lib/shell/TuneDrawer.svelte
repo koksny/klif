@@ -3,7 +3,7 @@
   // slot.options (both from the core's catalog) and sends every change as actions.setRecipe(slot, patch).
   // A running session keeps the recipe it started with until it is restarted. Themed by the --k-* variables.
   import { fly, fade } from 'svelte/transition';
-  import { fmtCtx } from '../model/format';
+  import { fmtCtx, tierShort } from '../model/format';
   import type { Availability, Recipe, RecipeChoice, Slot, SlotId } from '../model/types';
   import { player } from '../state/player.svelte';
   import { ui } from '../state/ui.svelte';
@@ -102,7 +102,7 @@
   <div class="tabs" role="tablist" aria-label="Slot">
     {#each slotsList as s (s.id)}
       <button type="button" role="tab" aria-selected={s.id === slot.id} class:on={s.id === slot.id} onclick={() => pickSlot(s.id)}>
-        {s.label.replace('AGENT ', '')}
+        {tierShort(s.label)}
       </button>
     {/each}
   </div>

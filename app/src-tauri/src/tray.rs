@@ -1,4 +1,6 @@
 //! Tray icon: Show / Hide, a "Panel mode" check item, a Skin submenu (emits `klif://skin` to the UI), Quit.
+//! The Skin submenu starts with the built-in skins and is replaced by the UI's own list (`klif_skins`), which
+//! also holds local-only skins.
 //! Left click shows KLIF.
 
 use tauri::image::Image;
@@ -11,6 +13,20 @@ use crate::{panel, shell};
 /// The tray items that follow the application's state (managed by Tauri).
 pub struct TrayItems {
     panel: CheckMenuItem<Wry>,
+    skins: Submenu<Wry>,
+}
+
+/// Replace the Skin submenu with the UI registry's list (id, name), in its order.
+pub fn set_skins(app: &AppHandle<Wry>, list: &[(String, String)]) -> tauri::Result<()> {
+    let Some(t) = app.try_state::<TrayItems>() else { return Ok(()) };
+    for item in t.skins.items()? {
+        t.skins.remove(&item)?;
+    }
+    for (id, name) in list {
+        let item = MenuItem::with_id(app, format!("skin:{id}"), name, true, None::<&str>)?;
+        t.skins.append(&item)?;
+    }
+    Ok(())
 }
 
 /// Keep the "Panel mode" item in step: enabled when a small screen exists, checked while panel mode is on.
@@ -22,7 +38,17 @@ pub fn sync_panel<R: Runtime>(app: &AppHandle<R>, available: bool, active: bool)
 }
 
 /// Skin ids and names, in the UI registry's order (app/ui/src/skins/registry.ts).
-const SKINS: &[(&str, &str)] = &[("cliff", "Cliff"), ("silicon", "Silicon"), ("instrument", "Instrument"), ("phosphor", "Phosphor")];
+const SKINS: &[(&str, &str)] = &[
+    ("cliff", "Cliff"),
+    ("silicon", "Silicon"),
+    ("instrument", "Instrument"),
+    ("phosphor", "Phosphor"),
+    ("decode", "Decode"),
+    ("loom", "Loom"),
+    ("ether", "Ether"),
+    ("rings", "Rings"),
+    ("spirit", "Spirit"),
+];
 
 pub fn build(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
@@ -31,13 +57,13 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<()> {
         (h.available, h.active)
     };
     let panel_item = CheckMenuItem::with_id(app, "panel", "Panel mode", available || active, active, None::<&str>)?;
-    app.manage(TrayItems { panel: panel_item.clone() });
     let skin_items: Vec<MenuItem<Wry>> = SKINS
         .iter()
         .map(|(id, name)| MenuItem::with_id(app, format!("skin:{id}"), *name, true, None::<&str>))
         .collect::<tauri::Result<_>>()?;
     let skin_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = skin_items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>).collect();
     let skins = Submenu::with_id_and_items(app, "skin", "Skin", true, &skin_refs)?;
+    app.manage(TrayItems { panel: panel_item.clone(), skins: skins.clone() });
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit KLIF", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &panel_item, &skins, &sep, &quit])?;
