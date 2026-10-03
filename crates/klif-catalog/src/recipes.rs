@@ -401,8 +401,10 @@ pub(crate) fn repair(c: &Catalog, slot: SlotId, r: &mut Recipe, fill: &Fill, int
         r.ctx_tokens = Some(ctx);
     }
 
-    // Krea cards with the fast starter configured carry precision (default low) and edit (default off).
-    if c.takes_krea_settings(card) {
+    // Krea cards with the fast starter configured carry precision (default low), edit (default off) and vision
+    // (default on: Qwen3-VL reads the reference images when Edit is on).
+    let krea = c.takes_krea_settings(card);
+    if krea {
         r.precision = Some(r.precision.unwrap_or_default());
         r.edit = Some(r.edit.unwrap_or(false));
     } else {
@@ -413,7 +415,7 @@ pub(crate) fn repair(c: &Catalog, slot: SlotId, r: &mut Recipe, fill: &Fill, int
     if card.is_sd {
         r.kv_type = None;
         r.prompt_cache_mib = None;
-        r.vision = None;
+        r.vision = if krea { Some(r.vision.unwrap_or(true)) } else { None };
         r.mode = None;
         r.port = Some(pinned_port(c, card, r).unwrap_or(fill.port));
         return;

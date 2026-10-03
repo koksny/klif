@@ -11,7 +11,7 @@
 //!
 //! Exception: a Krea card on HIP + the inference GPU with `[krea] fast_starter` configured launches through that
 //! starter instead (`-File <fast_starter> -Variant <Realism|Muse> -Size <WxH> -Port <port> -Precision
-//! <Low|Medium|High> -Edit <On|Off>`, working directory = the starter's folder). Everything else (session and
+//! <Low|Medium|High> -Edit <On|Off> -Vision <On|Off>`, working directory = the starter's folder). Everything else (session and
 //! log names, LLAMA_API_KEY removed, host, expected VRAM) is the same as for the catalog's starter.
 
 use anyhow::{anyhow, bail, Result};
@@ -81,12 +81,14 @@ pub(crate) fn plan(
             .unwrap_or_default();
         let precision = recipe.precision.unwrap_or_default();
         let edit = recipe.edit.unwrap_or(false);
+        let vision = recipe.vision.unwrap_or(true);
         for (name, value) in [
             ("-Variant", variant),
             ("-Size", size),
             ("-Port", eff.port.to_string()),
             ("-Precision", precision.label().to_string()),
             ("-Edit", if edit { "On" } else { "Off" }.to_string()),
+            ("-Vision", if vision { "On" } else { "Off" }.to_string()),
         ] {
             args.push(name.to_string());
             args.push(value);

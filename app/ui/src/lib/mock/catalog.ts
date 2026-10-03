@@ -81,7 +81,7 @@ export const LLM_PORTS = [7030, 7031, 7032, 7033, 7034, 7035];
 const CTX = [16384, 32768, 65536, 98304, 131072, 262144];
 const CTX_128K = CTX.filter((c) => c <= 131072);
 const GPU_RAM = ['9070', 'Dual', '9950X3D'];
-const IMAGE_SIZES = ['512x512', '512x768', '640x920', '720x960', '768x1024', '1024x768', '1024x1024'];
+const IMAGE_SIZES = ['512x512', '512x768', '640x920', '720x960', '768x1024', '1024x768', '1280x720', '720x1280', '1024x1024', '1920x1080', '1080x1920'];
 
 const qwen27 = (id: string, quant: string, weightsGiB: number, specMode: string, defaultCtx: number): MockCard => ({
   id,
@@ -193,7 +193,7 @@ export const DEFAULT_RECIPES: Record<SlotId, Recipe> = {
   high: { cardId: 'qwen-fn-iq2', backend: 'HIP', hardware: '9070', ctxTokens: 131072, kvType: 'q8_0', promptCacheMiB: 2048, port: 7030, mode: 'Thinking' },
   medium: { cardId: 'qwen-gsq', backend: 'HIP', hardware: '9070', ctxTokens: 98304, kvType: 'q8_0', promptCacheMiB: 16384, port: 7030, vision: true },
   low: { cardId: 'gemma-26b', backend: 'HIP', hardware: '9070', ctxTokens: 16384, kvType: 'q8_0', promptCacheMiB: 8192, port: 7030 },
-  krea: { cardId: 'krea-realism', backend: 'HIP', hardware: '9070', imageSize: '512x768', port: 1234, precision: 'low', edit: false },
+  krea: { cardId: 'krea-realism', backend: 'HIP', hardware: '9070', imageSize: '512x768', port: 1234, precision: 'low', edit: false, vision: true },
 };
 
 /** The fast Krea starter's Precision levels (the core's hints: medians of an identity edit at 1024x768). */
@@ -281,16 +281,18 @@ export function applyPatch(kind: SlotKind, cur: Recipe, patch: Partial<Recipe>):
     const sizes = card.imageSizes ?? [];
     if (patch.imageSize !== undefined && sizes.includes(patch.imageSize)) next.imageSize = patch.imageSize;
     if (next.imageSize === undefined || !sizes.includes(next.imageSize)) next.imageSize = card.defaultImageSize ?? sizes[0];
-    for (const k of ['ctxTokens', 'kvType', 'promptCacheMiB', 'vision', 'mode'] as const) delete next[k];
+    for (const k of ['ctxTokens', 'kvType', 'promptCacheMiB', 'mode'] as const) delete next[k];
     if (card.krea) {
       // Kept on every backend (a round trip through Vulkan keeps them); used only by the fast starter.
       if (patch.precision && PRECISIONS.some((p) => p.value === patch.precision)) next.precision = patch.precision;
       if (patch.edit !== undefined) next.edit = patch.edit;
       next.precision ??= 'low';
       next.edit ??= false;
+      next.vision ??= true;
     } else {
       delete next.precision;
       delete next.edit;
+      delete next.vision;
     }
   }
   return next;
@@ -347,6 +349,7 @@ export function optionsFor(kind: SlotKind, r: Recipe): RecipeOptions {
       const a = comboAvailability(card, r.backend, r.hardware);
       opts.precisions = PRECISIONS.map((p) => ({ ...choice(p.value, p.label, a), hint: p.hint }));
       opts.editToggle = true;
+      opts.vision = true;
     }
   }
   return opts;

@@ -283,6 +283,26 @@
             </div>
           </div>
         {/if}
+
+        {#if opts.vision}
+          <div class="field">
+            <span id="lbl-kvision">Vision</span>
+            <div class="stack">
+              <button
+                type="button"
+                class="switch"
+                role="switch"
+                aria-checked={recipe.vision !== false}
+                aria-labelledby="lbl-kvision"
+                class:on={recipe.vision !== false}
+                onclick={() => set({ vision: recipe.vision === false })}
+              >
+                <i></i>{recipe.vision !== false ? 'encoder sees the references' : 'off · text prompt only'}
+              </button>
+              {#if !recipe.edit}<small class="hint">used when Edit is on</small>{/if}
+            </div>
+          </div>
+        {/if}
       {/if}
 
       {#if portValues.length}

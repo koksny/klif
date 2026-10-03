@@ -250,6 +250,8 @@ impl Catalog {
         }
         if card.is_image && self.fast_krea_for(card, r).is_some() {
             m.mode = Some(krea_mode_label(r));
+            // The vision weights load only with Edit on (they read the reference images).
+            m.vision = Some(r.edit.unwrap_or(false) && r.vision.unwrap_or(true));
         }
         m
     }
@@ -276,9 +278,12 @@ pub(crate) fn krea_mode_label(r: &Recipe) -> String {
     format!("{mode} · {}", r.precision.unwrap_or_default().label())
 }
 
-/// Output sizes offered when a Krea card launches through the fast starter (all in its -Size ValidateSet):
-/// the catalog's list with 768x1024 instead of 720x1024, plus 1024x768.
-pub(crate) const FAST_KREA_SIZES: &[&str] = &["512x512", "512x768", "640x920", "720x960", "768x1024", "1024x768", "1024x1024"];
+/// Output sizes offered when a Krea card launches through the fast starter (all in its -Size ValidateSet), by
+/// pixel count: the catalog's list with 768x1024 instead of 720x1024, plus 1024x768, HD and Full HD both ways.
+/// sd.cpp aligns each side up to a multiple of 16, so the Full HD sizes come out 1920x1088 / 1088x1920.
+pub(crate) const FAST_KREA_SIZES: &[&str] = &[
+    "512x512", "512x768", "640x920", "720x960", "768x1024", "1024x768", "1280x720", "720x1280", "1024x1024", "1920x1080", "1080x1920",
+];
 
 /// The Precision levels of the fast Krea starter, with their hints. Times are the medians measured on an
 /// RX 9070 XT for an identity edit at 1024x768, 8 steps (low: rank-64 edit LoRA, reference capped at a quarter
@@ -464,6 +469,8 @@ fn options(c: &Catalog, slot: SlotId, card: &Card, r: &Recipe, ctx: u32) -> Reci
                     .collect(),
             );
             o.edit_toggle = Some(true);
+            // Vision: Qwen3-VL also sees the reference images (the starter adds --llm_vision with Edit on).
+            o.vision = Some(true);
         }
     } else {
         o.contexts = Some(

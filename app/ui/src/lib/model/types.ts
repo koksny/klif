@@ -84,6 +84,7 @@ export interface Recipe {
   kvType?: 'q4_0' | 'q8_0';
   promptCacheMiB?: number;
   port?: number;
+  /** LLM: the vision projector. Krea on the fast starter: Qwen3-VL also reads the reference images (Edit on). */
   vision?: boolean;
   /** Reasoning mode, e.g. "Thinking" / "Instruct", only where the card supports it. */
   mode?: string;
@@ -122,7 +123,7 @@ export interface RecipeOptions {
   /** Prompt cache sizes, already capped where the catalog caps them. */
   promptCacheMiB?: number[];
   ports?: number[];
-  /** True when the current card supports the vision projector. */
+  /** True when the current card supports the vision projector (LLM) or reference vision (fast Krea starter). */
   vision?: boolean;
   modes?: string[];
   /** Krea precision levels with a one-line hint each ("fastest · ~19 s edit 1024×768"); fast Krea starter only. */
