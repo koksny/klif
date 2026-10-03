@@ -1,6 +1,7 @@
 // Global shortcuts: Ctrl+1..4 / Alt+1..4 and F2 (Shift+F2 backwards) switch skins, F3 is panel mode (the
 // desktop app moves the window onto the small status screen; a browser only switches the layout between
-// mini and full), backquote toggles the dev bar, Escape closes drawers.
+// mini and full), backquote toggles the dev bar, Escape closes drawers. Nothing here fires while the user is
+// typing in a field (Escape then only leaves the field).
 import { SKINS } from '../../skins/registry';
 import { player } from '../state/player.svelte';
 import { ui } from '../state/ui.svelte';
@@ -13,6 +14,10 @@ function isTyping(t: EventTarget | null): boolean {
 
 export function installKeys(): () => void {
   const onKey = (e: KeyboardEvent) => {
+    if (isTyping(e.target)) {
+      if (e.key === 'Escape') (e.target as HTMLElement).blur();
+      return;
+    }
     if (e.key === 'Escape') {
       if (ui.closeDrawers()) e.preventDefault();
       return;
@@ -38,7 +43,7 @@ export function installKeys(): () => void {
       }
       return;
     }
-    if (e.code === 'Backquote' && !e.ctrlKey && !e.altKey && !e.metaKey && !isTyping(e.target) && !ui.shot) {
+    if (e.code === 'Backquote' && !e.ctrlKey && !e.altKey && !e.metaKey && !ui.shot) {
       e.preventDefault();
       ui.devbar = !ui.devbar;
     }

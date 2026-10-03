@@ -10,7 +10,7 @@
 //! VRAM layers from the log, LlmLive / ImageLive at key moments, records, totals, faults.
 //! No server is started; no HTTP probe runs (health comes from log markers).
 
-use klif_common::vm::{LlmActivity, LoadStep, SlotKind, StepState};
+use klif_common::vm::{LlmActivity, LoadStep, StepState, SystemKind};
 use klif_telemetry::session::SessionTracker;
 use klif_telemetry::text::{strip_sd_tag, REDACTED};
 use klif_telemetry::{llama, WatchSpec};
@@ -211,15 +211,21 @@ fn main() {
     let mut err_f = File::create(&err_path).unwrap();
     let b = epoch_from_stem(&name);
     let spec = WatchSpec {
-        kind: if kind == Kind::Llm { SlotKind::Llm } else { SlotKind::Image },
-        out_log: out_path.clone(),
-        err_log: err_path.clone(),
+        kind: if kind == Kind::Llm { SystemKind::Llm } else { SystemKind::Image },
+        adapter: if kind == Kind::Llm { klif_common::vm::AdapterId::LlamaCpp } else { klif_common::vm::AdapterId::SdCpp },
+        external: false,
+        out_log: Some(out_path.clone()),
+        err_log: Some(err_path.clone()),
         host: "127.0.0.1".into(),
         port: if kind == Kind::Llm { 7030 } else { 1234 },
         api_key: None,
         started_at: b,
         ctx_tokens: None,
         spec_mode: None,
+        health: klif_common::vm::HealthCheck::Auto,
+        metrics: false,
+        expect_device: None,
+        gpu: None,
     };
     let mut tr = SessionTracker::new(spec, false);
     tr.set_probes_enabled(false);

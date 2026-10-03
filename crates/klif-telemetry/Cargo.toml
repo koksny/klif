@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# The SMBIOS (GetSystemFirmwareTable 'RSMB') RAM-type reader. Off by default: the GUI shows
+# `[telemetry] ram_type` instead; only klif-cli's `diag` enables it (through klif-core's `smbios` feature).
+smbios = []
+
 [dependencies]
 klif-common = { path = "../klif-common" }
 serde.workspace = true
@@ -12,6 +17,8 @@ serde_json.workspace = true
 anyhow.workspace = true
 regex.workspace = true
 ureq.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
   "Win32_Devices_DeviceAndDriverInstallation",
   "Win32_Devices_Properties",

@@ -3,7 +3,7 @@
   // and height in every phase (idle, loading, live LLM, live image, stopping, fault, dormant); a phase only
   // changes what the panels read:
   //   header        brand, status lamp + phase, uptime / elapsed (version while idle), panel + window keys
-  //   tier control  the rotary MODE selector with its state column, the BACKEND toggle (opens Tune)
+  //   System control  the rotary MODE selector (one detent per System, + adds one) with its state column, the BACKEND toggle (opens Tune)
   //   model line    the running model, or (idle) the selected tier's
   //   status block  hero plate + two detail rows, or the fault plate over both (see Status)
   //   dial area     the VRAM dial (idle: fit preview of the selected tier) + the context / generation dial
@@ -13,11 +13,11 @@
   //                 Restart or Dismiss, Tune (always: a running tier gets "Restart to apply" in the drawer),
   //                 Open endpoint / web UI, Console / Full log; the console line under it
   import { onMount, tick } from 'svelte';
-  import type { Actions, SlotId, ViewModel } from '../../../lib/model/types';
+  import type { Actions, SystemId, ViewModel } from '../../../lib/model/types';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
   import { fmtClock, fmtCtx, fmtInt } from '../../../lib/model/format';
   import {
     PHASE_LABEL,
-    availLabel,
     kindOf,
     lastSessionText,
     modelLine,
@@ -50,13 +50,18 @@
   const kind = $derived(kindOf(vm));
   const ptr = $derived(pointerSlot(vm));
   const ptrSlot = $derived(slotById(vm, ptr));
-  const selSlot = $derived(slotById(vm, vm.selected));
+  const selSlot = $derived(slotById(vm, ptr));
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const busy = $derived(view === 'loading' || view === 'stopping');
   const online = $derived(s?.phase === 'live');
-  const selReady = $derived(selSlot?.availability === 'ready');
-  const runLabel = $derived(ptrSlot?.label ?? s?.slot.toUpperCase() ?? '');
+  /** The launch control: with conflicts it reads "Stop System 1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, selSlot));
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!selSlot && selSlot.controllable && !selSlot.external);
+  const heldWhy = $derived(selSlot?.external ? 'External server: it runs where it was started.' : !selSlot?.controllable ? 'This node does not allow launching.' : '');
+  const runLabel = $derived(ptrSlot?.label ?? s?.system ?? '');
   const backend = $derived(s?.model.backend ?? ptrSlot?.model.backend ?? null);
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
   const frameless = $derived(vm.host?.frameless ?? false);
@@ -65,32 +70,17 @@
   const sleep = $derived(s?.phase === 'live' ? sleepOf(vm.vram) : null);
   const statusWord = $derived(sleep ? (sleep.phase === 'waking' ? 'GPU WAKING' : 'GPU ASLEEP') : PHASE_LABEL[phase]);
   const statusTone = $derived(phase === 'fault' ? 'orange' : sleep ? 'amber' : 'cyan');
-  const runWord = $derived(
-    !s
-      ? 'running'
-      : s.phase === 'fault'
-        ? 'fault'
-        : s.phase === 'starting'
-          ? 'starting'
-          : s.phase === 'loading'
-            ? 'loading'
-            : s.phase === 'stopping'
-              ? 'stopping'
-              : sleep
-                ? sleep.phase === 'waking'
-                  ? 'waking'
-                  : 'asleep'
-                : 'running',
-  );
+  /** The selected System's GPU is dormant: its state word. */
+  const sleepWord = $derived(sleep ? (sleep.phase === 'waking' ? 'waking' : 'asleep') : null);
 
-  // Double-click on a tier launches it when nothing runs, or after a fault.
-  function launchTier(id: SlotId) {
+  // Double-click on a System launches it when it is ready and nothing is in its way.
+  function launchTier(id: SystemId) {
     const sl = slotById(vm, id);
-    if ((!s || view === 'fault') && sl?.availability === 'ready') actions.launch(id);
+    if (sl && canLaunch(sl) && sl.conflicts.length === 0) void actions.launch(id).catch(() => {});
   }
 
-  // Endpoint chip: the session's port, or the selected tier's configured one.
-  const port = $derived(s?.endpoint.port ?? ptrSlot?.recipe?.port);
+  // Endpoint chip: the session's port, or the selected System's configured one.
+  const port = $derived(s?.endpoint.port ?? ptrSlot?.command?.port);
 
   // Dial area: the VRAM dial follows the phase; a young session's cliff spans the session.
   const expected = $derived(selSlot?.expectedVram ?? []);
@@ -104,7 +94,7 @@
 
   // Context dial (LLM): the live or last reading, else the configured window with the needle at rest.
   const model = $derived(s?.model ?? ptrSlot?.model);
-  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || ptrSlot?.recipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxUsed = $derived(llm?.context.usedTokens ?? 0);
   const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating');
   // The dial and its readout are one centred group; the dial takes what the panel leaves, up to 330 u.
@@ -114,12 +104,13 @@
 
   // Timeline / recent jobs: one place, one height; the caption says what the frame holds.
   const jobsView = $derived(kind === 'image');
-  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img));
+  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img || !!gen));
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
   const last = $derived(view === 'idle' ? lastSessionText(vm) : null);
   const tlCaption = $derived.by(() => {
     if (view === 'idle') return 'not running';
     if (view === 'loading') return jobsView ? 'no jobs yet' : 'no requests yet';
+    if (kind !== 'llm' && kind !== 'image') return view === 'fault' ? 'failed' : 'no per-request log for this kind';
     if (jobsView) {
       if (!img) return view === 'fault' ? 'no jobs: failed during startup' : 'no jobs yet';
       return `seconds per image · ${fmtInt(img.imagesThisSession)} this session${view === 'fault' ? ', then the fault' : ''}`;
@@ -210,24 +201,17 @@
   <div class="tier">
     <section class="panel sel">
       <span class="lbl corner">MODE</span>
+      <button class="addsys" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>
+        <Icon name="plus" size="calc(13 * var(--u))" />
+      </button>
       <div class="selbox">
-        <Selector
-          slots={vm.slots}
-          pointer={ptr}
-          selected={vm.selected}
-          running={s?.slot ?? null}
-          {runWord}
-          locked={busy}
-          tone={statusTone}
-          onselect={(id) => actions.select(id)}
-          onlaunch={launchTier}
-        />
+        <Selector {vm} pointer={ptr} tone={statusTone} {sleepWord} onselect={(id) => actions.select(id)} onlaunch={launchTier} />
       </div>
     </section>
     <section class="panel be">
       <span class="lbl corner">BACKEND</span>
       <div class="bebox">
-        <BackendToggle {backend} onclick={() => actions.openTune(vm.selected)} />
+        <BackendToggle {backend} onclick={() => actions.openTune(selSlot?.id)} />
       </div>
     </section>
   </div>
@@ -251,7 +235,7 @@
       {/if}
     </section>
     <section class="panel ctx" bind:clientWidth={cw} bind:clientHeight={ch}>
-      <span class="lbl corner">{kind === 'image' ? 'GENERATION' : 'CONTEXT'}</span>
+      <span class="lbl corner">{kind === 'image' ? 'GENERATION' : kind === 'llm' ? 'CONTEXT' : KIND_LABEL[kind].toUpperCase()}</span>
       <div class="cgroup" style="--d: max(calc(60 * var(--u)), min(calc(330 * var(--u)), calc({cw}px - 48 * var(--u)), calc({ch}px - {rh}px - 72 * var(--u))))">
         <div class="cdial">
           {#if kind === 'image'}
@@ -265,6 +249,8 @@
               dim={!generating}
               label="Generation"
             />
+          {:else if kind !== 'llm'}
+            <ContextDial used={0} total={0} dim label="Requests" />
           {:else}
             <!-- idle / loading: the configured window with the needle at rest; at a fault the last reading, unlit -->
             <ContextDial used={ctxUsed} total={ctxTotal} dim={!llm || view === 'fault' || view === 'stopping' || (!!sleep && llm.activity === 'idle')} />
@@ -282,6 +268,14 @@
               <span class="cv dimv">{view === 'loading' ? 'server loading' : view === 'fault' ? 'no job ran' : 'not running'}</span>
               <span class="cs">{model?.imageSize ? `default size ${model.imageSize.replace(/\s*x\s*/i, ' × ')}` : ''}{model?.mode ? ` · ${model.mode}` : ''}</span>
             {/if}
+          {:else if kind !== 'llm'}
+            {#if gen}
+              <span class="cv"><b>{fmtInt(gen.requestsTotal ?? 0)}</b> requests</span>
+              <span class="cs">{(gen.requestsInFlight ?? 0) > 0 ? `${gen.requestsInFlight} in flight` : 'idle'}{gen.lastActivityS !== undefined ? ` · last ${Math.round(gen.lastActivityS)} s ago` : ''}</span>
+            {:else}
+              <span class="cv dimv">{view === 'loading' ? 'server loading' : 'not running'}</span>
+              <span class="cs">{model?.name ?? 'no preset'}</span>
+            {/if}
           {:else if llm}
             <span class="cv"><b>{fmtInt(ctxUsed)}</b> / {fmtInt(ctxTotal)} tokens · {ctxTotal ? Math.round((ctxUsed / ctxTotal) * 100) : 0}%</span>
             <span class="cs">{view === 'fault' ? 'last reading before the fault' : `${fmtCtx(ctxTotal)} window${model?.kvType ? ` · KV ${model.kvType}` : ''}`}</span>
@@ -298,13 +292,13 @@
   <section class="panel sys">
     <span class="lbl">RAM</span>
     <span class="si"><Icon name="ram" size="calc(20 * var(--u))" /></span>
-    <span class="sv">{vm.system.ramUsedGiB.toFixed(1)} / {vm.system.ramTotalGiB.toFixed(1)} GiB{vm.system.ramType ? ` ${vm.system.ramType}` : ''}</span>
-    <span class="sm"><LedBar fraction={vm.system.ramTotalGiB > 0 ? vm.system.ramUsedGiB / vm.system.ramTotalGiB : 0} segments={16} label="System RAM used" /></span>
+    <span class="sv">{vm.machine.ramUsedGiB.toFixed(1)} / {vm.machine.ramTotalGiB.toFixed(1)} GiB{vm.machine.ramType ? ` ${vm.machine.ramType}` : ''}</span>
+    <span class="sm"><LedBar fraction={vm.machine.ramTotalGiB > 0 ? vm.machine.ramUsedGiB / vm.machine.ramTotalGiB : 0} segments={16} label="System RAM used" /></span>
     <span class="vsep"></span>
     <span class="lbl">CPU</span>
     <span class="si"><Icon name="cpu" size="calc(20 * var(--u))" /></span>
-    <span class="sv">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
-    <span class="sm"><LedBar fraction={vm.system.cpuPct / 100} segments={16} label="CPU load" /></span>
+    <span class="sv">{vm.machine.cpuName} · {Math.round(vm.machine.cpuPct)}%</span>
+    <span class="sm"><LedBar fraction={vm.machine.cpuPct / 100} segments={16} label="CPU load" /></span>
   </section>
 
   <!-- request timeline / recent jobs: one height for both, present in every phase -->
@@ -331,7 +325,7 @@
       {#if jobsView}
         <span><i class="sw dc"></i>new</span>
         <span><i class="sw pf"></i>edit</span>
-      {:else}
+      {:else if kind === 'llm'}
         <span><i class="sw pf"></i>prefill</span>
         <span><i class="sw dc"></i>decode</span>
       {/if}
@@ -345,7 +339,7 @@
     <button
       class="chip ep"
       disabled={!online}
-      onclick={() => actions.copyEndpoint()}
+      onclick={() => actions.copyEndpoint(selSlot?.id)}
       title={online && s ? `Copy ${s.endpoint.host}:${s.endpoint.port}` : 'The server is not running'}
     >
       <span class="port mono">{port ? `:${port}` : '—'}</span>{#if !online}<span class="off">offline</span>{/if}
@@ -358,40 +352,46 @@
     <span class="grow"></span>
 
     <!-- primary: Launch / Cancel / Stop / Restart after a fault, always in this place and width -->
-    {#if view === 'idle'}
+    {#if selSlot?.external}
+      <button class="btn act ext" disabled title={EXTERNAL_TITLE}><span class="al">{EXTERNAL_NOTE}</span></button>
+    {:else if view === 'idle' && isPendingLaunch(selSlot)}
+      <button class="btn act stop" onclick={() => actions.stop(selSlot?.id)} disabled={!canStop(selSlot)} title={selSlot?.reason ?? 'Cancel the launch'}>
+        <span class="sq"></span><span class="al">Cancel <b>{selSlot?.label ?? ''}</b></span>
+      </button>
+    {:else if view === 'idle'}
       <button
         class="btn act launch primary"
-        disabled={!selReady}
-        onclick={() => actions.launch(vm.selected)}
-        title={selReady ? `Launch ${selSlot?.label ?? ''}` : `${selSlot?.label ?? ''}: ${selSlot?.reason ?? availLabel(selSlot?.availability ?? 'unsupported')}`}
+        disabled={!ctl.enabled}
+        onclick={() => doLaunch(actions, selSlot, ctl)}
+        title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${selSlot?.reason ?? ''}` : `Launch ${selSlot?.label ?? ''}`) : `${selSlot?.label ?? ''}: ${ctl.blocked}`}
       >
-        <span class="play"><Icon name="play" size="calc(16 * var(--u))" /></span><span class="al">Launch <b>{selSlot?.label ?? ''}</b></span>
+        <span class="play"><Icon name="play" size="calc(16 * var(--u))" /></span><span class="al">{#if ctl.stopOthers}{ctl.text}{:else}Launch <b>{selSlot?.label ?? ''}</b>{/if}</span>
       </button>
     {:else if view === 'fault'}
-      <button class="btn act hot" onclick={() => actions.restart()}>
+      <button class="btn act hot" onclick={() => actions.restart(selSlot?.id)} disabled={!mine}>
         <Icon name="restart" size="calc(17 * var(--u))" /><span class="al">Restart <b>{runLabel}</b></span>
       </button>
     {:else}
-      <button class="btn act stop" onclick={() => actions.stop()} disabled={view === 'stopping'}>
+      <button class="btn act stop" onclick={() => actions.stop(selSlot?.id)} disabled={view === 'stopping' || !canStop(selSlot)} title={heldWhy}>
         <span class="sq"></span><span class="al">{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{runLabel}</b></span>
       </button>
     {/if}
 
     {#if view === 'fault'}
-      <button class="btn rs" onclick={() => actions.dismiss?.()} title="Back to the launcher"><Icon name="back" size="calc(17 * var(--u))" />Dismiss</button>
+      <button class="btn rs" onclick={() => actions.dismiss(selSlot?.id)} disabled={!mine} title="Back to the launcher"><Icon name="back" size="calc(17 * var(--u))" />Dismiss</button>
     {:else}
-      <button class="btn rs" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">
+      <button class="btn rs" onclick={() => actions.restart(selSlot?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>
         <Icon name="restart" size="calc(17 * var(--u))" />Restart
       </button>
     {/if}
     <button
       class="btn tune"
-      onclick={() => actions.openTune(vm.selected)}
-      title={s && s.slot === vm.selected && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}
+      onclick={() => actions.openTune(selSlot?.id)}
+      title={s && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}
     >
       <Icon name="tune" size="calc(17 * var(--u))" />Tune
     </button>
-    <button class="btn op" onclick={() => actions.openEndpoint()} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
+    <button class="btn op" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
       <Icon name="open" size="calc(16 * var(--u))" />{kind === 'image' ? 'Open web UI' : 'Open endpoint'}
     </button>
     <button class="btn cn" onclick={() => actions.toggleConsole(view === 'fault' ? true : undefined)}>
@@ -423,6 +423,27 @@
     position: absolute;
     left: calc(18 * var(--u));
     top: calc(14 * var(--u));
+  }
+  /* "+" beside the MODE caption: adds a System (opens Tune in add mode) */
+  .addsys {
+    position: absolute;
+    left: calc(58 * var(--u));
+    top: calc(10 * var(--u));
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: calc(20 * var(--u));
+    height: calc(20 * var(--u));
+    padding: 0;
+    border-radius: 50%;
+    border: calc(1.5 * var(--u)) solid rgba(237, 230, 214, 0.45);
+    background: #141517;
+    color: rgba(237, 230, 214, 0.75);
+    cursor: pointer;
+  }
+  .addsys:hover {
+    color: var(--cyan);
+    border-color: var(--cyan);
   }
 
   /* header */
@@ -849,6 +870,16 @@
   .act {
     width: calc(196 * var(--u));
     justify-content: flex-start;
+  }
+  /* An external server: a quiet engraved note in the primary place, not a push button. */
+  .btn.act.ext[disabled] {
+    justify-content: center;
+    background: transparent;
+    border-color: rgba(237, 230, 214, 0.16);
+    box-shadow: none;
+    color: var(--muted);
+    opacity: 1;
+    cursor: default;
   }
   .al {
     overflow: hidden;

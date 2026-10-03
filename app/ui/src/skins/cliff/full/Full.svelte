@@ -14,9 +14,12 @@
   import Cliff from '../Cliff.svelte';
   import type { SceneMode } from '../paint';
   import type { GpuView } from '../power';
-  import { availabilityText, blockView, lastSessionLine, releasedGiB, selectedSlot, sessionKind, sessionSlot } from '../util';
+  import { idleState } from '../../../lib/model/systems';
+  import { blockView, lastSessionLine, releasedGiB, selectedSystem, sessionKind } from '../util';
   import Bottom from './Bottom.svelte';
   import FaultPanel from './FaultPanel.svelte';
+  import GenericLog from './GenericLog.svelte';
+  import GenericPanel from './GenericPanel.svelte';
   import Header from './Header.svelte';
   import ImagePanel from './ImagePanel.svelte';
   import LlmPanel from './LlmPanel.svelte';
@@ -30,16 +33,15 @@
 
   const s = $derived(vm.session);
   const view = $derived(blockView(vm));
-  /** The running slot's kind, or (idle) the selected slot's. */
+  /** The selected System's kind (vm.session is always its session). */
   const kind = $derived(sessionKind(vm));
-  const sel = $derived(selectedSlot(vm));
-  const running = $derived(sessionSlot(vm));
+  const sel = $derived(selectedSystem(vm));
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
-  /** The status block follows the running session, or (idle) the selected tier with its configured values. */
+  const gen = $derived(s?.generic ?? null);
+  /** The status block follows the session, or (idle) the selected System with its configured values. */
   const model = $derived(s?.model ?? sel?.model ?? null);
-  const recipe = $derived((running ?? sel)?.recipe);
-  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || recipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
 
   const mode = $derived<SceneMode>(view === 'idle' ? 'fit' : view === 'fault' ? 'fault' : view === 'loading' ? 'building' : 'live');
   const fit = $derived(mode === 'fit');
@@ -48,7 +50,7 @@
   const cliffLayers = $derived(fit ? (sel?.expectedVram ?? []) : vm.vram.layers);
   const kicker = $derived(
     fit
-      ? `VRAM cliff · fit preview for ${sel?.label ?? 'job'}`
+      ? `VRAM cliff · fit preview for ${sel?.label ?? 'System'}`
       : mode === 'building'
         ? 'VRAM cliff · filling'
         : mode === 'fault'
@@ -63,26 +65,26 @@
   );
 
   // The hero's word when there is nothing to measure.
-  const why = $derived(sel ? availabilityText(sel.availability) : null);
+  const idle = $derived(idleState(sel));
   const word = $derived(
     view === 'idle'
-      ? (why ?? 'not running').toUpperCase()
+      ? idle.text.toUpperCase()
       : view === 'stopping'
         ? `STOPPING · RELEASING ${fmtGiB(vm.vram.usedGiB)} GiB`
         : view === 'waiting'
           ? 'WAITING FOR DATA'
           : null,
   );
-  const wordAmber = $derived((view === 'idle' && !!why) || view === 'stopping');
+  const wordAmber = $derived((view === 'idle' && idle.warn) || view === 'stopping');
   /** Image GPU asleep with nothing in flight: the last job's figures, faded. */
   const imgStale = $derived(!!gpu && img?.activity === 'idle');
 
   // Timeline / recent jobs.
-  const hadWork = $derived(view === 'fault' && (!!llm || !!img));
+  const hadWork = $derived(view === 'fault' && (!!llm || !!img || !!gen));
   const died = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
-  const lastText = $derived(vm.lastSession ? lastSessionLine(vm.lastSession, vm.slots) : '');
+  const lastText = $derived(vm.lastSession ? lastSessionLine(vm.lastSession, vm.systems) : '');
   const lastFault = $derived(vm.lastSession?.ended === 'fault');
-  const ramFrac = $derived(vm.system.ramTotalGiB > 0 ? Math.min(1, vm.system.ramUsedGiB / vm.system.ramTotalGiB) : 0);
+  const ramFrac = $derived(vm.machine.ramTotalGiB > 0 ? Math.min(1, vm.machine.ramUsedGiB / vm.machine.ramTotalGiB) : 0);
 </script>
 
 <div class="full" data-view={view}>
@@ -93,13 +95,15 @@
   <!-- Status block: its box never moves; a fault covers it whole. -->
   <div class="pad block">
     {#if view === 'fault' && s}
-      <FaultPanel session={s} label={running?.label ?? s.model.name} history={vm.vram.history} totalGiB={vm.vram.totalGiB} />
+      <FaultPanel session={s} label={sel?.label ?? s.model.name} history={vm.vram.history} totalGiB={vm.vram.totalGiB} />
     {:else if view === 'loading' && s}
       <LoadingPanel session={s} usedGiB={vm.vram.usedGiB} totalGiB={vm.vram.totalGiB} />
     {:else if kind === 'image'}
       <ImagePanel image={img} {model} {word} {wordAmber} stale={imgStale} />
-    {:else}
+    {:else if kind === 'llm'}
       <LlmPanel {llm} {model} {ctxTotal} {word} {wordAmber} {gpu} />
+    {:else}
+      <GenericPanel generic={gen} {model} {kind} port={s?.endpoint.port ?? sel?.command?.port} {word} {wordAmber} />
     {/if}
   </div>
 
@@ -123,23 +127,25 @@
 
   <div class="pad sys">
     <span class="c-lbl">RAM</span>
-    <span class="v">{fmtFixed(vm.system.ramUsedGiB, 1)} / {fmtFixed(vm.system.ramTotalGiB, 1)} GiB{vm.system.ramType ? ` ${vm.system.ramType}` : ''}</span>
+    <span class="v">{fmtFixed(vm.machine.ramUsedGiB, 1)} / {fmtFixed(vm.machine.ramTotalGiB, 1)} GiB{vm.machine.ramType ? ` ${vm.machine.ramType}` : ''}</span>
     <span class="c-bar" role="meter" aria-label="System RAM" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(ramFrac * 100)}
       ><i style:transform="scaleX({ramFrac})"></i></span
     >
     <span class="vr" aria-hidden="true"></span>
     <span class="c-lbl">CPU</span>
-    <span class="v">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
-    <span class="c-bar" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(vm.system.cpuPct)}
-      ><i style:transform="scaleX({Math.min(1, vm.system.cpuPct / 100)})"></i></span
+    <span class="v">{vm.machine.cpuName} · {Math.round(vm.machine.cpuPct)}%</span>
+    <span class="c-bar" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(vm.machine.cpuPct)}
+      ><i style:transform="scaleX({Math.min(1, vm.machine.cpuPct / 100)})"></i></span
     >
   </div>
 
   <div class="pad">
     {#if kind === 'image'}
       <RecentJobs recent={img?.recent ?? []} total={img?.imagesThisSession ?? 0} {view} {hadWork} {lastText} {lastFault} />
-    {:else}
+    {:else if kind === 'llm'}
       <Timeline requests={llm?.requests ?? []} {view} {hadWork} {died} {lastText} {lastFault} />
+    {:else}
+      <GenericLog {view} requests={gen?.requestsTotal ?? 0} {lastText} {lastFault} />
     {/if}
   </div>
 

@@ -4,25 +4,28 @@
   // Restart after a fault, one fixed width] [Restart, or Dismiss after a fault] [Tune, always] [Endpoint or
   // Web UI] [Console, or Full log after a fault]. The last console line under it.
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { availabilityText, blockView, selectedSlot, sessionKind, sessionSlot } from '../util';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
+  import { blockView, selectedSystem, sessionKind } from '../util';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
   const s = $derived(vm.session);
   const view = $derived(blockView(vm));
   const kind = $derived(sessionKind(vm));
-  const sel = $derived(selectedSlot(vm));
-  const running = $derived(sessionSlot(vm));
-  const why = $derived(sel ? (availabilityText(sel.availability) ?? null) : 'no job slots configured');
+  const sel = $derived(selectedSystem(vm));
+  /** The launch control: with conflicts it reads "Stop System 1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, sel));
+  const why = $derived(ctl.enabled ? null : ctl.blocked);
   const online = $derived(s?.phase === 'live');
   const busy = $derived(view === 'loading' || view === 'stopping');
-  const port = $derived(s?.endpoint.port ?? sel?.recipe?.port);
-  const label = $derived(running?.label ?? s?.model.name ?? '');
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!sel && sel.controllable && !sel.external);
+  const port = $derived(s?.endpoint.port ?? sel?.command?.port);
+  const label = $derived(sel?.label ?? s?.model.name ?? '');
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
-  const ready = $derived(vm.slots.filter((x) => x.availability === 'ready').length);
-  const idleLine = $derived(`${ready === vm.slots.length ? 'ready' : `${ready} of ${vm.slots.length} ready`} · ${vm.slots.length} jobs`);
-  const tuneTip = $derived(
-    s && s.slot === vm.selected && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this tier launches',
-  );
+  const ready = $derived(vm.systems.filter((x) => x.availability === 'ready' && x.status !== 'not-set').length);
+  const idleLine = $derived(`${ready === vm.systems.length ? 'ready' : `${ready} of ${vm.systems.length} ready`} · ${vm.systems.length} Systems`);
+  const tuneTip = $derived(s && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches');
+  const heldWhy = $derived(sel?.external ? 'External server: it runs where it was started.' : !sel?.controllable ? 'This node does not allow launching.' : '');
 </script>
 
 {#snippet restartIcon()}
@@ -33,7 +36,7 @@
   <div class="bar">
     <button
       class="chip ep"
-      onclick={() => actions.copyEndpoint()}
+      onclick={() => actions.copyEndpoint(sel?.id)}
       disabled={!online}
       title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}
     >
@@ -60,47 +63,55 @@
     </button>
     <span class="grow"></span>
 
-    <!-- Primary: one place, one width -->
-    {#if view === 'idle'}
+    <!-- Primary: one place, one width. An external server gets a quiet note there (KLIF never starts or stops
+         it); a launch waiting for other Systems to stop offers Cancel. -->
+    {#if sel?.external}
+      <button class="btn act ext" disabled title={EXTERNAL_TITLE}><span class="al">{EXTERNAL_NOTE}</span></button>
+    {:else if view === 'idle' && isPendingLaunch(sel)}
+      <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={!canStop(sel)} title={sel?.reason ?? 'Cancel the launch'}>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1.5" class="fill" /></svg>
+        <span class="al">Cancel <b>{label}</b></span>
+      </button>
+    {:else if view === 'idle'}
       <button
         class="btn act primary"
-        onclick={() => actions.launch(vm.selected)}
-        disabled={!!why}
-        title={why ? `${sel?.label ?? 'This tier'} cannot be launched: ${sel?.reason ?? why}` : `Launch ${sel?.label ?? ''}`}
+        onclick={() => doLaunch(actions, sel, ctl)}
+        disabled={!ctl.enabled}
+        title={why ? `${sel?.label ?? 'This System'} cannot be launched: ${why}` : ctl.stopOthers ? `${ctl.text}: ${sel?.reason ?? ''}` : `Launch ${sel?.label ?? ''}`}
       >
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 3.8v12.4L16 10Z" class="fill" /></svg>
-        <span class="al">Launch <b>{sel?.label ?? ''}</b></span>
+        <span class="al">{#if ctl.stopOthers}{ctl.text}{:else}Launch <b>{sel?.label ?? ''}</b>{/if}</span>
       </button>
     {:else if view === 'fault'}
-      <button class="btn act danger" onclick={() => actions.restart()} title="Launch {label} again">
+      <button class="btn act danger" onclick={() => actions.restart(sel?.id)} disabled={!mine} title="Launch {label} again">
         {@render restartIcon()}
         <span class="al">Restart <b>{label}</b></span>
       </button>
     {:else}
-      <button class="btn act stop" onclick={() => actions.stop()} disabled={view === 'stopping'}>
+      <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={view === 'stopping' || !canStop(sel)} title={heldWhy}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1.5" class="fill" /></svg>
         <span class="al">{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{label}</b></span>
       </button>
     {/if}
 
     {#if view === 'fault'}
-      <button class="btn w-rs" onclick={() => actions.dismiss?.()} title="Back to the launcher">
+      <button class="btn w-rs" onclick={() => actions.dismiss(sel?.id)} disabled={!mine} title="Back to the launcher">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10H4.5M9 5.2 4.2 10 9 14.8" class="ln" /></svg>
         <span>Dismiss</span>
       </button>
     {:else}
-      <button class="btn w-rs" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">
+      <button class="btn w-rs" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>
         {@render restartIcon()}
         <span>Restart</span>
       </button>
     {/if}
-    <button class="btn tune" onclick={() => actions.openTune(vm.selected)} title={tuneTip}>
+    <button class="btn tune" onclick={() => actions.openTune(sel?.id)} title={tuneTip}>
       <svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M3.5 6h13M3.5 14h13" class="ln" /><circle cx="7.5" cy="6" r="2" class="knob" /><circle cx="12.5" cy="14" r="2" class="knob" /></svg
       >
       <span>Tune</span>
     </button>
-    <button class="btn w-ep" onclick={() => actions.openEndpoint()} disabled={!online} title={online ? '' : 'The endpoint is not up'}>
+    <button class="btn w-ep" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={online ? '' : 'The endpoint is not up'}>
       <svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M9 3.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V11" class="ln" /><path d="M11.5 3.5h5v5M16.5 3.5 9 11" class="ln" /></svg
       >
@@ -241,6 +252,15 @@
   .btn.danger:hover {
     background: rgba(232, 100, 90, 0.22);
     border-color: #f08a80;
+  }
+  .btn.ext,
+  .btn.ext:disabled {
+    justify-content: center;
+    background: transparent;
+    border-color: var(--edge);
+    color: var(--muted);
+    opacity: 1;
+    cursor: default;
   }
   .btn.tune {
     border-color: #2f5a75;

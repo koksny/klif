@@ -29,6 +29,20 @@ credentials.json
 *.key
 id_rsa
 id_ed25519
+*.token
+api-key.txt
+node-token.txt
+
+# KLIF's own state files (a state or data folder copied into the tree must not be committed)
+control.json
+instance-id
+engine.lock
+state.v3.json
+state.json
+node-cache.json
+window.json
+panel.json
+webview-data/
 
 # Dependencies and build junk
 node_modules/

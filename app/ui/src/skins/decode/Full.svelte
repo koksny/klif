@@ -1,17 +1,21 @@
 <script lang="ts">
   // Decode, full window. The fixed KLIF skeleton in terminal form, scaled by --u (1 design px), the same in
-  // every phase (only the contents change): header, tier strip, model line, the terminal field (absorbs the
+  // every phase (only the contents change): header, System strip, model line, the terminal field (absorbs the
   // remaining height; the hero sits inside it top left, the VRAM margin header top right), detail rows,
   // request timeline / recent jobs, controls, console line.
   //   idle      - standby hero over the churning noise, the selected tier's configured values, Launch
-  //   loading   - the terminal prints in, startup % and steps in the hero, other tiers locked
+  //   loading   - the terminal prints in, startup % and steps in the hero
   //   live-llm  - the context fill as dim text, decode finds tokens at the tok/s rate, prefill sweeps
   //   live-img  - the noise settles into an ASCII picture step by step, recent jobs
   //   dormant   - (live, vram.dormant set) frozen amber; waking: it thaws as the VRAM comes back
   //   fault     - red glitch, the context dissolves, the hero shows the fault and the log tail
   // Controls keep their places: the primary button (Launch / Cancel / Stop / Restart after a fault), Restart
   // (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log after a fault).
-  import type { RequestRecord, Slot, ViewModel, Actions, LoadStep } from '../../lib/model/types';
+  import type { RequestRecord, ViewModel, Actions, LoadStep } from '../../lib/model/types';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
+  import { strip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
   import Field from './Field.svelte';
   import Lock from './Lock.svelte';
@@ -27,18 +31,23 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const sessionSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const sel = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  const kind = $derived(sessionSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (sel?.kind ?? 'llm')));
+  const sel = $derived(selectedSystem(vm) ?? undefined);
+  const tabs = $derived(tabsFor(vm));
+  const kind = $derived(sel?.kind ?? 'llm');
   const model = $derived(s?.model ?? sel?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const loading = $derived(phase === 'starting' || phase === 'loading');
   const busy = $derived(loading || phase === 'stopping');
   const faulted = $derived(phase === 'fault');
   const online = $derived(phase === 'live');
-  const selReady = $derived(sel?.availability === 'ready');
+  /** The launch control: with conflicts it reads "stop S1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, sel, { short: true }));
+  const idleWhy = $derived(idleState(sel));
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!sel && sel.controllable && !sel.external);
+  const heldWhy = $derived(sel?.external ? 'External server: it runs where it was started.' : !sel?.controllable ? 'This node does not allow launching.' : '');
   const frameless = $derived(!!vm.host?.frameless);
   const panel = $derived(vm.host?.panel?.available ? vm.host.panel : null);
   const panelTip = $derived(`Panel mode: show on the small screen${panel?.target ? ` (${panel.target})` : ''}`);
@@ -71,12 +80,12 @@
   const hero = $derived.by<Hero>(() => {
     if (!s) {
       const ls = vm.lastSession;
-      const unit = kind === 'image' ? 'steps' : 'tok/s';
-      if (!selReady) return { label: 'STANDBY', dir: '', value: '—', unit, sub: `${tierWord(sel?.label ?? '')} · ${sel?.reason ?? availabilityText(sel?.availability ?? 'unsupported')}`.toLowerCase(), tone: 'dim', subTone: 'amber' };
-      if (!ls) return { label: 'STANDBY', dir: 'pick a tier and launch', value: '—', unit, sub: 'nothing running', tone: 'dim' };
+      const unit = kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests';
+      if (idleWhy.warn || sel?.status === 'not-set') return { label: 'STANDBY', dir: '', value: '—', unit, sub: `${tierWord(sel?.label ?? '')} · ${sel?.reason ?? idleWhy.text}`.toLowerCase(), tone: 'dim', subTone: idleWhy.warn ? 'amber' : undefined };
+      if (!ls) return { label: 'STANDBY', dir: 'pick a System and launch', value: '—', unit, sub: 'nothing running', tone: 'dim' };
       const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} tok/s` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} s/image` : '';
       const end = ls.ended === 'fault' ? `fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
-      return { label: 'STANDBY', dir: 'pick a tier and launch', value: '—', unit, sub: `last ${ls.model.name.toLowerCase()}${speed} · ${end}`, tone: 'dim' };
+      return { label: 'STANDBY', dir: 'pick a System and launch', value: '—', unit, sub: `last ${ls.model.name.toLowerCase()}${speed} · ${end}`, tone: 'dim' };
     }
     if (faulted) {
       const tail = (fault?.logTail ?? []).slice(-5);
@@ -124,6 +133,17 @@
       const on = llm.activity === 'decode';
       return { label: 'DECODE', dir: on ? 'finding tokens in the noise' : 'idle', value: fmtTps(llm.decodeTps), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated`, tone: on ? '' : 'dim' };
     }
+    if (gen) {
+      const on = (gen.requestsInFlight ?? 0) > 0;
+      return {
+        label: KIND_LABEL[kind].toUpperCase(),
+        dir: on ? 'working on a request' : 'idle',
+        value: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—',
+        unit: 'requests',
+        sub: on ? `${gen.requestsInFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for the next request',
+        tone: on ? '' : 'dim',
+      };
+    }
     if (img) {
       if (img.activity === 'generating' && img.steps > 0)
         return {
@@ -151,6 +171,14 @@
         ['mode', model?.mode?.toLowerCase() ?? '—'],
       ];
     }
+    if (kind !== 'llm') {
+      return [
+        ['in flight', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+        ['last activity', gen?.lastActivityS !== undefined ? `${fmtDur(gen.lastActivityS)} ago` : '—'],
+        ['model', model?.name ? `${model.name.toLowerCase()}${model.quant ? ` · ${model.quant.toLowerCase()}` : ''}` : '—'],
+        ['reports', gen?.modelId?.toLowerCase() ?? '—'],
+      ];
+    }
     const pf = llm?.prefill;
     const total = llm?.context.totalTokens || model?.ctxTokens || 0;
     return [
@@ -169,10 +197,11 @@
   const jobs = $derived(img ? img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
   const maxJob = $derived(Math.max(1, ...jobs.map((j) => j.seconds)));
-  const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating')));
+  const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating') || (gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return ' · not running';
     if (loading) return kind === 'image' ? ' · no jobs yet' : ' · no requests yet';
+    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · failed' : ' · no per-request log for this kind';
     const n = kind === 'image' ? jobs.length : requests.length;
     const what = kind === 'image' ? 'jobs' : 'requests';
     if (faulted) {
@@ -190,7 +219,7 @@
   const statusTone = $derived(faulted ? 'red' : dz || loading ? 'amber' : s ? 'live' : 'off');
   const modelText = $derived(modelLine(model, kind));
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
-  const preview = $derived(!s && sel?.expectedVram?.length ? sel.expectedVram.reduce((a, l) => a + l.gib, 0) : null);
+  const preview = $derived(!s && sel?.expectedVram?.length && !sel.external ? sel.expectedVram.reduce((a, l) => a + l.gib, 0) : null);
   const previewTop = $derived(preview !== null ? Math.max(baselineOf(vm.vram), vm.vram.usedGiB) + preview : 0);
   const lowFree = $derived(!!s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB);
   const fieldLabel = $derived.by(() => {
@@ -226,33 +255,33 @@
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
   </header>
 
-  <!-- Tier strip: select; double-click launches while nothing runs or after a fault; locked while starting/stopping -->
-  <div class="tiers" role="tablist" aria-label="Tier">
-    {#each vm.slots as t, i (t.id)}
-      {@const selected = t.id === vm.selected}
-      {@const locked = busy && t.id !== s?.slot}
-      {@const na = t.availability !== 'ready'}
-      {@const running = !!s && s.slot === t.id && !faulted}
-      <button
-        class="tier"
-        class:sel={selected}
-        class:na
-        class:locked
-        class:fault={faulted && s?.slot === t.id}
-        role="tab"
-        aria-selected={selected}
-        disabled={locked}
-        title={locked ? `${t.label}: locked while ${s?.model.name ?? 'the session'} is ${phase}` : na ? `${t.label}: ${t.reason ?? availabilityText(t.availability)}` : `${t.label}: ${t.model.name}`}
-        onclick={() => actions.select(t.id)}
-        ondblclick={() => {
-          if ((!s || faulted) && !na) actions.launch(t.id);
-        }}
-      >
-        <span class="tk">[{i + 1}]</span><span class="tl">{t.label}</span>
-        {#if running}<span class="rn" class:amb={loading || !!dz}>▮</span>{:else if locked}<span class="lk">locked</span>{:else if na}<span class="nb">!</span>{/if}
-        <span class="tm">{na ? `${t.model.name} · ${availabilityText(t.availability)}`.toLowerCase() : `${t.model.name} · ${t.model.quant}`.toLowerCase()}</span>
-      </button>
-    {/each}
+  <!-- System strip: one tab per System, select (never stops anything); double-click launches one that is ready and has
+       nothing in its way. Scrolls sideways; + adds a System. -->
+  <div class="strip">
+    <div class="tiers" role="tablist" aria-label="Systems" use:strip={vm.selected}>
+      {#each tabs as t, i (t.id)}
+        {@const ts = t.system}
+        {@const selected = t.id === vm.selected}
+        {@const na = ts.availability !== 'ready' && ts.status !== 'not-set'}
+        <button
+          class="tier"
+          class:sel={selected}
+          class:na
+          class:fault={ts.status === 'fault'}
+          role="tab"
+          aria-selected={selected}
+          title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${ts.model.name || 'no preset'} (${ts.status}${ts.reason ? `: ${ts.reason}` : ''})`}
+          onclick={() => actions.select(t.id)}
+          ondblclick={() => {
+            if (canLaunch(ts) && ts.conflicts.length === 0) void actions.launch(ts.id).catch(() => {});
+          }}
+        >
+          <span class="tk">[{i + 1}]</span><span class="tl"><TabLabel tab={t} /></span>
+          <span class="tm">{ts.status === 'not-set' ? 'no preset' : ts.status === 'unreachable' ? `${t.nodeName ?? 'node'} unreachable` : na ? `${ts.model.name} · ${availabilityText(ts.availability)}`.toLowerCase() : `${ts.model.name} · ${ts.model.quant}`.toLowerCase()}</span>
+        </button>
+      {/each}
+    </div>
+    <button class="tier add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>+</button>
   </div>
 
   <div class="mline" class:dim={!s}><span class="pr">&gt;</span><span class="mt">{modelText}</span><span class="caret">█</span></div>
@@ -313,29 +342,33 @@
   </section>
 
   <footer class="ctrl">
-    <button class="chip" onclick={() => actions.copyEndpoint()} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
-      :{s?.endpoint.port ?? sel?.recipe?.port ?? '—'}{#if !online}<em>offline</em>{/if}
+    <button class="chip" onclick={() => actions.copyEndpoint(sel?.id)} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
+      :{s?.endpoint.port ?? sel?.command?.port ?? '—'}{#if !online}<em>offline</em>{/if}
     </button>
     <button class="chip" onclick={() => actions.copyApiKey()} disabled={!online || !s?.apiKeySet} title={s?.apiKeySet ? 'Copy API key' : 'No API key set'}>
       {#if s?.apiKeySet}•••••••<em>copy</em>{:else}no key{/if}
     </button>
     <span class="grow"></span>
-    {#if !s}
-      <button class="btn act go" onclick={() => actions.launch(vm.selected)} disabled={!selReady} title={selReady ? `Launch ${sel?.label ?? ''}` : `${sel?.label ?? ''}: ${sel?.reason ?? availabilityText(sel?.availability ?? 'unsupported')}`}>
-        ▶ launch {tierWord(sel?.label ?? '')}
+    {#if sel?.external}
+      <button class="btn act ext" disabled title={EXTERNAL_TITLE}>{EXTERNAL_NOTE.toLowerCase()}</button>
+    {:else if !s && isPendingLaunch(sel)}
+      <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={!canStop(sel)} title={sel?.reason ?? 'Cancel the launch'}>■ cancel</button>
+    {:else if !s}
+      <button class="btn act go" onclick={() => doLaunch(actions, sel, ctl)} disabled={!ctl.enabled} title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${sel?.reason ?? ''}` : `Launch ${sel?.label ?? ''}`) : `${sel?.label ?? ''}: ${ctl.blocked}`}>
+        ▶ {ctl.stopOthers ? ctl.text.toLowerCase() : `launch ${tierWord(sel?.label ?? '')}`}
       </button>
     {:else if faulted}
-      <button class="btn act hot" onclick={() => actions.restart()} title="Launch {sessionSlot?.label ?? ''} again">↻ restart {tierWord(sessionSlot?.label ?? '')}</button>
+      <button class="btn act hot" onclick={() => actions.restart(sel?.id)} disabled={!mine} title="Launch {sel?.label ?? ''} again">↻ restart {tierWord(sel?.label ?? '')}</button>
     {:else}
-      <button class="btn act stop" onclick={() => actions.stop()} disabled={phase === 'stopping'}>■ {loading ? 'cancel' : phase === 'stopping' ? 'stopping' : 'stop'}</button>
+      <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={phase === 'stopping' || !canStop(sel)} title={heldWhy}>■ {loading ? 'cancel' : phase === 'stopping' ? 'stopping' : 'stop'}</button>
     {/if}
     {#if faulted}
-      <button class="btn" onclick={() => actions.dismiss?.()} title="Back to the launcher">← dismiss</button>
+      <button class="btn" onclick={() => actions.dismiss(sel?.id)} disabled={!mine} title="Back to the launcher">← dismiss</button>
     {:else}
-      <button class="btn" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">↻ restart</button>
+      <button class="btn" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>↻ restart</button>
     {/if}
-    <button class="btn" onclick={() => actions.openTune(vm.selected)} title={s && s.slot === vm.selected && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}>≡ tune</button>
-    <button class="btn" onclick={() => actions.openEndpoint()} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>↗ {kind === 'image' ? 'web ui' : 'endpoint'}</button>
+    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>≡ tune</button>
+    <button class="btn" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>↗ {kind === 'image' ? 'web ui' : 'endpoint'}</button>
     <button class="btn" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>&gt;_ {faulted ? 'full log' : 'console'}</button>
   </footer>
   <button class="cline" class:hot={faulted} onclick={() => actions.toggleConsole(true)} title="Open console"><span class="pr">&gt;</span><span class="lt">{lastLine}</span></button>
@@ -517,12 +550,36 @@
     display: none;
   }
 
-  /* tiers */
-  .tiers {
+  /* System strip */
+  .strip {
     height: calc(var(--u) * 44);
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: var(--gap);
+    min-width: 0;
+  }
+  .tiers {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: var(--gap);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tiers::-webkit-scrollbar {
+    display: none;
+  }
+  .tiers .tier {
+    flex: 1 0 calc(var(--u) * 150);
+  }
+  .tier.add {
+    flex: none;
+    width: calc(var(--u) * 40);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    color: var(--arc);
+    font-size: calc(var(--u) * 18);
   }
   .tier {
     display: grid;
@@ -536,7 +593,7 @@
     text-align: left;
     min-width: 0;
   }
-  .tier:hover:not(.sel):not(:disabled) {
+  .tier:hover:not(.sel) {
     border-color: var(--rule2);
   }
   .tier .tk {
@@ -550,22 +607,6 @@
     letter-spacing: 0.1em;
     white-space: nowrap;
     overflow: hidden;
-  }
-  .tier .rn {
-    color: var(--arc);
-    animation: blink 1s steps(1) infinite;
-  }
-  .tier .rn.amb {
-    color: var(--amber);
-  }
-  .tier .lk,
-  .tier .nb {
-    font-size: var(--fs-xs);
-    letter-spacing: 0.08em;
-    color: var(--muted);
-  }
-  .tier .nb {
-    color: var(--amber);
   }
   .tier .tm {
     grid-column: 1 / -1;
@@ -586,16 +627,11 @@
   .tier.sel .tm {
     color: #7fa6cc;
   }
-  .tier.na .tl,
-  .tier.locked .tl {
+  .tier.na .tl {
     color: var(--muted);
   }
   .tier.na .tm {
     color: #a07a3e;
-  }
-  .tier.locked {
-    cursor: default;
-    opacity: 0.6;
   }
   .tier.fault {
     border-color: var(--red);
@@ -979,6 +1015,13 @@
     color: var(--muted);
     box-shadow: none;
     font-weight: 500;
+  }
+  .btn.ext,
+  .btn.ext:disabled {
+    opacity: 1;
+    background: transparent;
+    border-color: var(--rule2);
+    color: var(--muted);
   }
   .btn.stop {
     border-color: var(--red);

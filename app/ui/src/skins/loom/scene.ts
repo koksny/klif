@@ -807,6 +807,8 @@ export class LoomScene {
     if (s.llm?.activity === 'prefill') return 'prefill';
     if (s.llm?.activity === 'decode') return 'decode';
     if (s.image?.activity === 'generating') return 'denoise';
+    // Kinds without telemetry of their own (speech, transcription, video): a request in flight drives the tokens.
+    if ((s.generic?.requestsInFlight ?? 0) > 0) return 'decode';
     return 'idle';
   }
 
@@ -879,9 +881,9 @@ export class LoomScene {
 
   private spawn(dt: number, vm: ViewModel) {
     const s = vm.session;
-    if (this.mode === 'decode' && s?.llm) {
-      this.spawnAcc += Math.min(s.llm.decodeTps, SHOWN_TPS) * dt;
-      const accept = (s.llm.spec?.acceptancePct ?? 0) / 100;
+    if (this.mode === 'decode' && (s?.llm || s?.generic)) {
+      this.spawnAcc += (s.llm ? Math.min(s.llm.decodeTps, SHOWN_TPS) : 5) * dt;
+      const accept = (s.llm?.spec?.acceptancePct ?? 0) / 100;
       while (this.spawnAcc >= 1) {
         this.spawnAcc -= 1;
         if (this.draft.visible && this.r() < 0.4) {
@@ -1239,7 +1241,7 @@ export class LoomScene {
     m.opacity = (spill ? 0.6 + 0.4 * Math.sin(this.t * 8) : 0.9) * this.glow;
     (this.cylinder!.material as THREE.LineBasicMaterial).color.copy(spill ? RED.clone().multiplyScalar(0.5) : GHOST);
     // idle: the selected tier's expected fill, dashed (red when it would not fit)
-    const fit = !vm.session ? fitOf(vm.vram, vm.slots.find((x) => x.id === vm.selected)) : null;
+    const fit = !vm.session ? fitOf(vm.vram, vm.systems.find((x) => x.id === vm.selected)) : null;
     const fr = this.fitRing!;
     fr.visible = !!fit;
     if (fit) {

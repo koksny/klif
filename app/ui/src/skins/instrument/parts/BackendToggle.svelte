@@ -1,15 +1,15 @@
 <script lang="ts">
   // Two-position HIP | VULKAN toggle showing the backend of the running (or selected) model.
   // Full size: clicking opens the tune drawer (the backend is part of the recipe). Mini: indicator only.
-  import type { Backend } from '../../../lib/model/types';
-
   let {
     backend,
     variant = 'full',
     onclick,
-  }: { backend: Backend | null; variant?: 'full' | 'mini'; onclick?: () => void } = $props();
+  }: { backend: string | null; variant?: 'full' | 'mini'; onclick?: () => void } = $props();
 
-  const pos = $derived(backend === 'HIP' ? 'left' : backend === 'Vulkan' ? 'right' : 'mid');
+  // Compared case-insensitively; any other backend (CUDA, Metal, CPU, free text) rests in the middle and is named.
+  const low = $derived((backend ?? '').toLowerCase());
+  const pos = $derived(low === 'hip' ? 'left' : low === 'vulkan' ? 'right' : 'mid');
 </script>
 
 {#snippet track()}
@@ -29,12 +29,12 @@
       <span class:on={pos === 'left'}>HIP</span>
       <span class="bar">|</span>
       <span class:on={pos === 'right'}>VULKAN</span>
-      {#if backend === 'CPU'}<span class="on cpu">CPU</span>{/if}
+      {#if pos === 'mid' && backend}<span class="on cpu">{backend.toUpperCase()}</span>{/if}
     </div>
   </div>
 {:else}
   <div class="tog mini" role="img" aria-label="Backend {backend ?? 'none'}">
-    <span class="nm" class:on={pos === 'left'}>{backend === 'CPU' ? 'CPU' : 'HIP'}</span>
+    <span class="nm" class:on={pos === 'left' || pos === 'mid'}>{pos === 'mid' && backend ? backend.toUpperCase() : 'HIP'}</span>
     {@render track()}
     <span class="bar"></span>
     <span class="nm" class:on={pos === 'right'}>VULKAN</span>

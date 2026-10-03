@@ -1,5 +1,5 @@
 // Small geometry and text helpers shared by the Phosphor widgets.
-import type { Availability, GpuMemory, LastSession, ModelRef, Slot } from '../../lib/model/types';
+import type { Availability, GpuMemory, LastSession, ModelRef, System } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 
 export type Pt = [number, number];
@@ -100,12 +100,12 @@ export function recipeLine(m: ModelRef): string[] {
 
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 
-/** Why a slot cannot be launched, in words (undefined when it is ready). */
+/** Why a System cannot be launched, in words (undefined when it is ready). */
 export const AVAIL_TEXT: Record<string, string> = {
   unsupported: 'unsupported',
-  'script-missing': 'script missing',
+  invalid: 'needs fixing',
+  'exe-missing': 'program missing',
   'model-missing': 'model missing',
-  'build-required': 'build required',
   busy: 'port busy',
 };
 
@@ -115,8 +115,8 @@ export function availText(a: Availability): string {
 }
 
 /** The previous session as one line: label · uptime · counts · speed, from LastSession fields only. */
-export function lastSessionLine(ls: LastSession, slots: Slot[]): string {
-  const p: string[] = [slots.find((x) => x.id === ls.slot)?.label ?? ls.model.name, fmtDur(ls.uptimeS)];
+export function lastSessionLine(ls: LastSession, systems: System[]): string {
+  const p: string[] = [systems.find((x) => x.id === ls.system)?.label ?? ls.model.name, fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) p.push(`${fmtInt(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) p.push(`${fmtInt(ls.generatedTokens)} tok`);
   if (ls.decodeTps !== undefined) p.push(`${fmtTps(ls.decodeTps)} tok/s`);

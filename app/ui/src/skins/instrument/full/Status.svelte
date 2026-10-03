@@ -12,8 +12,9 @@
   //   dormant   (live, vram.dormant set) the last readings dimmed, the meters dark; a request waiting on the
   //             restore turns the prefill bar into the restore progress (amber)
   import type { ViewModel } from '../../../lib/model/types';
+  import { idleState, KIND_LABEL } from '../../../lib/model/systems';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../../lib/model/format';
-  import { availLabel, fmtAgo, fmtJobS, fmtKTok, fmtLeft, frac, kindOf, median, pointerSlot, sleepOf, slotById, viewOf } from '../theme';
+  import { fmtAgo, fmtJobS, fmtKTok, fmtLeft, frac, kindOf, median, pointerSlot, sleepOf, slotById, viewOf } from '../theme';
   import Drum from '../parts/Drum.svelte';
   import StepDrum from '../parts/StepDrum.svelte';
   import HistoryTrace from '../parts/HistoryTrace.svelte';
@@ -30,7 +31,9 @@
   const model = $derived(s?.model ?? slot?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
-  const ready = $derived(slot?.availability === 'ready');
+  const gen = $derived(s?.generic ?? null);
+  const idle = $derived(idleState(slot));
+  const genBusy = $derived(view === 'live-gen' && (gen?.requestsInFlight ?? 0) > 0);
 
   // ---- LLM ----------------------------------------------------------------------------------------------
   const pf = $derived(llm?.prefill ?? null);
@@ -51,7 +54,7 @@
     if (pf.etaS > 0 || pf.doneTokens < pf.tokens) return `${fmtKTok(pf.doneTokens)} / ${fmtKTok(pf.tokens)} tok · ${Math.round(pf.tps)} tok/s · ${fmtLeft(pf.etaS)} left`;
     return `${pf.tokens < 100000 ? fmtInt(pf.tokens) : fmtKTok(pf.tokens)} tok · ${Math.round(pf.tps)} tok/s · done in ${fmtLeft(pf.elapsedS)}`;
   });
-  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || slot?.recipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxFrac = $derived(llm ? frac(llm.context.usedTokens, llm.context.totalTokens) : 0);
 
   // ---- GPU dormant ----------------------------------------------------------------------------------------
@@ -84,14 +87,14 @@
   // ---- the word on a hero with nothing to measure ----------------------------------------------------------
   const word = $derived(
     view === 'idle'
-      ? ready
-        ? 'NOT RUNNING'
-        : `CANNOT LAUNCH · ${availLabel(slot?.availability ?? 'unsupported').toUpperCase()}`
+      ? idle.warn
+        ? `CANNOT LAUNCH · ${idle.text.toUpperCase()}`
+        : idle.text.toUpperCase()
       : view === 'stopping'
         ? `STOPPING · RELEASING ${fmtGiB(vm.vram.usedGiB)} GiB`
         : 'WAITING FOR DATA',
   );
-  const wordAmber = $derived(view === 'stopping' || (view === 'idle' && !ready));
+  const wordAmber = $derived(view === 'stopping' || (view === 'idle' && idle.warn));
 </script>
 
 <!-- A hero with nothing to measure (idle, stopping, no data yet): the kind's own plate, dimmed, with a word. -->
@@ -107,6 +110,18 @@
         <div class="pstats"><span class="word" class:amb={wordAmber}>{word}</span></div>
         <div class="pbar"><LedBar fraction={0} segments={32} label="Sampling progress" dark /></div>
         <span class="pcap">{img ? `${img.steps} sampling steps` : model?.imageSize ? `default size ${model.imageSize}` : ''}</span>
+      </div>
+    {:else if kind !== 'llm'}
+      <span class="lbl hl">{KIND_LABEL[kind].toUpperCase()}</span>
+      <div class="fig">
+        <div class="drum" style="--cells:3.62"><Drum value={0} intDigits={3} narrowLead blank /></div>
+        <span class="unit">req</span>
+      </div>
+      <span class="vsep"></span>
+      <div class="hr prog">
+        <div class="pstats"><span class="word" class:amb={wordAmber}>{word}</span></div>
+        <div class="pbar"><LedBar fraction={0} segments={32} label="Request in flight" dark /></div>
+        <span class="pcap">{model?.name ?? ''}</span>
       </div>
     {:else}
       <span class="lbl hl">DECODE</span>
@@ -205,6 +220,24 @@
           <span class="pcap">{generating ? `${img.width} × ${img.height} · ${img.edit ? 'edit job' : 'new image'} · ${img.steps} sampling steps` : `waiting for the next job · ${img.steps} sampling steps`}</span>
         </div>
       </section>
+    {:else if view === 'live-gen' && gen}
+      <section class="panel hero" class:quiet={!genBusy}>
+        <span class="lbl hl">{KIND_LABEL[kind].toUpperCase()}{genBusy ? ' · WORKING' : ''}</span>
+        <div class="fig">
+          <div class="drum" style="--cells:{String(gen.requestsTotal ?? 0).length + 1}"><Drum value={gen.requestsTotal ?? 0} intDigits={Math.max(3, String(gen.requestsTotal ?? 0).length)} narrowLead={(gen.requestsTotal ?? 0) < 100} /></div>
+          <span class="unit">req</span>
+        </div>
+        <span class="vsep"></span>
+        <div class="hr prog">
+          <div class="pstats">
+            <span>{#if genBusy}<b>{gen.requestsInFlight}</b> in flight{:else}waiting for the next request{/if}</span>
+            <span class="right">{gen.lastActivityS !== undefined ? `last activity ${fmtSeconds(gen.lastActivityS)} ago` : ''}</span>
+            <Led on={genBusy} size="calc(11 * var(--u))" title="a request is running" />
+          </div>
+          <div class="pbar"><LedBar fraction={genBusy ? 1 : 0} segments={32} label="Request in flight" dark={!genBusy} /></div>
+          <span class="pcap">{model?.name ?? ''}{model?.quant ? ` · ${model.quant}` : ''}{gen.modelId ? ` · reports ${gen.modelId}` : ''}</span>
+        </div>
+      </section>
     {:else if view === 'loading' && s}
       <section class="panel hero">
         <span class="lbl hl">STARTUP</span>
@@ -258,6 +291,21 @@
           <span class="v"><span class="t cfg">{model?.imageSize ?? '—'}</span></span>
           <span class="lbl k">MODE</span>
           <span class="v"><span class="t cfg">{model?.mode ?? '—'}</span></span>
+        </div>
+      </section>
+    {:else if kind !== 'llm'}
+      <section class="panel rows img" class:dim={!gen}>
+        <div class="row">
+          <span class="lbl k">IN FLIGHT</span>
+          <span class="v"><span class="t">{#if gen}<b>{fmtInt(gen.requestsInFlight ?? 0)}</b>{:else}—{/if}</span></span>
+          <span class="lbl k">LAST ACTIVITY</span>
+          <span class="v"><span class="t">{#if gen?.lastActivityS !== undefined}<b>{fmtSeconds(gen.lastActivityS)}</b> ago{:else}—{/if}</span></span>
+        </div>
+        <div class="row">
+          <span class="lbl k">MODEL</span>
+          <span class="v"><span class="t cfg">{model?.name ?? '—'}{model?.quant ? ` · ${model.quant}` : ''}</span></span>
+          <span class="lbl k">BACKEND</span>
+          <span class="v"><span class="t cfg">{model?.backend || model?.engine || '—'}</span></span>
         </div>
       </section>
     {:else}

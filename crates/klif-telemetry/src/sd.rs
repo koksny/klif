@@ -85,6 +85,8 @@ pub struct SdParser {
     pub any_line: bool,
     pub listening: Option<String>,
     pub device_detail: Option<String>,
+    /// The GPU the server runs on as it names it (starter banner, or the only ROCm device), for the device check.
+    pub device_name: Option<String>,
     job: Option<Job>,
     last_size: (u32, u32, bool),
     last_steps: u32,
@@ -122,6 +124,7 @@ impl SdParser {
             any_line: false,
             listening: None,
             device_detail: None,
+            device_name: None,
             job: None,
             last_size: (0, 0, false),
             last_steps: 0,
@@ -313,6 +316,7 @@ impl SdParser {
         }
         if let Some(c) = GPU_BANNER.captures(msg) {
             self.device_detail = Some(format!("{} · {}", &c[2], &c[3]));
+            self.device_name = Some(c[1].trim().to_string());
             self.steps.detail[1] = self.device_detail.clone();
             self.steps.reach(1);
             return;
@@ -330,6 +334,9 @@ impl SdParser {
         }
         if let Some(c) = E02.captures(msg) {
             // Exactly one visible device (HIP_VISIBLE_DEVICES with the gfx1201-only build): that one is it.
+            if self.device_name.is_none() && self.rocm_devices == Some(1) {
+                self.device_name = Some(c[2].trim().to_string());
+            }
             if self.device_detail.is_none() && self.rocm_devices == Some(1) {
                 let name = c[2].trim().trim_start_matches("AMD Radeon ").trim();
                 self.steps.detail[1] = Some(format!("{name} · ROCm{} · {}", &c[1], &c[3]));

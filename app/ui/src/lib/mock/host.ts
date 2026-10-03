@@ -4,7 +4,7 @@
 // `active` is filled in by the player from the layout actually shown (state/player.svelte.ts).
 import type { HostInfo } from '../model/types';
 
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 
 export function browserHost(frameless: boolean): HostInfo {
   return { kind: 'browser', frameless, maximized: false, appVersion: APP_VERSION, panel: { available: true, active: false, target: '960x640' } };

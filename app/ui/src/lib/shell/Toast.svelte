@@ -35,4 +35,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The small screen: a long engine sentence wraps to two lines instead of losing its end. */
+  :global(.stage[data-size='mini']) .toast {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    text-align: center;
+  }
 </style>

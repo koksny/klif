@@ -4,9 +4,12 @@
   import { tick } from 'svelte';
   import { fly } from 'svelte/transition';
   import { player } from '../state/player.svelte';
+  import { selectedSystem } from '../model/systems';
   import { ui } from '../state/ui.svelte';
 
   const lines = $derived(player.vm.console);
+  /** The console is the selected System's. */
+  const sys = $derived(selectedSystem(player.vm));
   let box = $state<HTMLDivElement | undefined>();
   let stick = $state(true);
 
@@ -52,7 +55,7 @@
 
 <div class="sheet" role="dialog" aria-label="Console" transition:fly|global={{ y: 340, duration: 220, opacity: 1 }}>
   <header>
-    <h2>Console</h2>
+    <h2>Console{#if sys}<span class="of"> · {sys.label}</span>{/if}</h2>
     <span class="count">{lines.length} / 200 lines</span>
     <span class="grow"></span>
     <button type="button" class="ghost" onclick={copyAll}>Copy</button>
@@ -165,5 +168,9 @@
   .jump:hover {
     color: var(--k-accent-ink, #0d1117);
     filter: brightness(1.08);
+  }
+  .of {
+    color: var(--k-muted);
+    font-weight: 400;
   }
 </style>

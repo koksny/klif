@@ -1,10 +1,11 @@
 // The hero card's content, shared by the full window and the mini panel. KLIF rules: idle = standby + the last
 // session; loading = % + the active step; prefill = % of the prompt (never "0.0 tok/s") + done / total + tok/s;
 // decode = tok/s; CGI = step / steps + s/it + size; GPU asleep = dimmed + paged-out GiB; fault = ERR + its title.
-import type { Slot, SlotKind, ViewModel } from '../../lib/model/types';
-import { fmtGiB, fmtInt, fmtSeconds, fmtTps, tierShort } from '../../lib/model/format';
+import type { System, SystemKind, ViewModel } from '../../lib/model/types';
+import { fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+import { idleState, KIND_LABEL, shortLabel as tierShort } from '../../lib/model/systems';
 import type { Sleep } from './sleep.svelte';
-import { availabilityText, fmtAgo, fmtDur, fmtEta, lastSessionShort, lastSessionText } from './text';
+import { fmtAgo, fmtDur, fmtEta, lastSessionShort, lastSessionText } from './text';
 
 export type Tone = '' | 'dim' | 'warn' | 'danger';
 
@@ -20,17 +21,19 @@ export interface Hero {
   log?: string[];
 }
 
-export function heroOf(vm: ViewModel, o: { kind: SlotKind; sel: Slot | undefined; dz: Sleep | null; waking: boolean; full: boolean }): Hero {
+export function heroOf(vm: ViewModel, o: { kind: SystemKind; sel: System | undefined; dz: Sleep | null; waking: boolean; full: boolean }): Hero {
   const s = vm.session;
   const base = { tone: '' as Tone, subTone: '' as const };
   const llm = s?.llm ?? null;
   const img = s?.image ?? null;
+  const gen = s?.generic ?? null;
   if (!s) {
-    const unit = o.kind === 'image' ? 'steps' : 'tok/s';
-    if (o.sel && o.sel.availability !== 'ready')
-      return { ...base, label: 'Standby', value: '—', unit, sub: `${tierShort(o.sel.label)} · ${(o.sel.reason ?? availabilityText(o.sel.availability)).toLowerCase()}`, tone: 'dim', subTone: 'warn' };
+    const unit = o.kind === 'image' ? 'steps' : o.kind === 'llm' ? 'tok/s' : 'requests';
+    const why = idleState(o.sel);
+    if (o.sel && (why.warn || o.sel.status === 'not-set'))
+      return { ...base, label: 'Standby', value: '—', unit, sub: `${tierShort(o.sel.label)} · ${(o.sel.reason ?? why.text).toLowerCase()}`, tone: 'dim', subTone: why.warn ? 'warn' : '' };
     const ls = vm.lastSession;
-    const sub = ls ? (o.full ? lastSessionText(ls, vm.slots) : lastSessionShort(ls, vm.slots)) : 'nothing running';
+    const sub = ls ? (o.full ? lastSessionText(ls, vm.systems) : lastSessionShort(ls, vm.systems)) : 'nothing running';
     return { ...base, label: 'Standby', value: '—', unit, sub, tone: 'dim' };
   }
   const phase = s.phase;
@@ -94,6 +97,18 @@ export function heroOf(vm: ViewModel, o: { kind: SlotKind; sel: Slot | undefined
   if (llm) {
     const on = llm.activity === 'decode';
     return { ...base, label: on ? 'Decode' : 'Decode · idle', value: fmtTps(llm.decodeTps), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated${on ? '' : ' · waiting for a request'}`, tone: on ? '' : 'dim' };
+  }
+  if (gen) {
+    const on = (gen.requestsInFlight ?? 0) > 0;
+    const name = KIND_LABEL[o.kind];
+    return {
+      ...base,
+      label: on ? `${name} · working` : `${name} · idle`,
+      value: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—',
+      unit: 'requests',
+      sub: on ? `${gen.requestsInFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for the next request',
+      tone: on ? '' : 'dim',
+    };
   }
   if (img) {
     if (img.activity === 'generating' && img.steps > 0)

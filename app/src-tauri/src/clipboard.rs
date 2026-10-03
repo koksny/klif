@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use tauri::{AppHandle, Runtime};
 use windows::core::w;
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND};
 use windows::Win32::System::DataExchange::{
@@ -50,6 +51,14 @@ unsafe fn set_bytes(format: u32, bytes: &[u8]) -> Result<(), String> {
         }
         Ok(())
     }
+}
+
+/// Copy `text` with the main window as the clipboard owner (the window handle is read here, so callers run
+/// this on the main thread). `secret` adds the "exclude from history" formats.
+pub fn copy<R: Runtime>(app: &AppHandle<R>, text: &str, secret: bool) -> Result<(), String> {
+    let w = crate::shell::main_window(app).ok_or("The window is gone.")?;
+    let hwnd = w.hwnd().map_err(|e| e.to_string())?;
+    copy_text(hwnd, text, secret)
 }
 
 /// Copy `text`. `secret` adds the "exclude from history / cloud / monitors" formats.

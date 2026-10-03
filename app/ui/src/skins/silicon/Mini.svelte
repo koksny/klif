@@ -2,19 +2,23 @@
   // Silicon, mini panel (960x640, read from 1 m). Read-only. A fixed 960x640 sheet scaled to fit, laid out
   // like the full window in miniature, and the same in every state (only the contents change):
   //   header      KLIF · status · uptime / elapsed
-  //   tier strip  the four tiers (selected, running, cannot launch, locked while starting)
-  //   model line  the running model, or the selected tier's
+  //   system strip  one tab per System with its status dot, scrolls sideways when it overflows
+  //   model line  the running model, or the selected System's
   //   die (left)  the GPU die; hero (right): one big figure with its label and a status line;
   //               rows (right): two fixed facts per kind (LLM: context, prefill; image: last image, images)
   //   VRAM strip  the 8-segment gauge at true scale, used / total (idle: the selected tier's fit)
   // A fault covers the hero and the rows. Dormant GPU: amber status, the last figure faded, paged-out
   // allocations hatched in the die and the gauge. Smallest text 24 px (labels), values 34 px and up.
   import type { Actions, ViewModel } from '../../lib/model/types';
-  import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps, tierShort } from '../../lib/model/format';
+  import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../lib/model/format';
+  import { EXTERNAL_TITLE, KIND_LABEL, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem, shortLabel, systemLabel } from '../../lib/model/systems';
+  import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import DieCanvas from './DieCanvas.svelte';
   import { held } from './held.svelte';
   import { useSleep } from './sleep.svelte';
-  import { availabilityText, baselineOf, fmtAgo, fmtDur, fmtEta } from './text';
+  import { baselineOf, fmtAgo, fmtDur, fmtEta } from './text';
 
   let { vm, actions }: { vm: ViewModel; actions?: Actions } = $props();
 
@@ -31,22 +35,24 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slot = $derived(vm.slots.find((x) => x.id === (s?.slot ?? vm.selected)));
-  const kind = $derived(slot?.kind ?? (s?.image ? 'image' : 'llm'));
+  const slot = $derived(selectedSystem(vm) ?? undefined);
+  const tabs = $derived(tabsFor(vm));
+  const kind = $derived(slot?.kind ?? 'llm');
   const model = $derived(s?.model ?? slot?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const liveLlm = $derived(!!s && phase === 'live' && kind === 'llm' && !!llm);
   const liveImg = $derived(!!s && phase === 'live' && kind === 'image' && !!img);
+  const liveGen = $derived(!!s && phase === 'live' && kind !== 'llm' && kind !== 'image' && !!gen);
   const idle = $derived(!s);
   const loading = $derived(!!s && (phase === 'starting' || phase === 'loading'));
   const faulted = $derived(!!s && phase === 'fault');
-  const busy = $derived(loading || phase === 'stopping');
 
   // During prefill the decode speed sits at 0 for minutes: the hero is the prefill progress.
   const prefilling = $derived(liveLlm && !!llm?.prefill && llm.activity === 'prefill');
   const tps = held(() => llm?.decodeTps ?? 0);
-  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || slot?.recipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? llm.context.usedTokens / llm.context.totalTokens : 0);
   const preFrac = $derived(prefilling && llm?.prefill && llm.prefill.tokens > 0 ? llm.prefill.doneTokens / llm.prefill.tokens : 0);
   const imgGen = $derived(liveImg && !!img && img.activity === 'generating' && img.steps > 0);
@@ -73,8 +79,8 @@
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
   });
 
-  // Tier strip: the short tier word ("SYSTEM 2" -> "S2").
-  const short = tierShort;
+  // System strip: the short label ("System 2" -> "S2").
+  const short = shortLabel;
 
   /** The model line: name · quant · context or size · mode. */
   const modelText = $derived.by(() => {
@@ -83,7 +89,7 @@
     if (model.ctxTokens) parts.push(fmtCtx(model.ctxTokens));
     if (model.imageSize) parts.push(model.imageSize);
     if (model.mode) parts.push(model.mode);
-    return parts.join(' · ');
+    return parts.filter(Boolean).join(' · ');
   });
 
   // ---- hero: label, figure + unit, status line --------------------------------------------------------
@@ -91,10 +97,11 @@
   const last = $derived(vm.lastSession);
   const lastText = $derived.by(() => {
     if (!last) return '';
-    const label = short(vm.slots.find((x) => x.id === last.slot)?.label ?? last.model.name);
+    const label = short(systemLabel(vm, last.system) || last.model.name);
     return `last ${label} · ${fmtDur(last.uptimeS)}${last.ended === 'fault' ? ' · fault' : ''} · ${fmtAgo(last.endedAgoS)}`;
   });
-  const ready = $derived(slot?.availability === 'ready');
+  const idleWhy = $derived(idleState(slot));
+  const kindLabel = $derived(kind === 'image' ? 'DIFFUSION STEP' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase());
   const hero = $derived.by<Hero>(() => {
     const base = { tone: '' as const, dim: false, lineTone: '' as const };
     if (dz) {
@@ -123,16 +130,27 @@
       if (imgGen) return { ...base, label: `DIFFUSION STEP${img.edit ? ' · EDIT' : ''}`, fig: String(img.step), unit: `/ ${img.steps}`, line: `${img.sPerIt.toFixed(2)} s/it · ${img.width}×${img.height}` };
       return { ...base, label: 'DIFFUSION STEP', fig: '—', unit: `/ ${img.steps}`, dim: true, line: 'waiting for the next job' };
     }
-    if (s) return { ...base, label: kind === 'image' ? 'DIFFUSION STEP' : 'DECODE SPEED', fig: '—', unit: '', dim: true, line: 'waiting for data' };
-    // Idle: the selected tier, not running.
+    if (liveGen && gen) {
+      const inFlight = gen.requestsInFlight ?? 0;
+      return {
+        ...base,
+        label: inFlight > 0 ? `${kindLabel} · WORKING` : kindLabel,
+        fig: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—',
+        unit: 'requests',
+        dim: inFlight === 0,
+        line: inFlight > 0 ? `${inFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for a request',
+      };
+    }
+    if (s) return { ...base, label: kindLabel, fig: '—', unit: '', dim: true, line: 'waiting for data' };
+    // Idle: the selected System, not running.
     return {
       ...base,
-      label: kind === 'image' ? 'DIFFUSION STEP' : 'DECODE SPEED',
+      label: kindLabel,
       fig: '—',
-      unit: kind === 'image' ? '' : 'tok/s',
+      unit: kind === 'llm' ? 'tok/s' : '',
       dim: true,
-      line: ready ? (lastText || 'not running') : (slot?.reason ?? availabilityText(slot?.availability ?? 'unsupported')),
-      lineTone: ready ? '' : 'amber',
+      line: idleWhy.warn || slot?.status === 'not-set' ? (slot?.reason ?? idleWhy.text) : lastText || idleWhy.text,
+      lineTone: idleWhy.warn ? 'amber' : '',
     };
   });
 
@@ -143,6 +161,12 @@
       return [
         { k: 'LAST IMAGE', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: lastJob?.edit ? 'edit' : '' },
         { k: 'IMAGES', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
+    if (kind !== 'llm') {
+      return [
+        { k: 'IN FLIGHT', v: gen ? fmtInt(gen.requestsInFlight ?? 0) : '—', sub: '' },
+        { k: 'LAST REQ', v: gen?.lastActivityS !== undefined ? fmtDur(gen.lastActivityS) : '—', sub: gen?.lastActivityS !== undefined ? 'ago' : '' },
       ];
     }
     const pf = llm?.prefill;
@@ -176,7 +200,7 @@
   const lowFree = $derived(!!s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB);
   // Idle: the selected tier's expected footprint on top of what is in use, hatched.
   const base = $derived(Math.max(baselineOf(vm.vram), vm.vram.usedGiB));
-  const expected = $derived(idle && slot?.expectedVram?.length ? slot.expectedVram.reduce((a, l) => a + l.gib, 0) : null);
+  const expected = $derived(idle && slot?.expectedVram?.length && !slot.external ? slot.expectedVram.reduce((a, l) => a + l.gib, 0) : null);
   const spare = $derived(expected !== null ? vm.vram.totalGiB - base - expected : 0);
   const ghost = $derived(expected !== null ? { x0: fx(base), x1: fx(base + expected), over: spare < 0 } : null);
   const vramText = $derived.by(() => {
@@ -185,19 +209,41 @@
     if (dz) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: lowFree ? 'amber' : '' };
   });
-  // The panel's one control, in the header: Launch the selected tier (idle), Cancel (loading), Stop (live),
-  // Restart (fault). A tier is picked on the strip while nothing runs.
+  // The panel's one control, in the header: Launch the selected System (idle; with conflicts it reads
+  // "STOP S1 & LAUNCH" and stops them first), Cancel (loading), Stop (live), Restart (fault). Systems are picked
+  // on the strip at any time: selecting never stops anything.
   const act = $derived.by(() => {
     const ph = vm.session?.phase;
-    const pick = vm.slots.find((x) => x.id === vm.selected);
-    if (!ph) {
-      const ok = pick?.availability === 'ready';
-      const word = tierShort(pick?.label ?? '');
-      return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
+    const pick = slot;
+    const mine = !!pick && pick.controllable && !pick.external;
+    // An external server: a quiet note, never Launch / Stop (KLIF only watches it). A launch that waits for
+    // other Systems to stop (starting, no session yet): Cancel.
+    if (pick?.external) return { kind: 'ext', text: 'EXTERNAL SERVER', title: EXTERNAL_TITLE, disabled: true, run: () => {} };
+    if (!ph && isPendingLaunch(pick)) {
+      return { kind: 'stop', text: 'CANCEL', title: pick?.reason ?? 'Cancel the launch', disabled: !canStop(pick), run: () => void actions?.stop(pick?.id) };
     }
-    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };
+    if (!ph) {
+      const ctl = launchCtl(vm, pick, { short: true });
+      const word = short(pick?.label ?? '');
+      return {
+        kind: 'go',
+        text: ctl.stopOthers ? ctl.text.toUpperCase() : `LAUNCH ${word}`,
+        title: ctl.enabled ? (ctl.stopOthers ? ctl.text : `Launch ${pick?.label ?? ''}`) : `${pick?.label ?? ''} cannot launch: ${ctl.blocked}`,
+        disabled: !ctl.enabled,
+        run: () => {
+          if (actions) doLaunch(actions, pick, ctl);
+        },
+      };
+    }
+    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the System that failed', disabled: !mine, run: () => void actions?.restart(pick?.id) };
     if (ph === 'stopping') return { kind: 'stop', text: 'STOPPING', title: 'Stopping', disabled: true, run: () => {} };
-    return { kind: 'stop', text: ph === 'live' ? 'STOP' : 'CANCEL', title: ph === 'live' ? 'Stop the server' : 'Cancel the launch', disabled: false, run: () => actions?.stop() };
+    return {
+      kind: 'stop',
+      text: ph === 'live' ? 'STOP' : 'CANCEL',
+      title: !canStop(pick) ? 'External server: it runs where it was started' : ph === 'live' ? 'Stop the server' : 'Cancel the launch',
+      disabled: !canStop(pick),
+      run: () => void actions?.stop(pick?.id),
+    };
   });
 </script>
 
@@ -224,16 +270,13 @@
       {/if}
     </div>
 
-    <!-- Tier strip -->
-    <div class="tiers">
-      {#each vm.slots as t (t.id)}
-        {@const sel = t.id === (s?.slot ?? vm.selected)}
-        {@const na = t.availability !== 'ready'}
-        {@const running = !!s && s.slot === t.id && !faulted}
-        <button type="button" class="tier" class:sel class:na class:locked={busy && !running} class:fault={faulted && s?.slot === t.id} aria-disabled={!!vm.session} onclick={() => {
-          if (!vm.session) actions?.select(t.id);
-        }}>
-          <i class="td" class:run={running} class:bad={na}></i>{short(t.label)}
+    <!-- System strip -->
+    <div class="tiers" use:scrollStrip={vm.selected}>
+      {#each tabs as t (t.id)}
+        {@const sel = t.id === vm.selected}
+        {@const na = t.system.status === 'invalid' || t.system.status === 'unreachable'}
+        <button type="button" class="tier" class:sel class:na class:fault={t.status === 'fault'} data-sel={sel} onclick={() => void actions?.select(t.id)}>
+          <TabLabel tab={t} short dotSize={12} />
         </button>
       {/each}
     </div>
@@ -441,8 +484,12 @@
     top: 72px;
     height: 56px;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(150px, 1fr);
     gap: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
   .tier {
     display: flex;
@@ -465,40 +512,13 @@
     background: linear-gradient(180deg, #11263a, #0f1d29);
     color: #f4faff;
   }
-  .tier.na,
-  .tier.locked {
+  .tier.na {
     color: #6c7f8d;
-  }
-  .tier.locked {
-    border-color: #26333d;
   }
   .tier.fault {
     border-color: var(--red);
     background: linear-gradient(180deg, #2a1410, #1a100e);
   }
-  .td {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #4fd6a4;
-    flex: none;
-  }
-  .td.bad {
-    background: transparent;
-    box-shadow: inset 0 0 0 2px var(--amber);
-  }
-  .td.run {
-    background: var(--cyan);
-    box-shadow: 0 0 0 4px rgba(90, 182, 235, 0.25);
-  }
-  .tier.locked .td:not(.run) {
-    background: #3a4a56;
-  }
-  .tier.fault .td {
-    background: var(--red);
-    box-shadow: none;
-  }
-
   /* Model line: 138..178 */
   .mline {
     left: 24px;
@@ -827,6 +847,18 @@
     border-color: var(--red);
     color: var(--red);
   }
+  /* An external server: a quiet note in the control's place. */
+  .act.ext,
+  .act.ext:disabled {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--muted);
+    opacity: 1;
+    box-shadow: none;
+  }
+  .act.ext svg {
+    display: none;
+  }
   .act.hot {
     background: var(--red);
     border-color: var(--red);
@@ -849,8 +881,5 @@
     font-family: inherit;
     text-align: left;
     cursor: pointer;
-  }
-  button.tier[aria-disabled='true'] {
-    cursor: default;
   }
 </style>

@@ -2,16 +2,20 @@
   // Ether, mini panel (a small 960x640 status screen, read from ~1 m). The cloud fills the whole window; the HUD
   // is a fixed 960x640 sheet scaled to fit, the same in every state (only the contents change):
   //   header      KLIF · ETHER · status · clock or version · Launch / Cancel / Stop / Restart (one width)
-  //   tier chips  S1 · S2 · S3 · CGI (select while nothing runs)
-  //   model line  the running model, or the selected tier's
+  //   system chips one per System with its status dot (select at any time; scrolls sideways when it overflows)
+  //   model line  the running model, or the selected System's
   //   hero        (right) label, one big figure + unit, a sub-line, progress, two facts
   //   VRAM        a hairline with the gradient fill (idle: the selected tier's fit)
   import type { Actions, ViewModel } from '../../lib/model/types';
-  import { fmtClock, fmtGiB, tierShort } from '../../lib/model/format';
+  import { fmtClock, fmtGiB } from '../../lib/model/format';
+  import { EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl, selectedSystem, shortLabel as tierShort } from '../../lib/model/systems';
+  import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import Cloud from './Cloud.svelte';
   import { factsOf, heroOf, type Ctx } from './hero';
   import { held, useSleep } from './state.svelte';
-  import { availabilityText, fitOf, modelCompact } from './text';
+  import { fitOf, modelCompact } from './text';
 
   let { vm, actions }: { vm: ViewModel; actions?: Actions } = $props();
 
@@ -28,9 +32,9 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const sel = $derived(vm.slots.find((x) => x.id === vm.selected) ?? vm.slots[0]);
-  const runSlot = $derived(s ? vm.slots.find((x) => x.id === s.slot) : undefined);
-  const kind = $derived(runSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (sel?.kind ?? 'llm')));
+  const sel = $derived(selectedSystem(vm) ?? undefined);
+  const tabs = $derived(tabsFor(vm));
+  const kind = $derived(sel?.kind ?? 'llm');
   const model = $derived(s?.model ?? sel?.model);
   const loading = $derived(phase === 'starting' || phase === 'loading');
   const busy = $derived(loading || phase === 'stopping');
@@ -63,21 +67,41 @@
     return { t: '', tone: '' };
   });
 
-  // The panel's one control: Launch the selected tier (idle), Cancel (loading), Stop (live), Restart (fault).
+  // The panel's one control, in the header: Launch the selected System (idle; with conflicts it reads
+  // "STOP S1 & LAUNCH" and stops them first), Cancel (loading), Stop (live), Restart (fault). Systems are picked
+  // on the strip at any time: selecting never stops anything.
   const act = $derived.by(() => {
-    if (!s) {
-      const ok = sel?.availability === 'ready';
+    const ph = vm.session?.phase;
+    const pick = sel;
+    const mine = !!pick && pick.controllable && !pick.external;
+    // An external server: a quiet note, never Launch / Stop (KLIF only watches it). A launch that waits for
+    // other Systems to stop (starting, no session yet): Cancel.
+    if (pick?.external) return { kind: 'ext', text: 'External', title: EXTERNAL_TITLE, disabled: true, run: () => {} };
+    if (!ph && isPendingLaunch(pick)) {
+      return { kind: 'stop', text: 'Cancel', title: pick?.reason ?? 'Cancel the launch', disabled: !canStop(pick), run: () => void actions?.stop(pick?.id) };
+    }
+    if (!ph) {
+      const ctl = launchCtl(vm, pick, { short: true });
+      const word = tierShort(pick?.label ?? '');
       return {
         kind: 'go',
-        text: `Launch ${tierShort(sel?.label ?? '')}`,
-        title: ok ? `Launch ${sel?.label ?? ''}` : `${sel?.label ?? ''}: ${sel?.reason ?? availabilityText(sel?.availability ?? 'unsupported')}`,
-        disabled: !ok,
-        run: () => actions?.launch(vm.selected),
+        text: ctl.stopOthers ? ctl.text : `Launch ${word}`,
+        title: ctl.enabled ? (ctl.stopOthers ? ctl.text : `Launch ${pick?.label ?? ''}`) : `${pick?.label ?? ''} cannot launch: ${ctl.blocked}`,
+        disabled: !ctl.enabled,
+        run: () => {
+          if (actions) doLaunch(actions, pick, ctl);
+        },
       };
     }
-    if (faulted) return { kind: 'hot', text: 'Restart', title: `Launch ${runSlot?.label ?? 'the tier'} again`, disabled: false, run: () => actions?.restart() };
-    if (phase === 'stopping') return { kind: 'stop', text: 'Stopping', title: 'Stopping', disabled: true, run: () => {} };
-    return { kind: 'stop', text: phase === 'live' ? 'Stop' : 'Cancel', title: phase === 'live' ? 'Stop the server' : 'Cancel the launch', disabled: false, run: () => actions?.stop() };
+    if (ph === 'fault') return { kind: 'hot', text: 'Restart', title: 'Restart the System that failed', disabled: !mine, run: () => void actions?.restart(pick?.id) };
+    if (ph === 'stopping') return { kind: 'stop', text: 'Stopping', title: 'Stopping', disabled: true, run: () => {} };
+    return {
+      kind: 'stop',
+      text: ph === 'live' ? 'Stop' : 'Cancel',
+      title: !canStop(pick) ? 'External server: it runs where it was started' : ph === 'live' ? 'Stop the server' : 'Cancel the launch',
+      disabled: !canStop(pick),
+      run: () => void actions?.stop(pick?.id),
+    };
   });
 </script>
 
@@ -99,23 +123,19 @@
       <button class="act {act.kind}" type="button" disabled={act.disabled || !actions} onclick={act.run} title={act.title}>{act.text}</button>
     </header>
 
-    <nav class="tiers" aria-label="Tier">
-      {#each vm.slots as t (t.id)}
-        {@const running = !!s && s.slot === t.id}
+    <nav class="tiers" aria-label="Systems" use:scrollStrip={vm.selected}>
+      {#each tabs as t (t.id)}
         <button
           type="button"
           class="tier"
           class:sel={t.id === vm.selected}
-          class:na={t.availability !== 'ready'}
-          class:held={!!s && !running}
+          class:na={t.system.availability !== 'ready' && t.system.status !== 'not-set'}
           aria-pressed={t.id === vm.selected}
-          aria-disabled={!!s}
-          title={t.availability !== 'ready' ? `${t.label}: ${t.reason ?? availabilityText(t.availability)}` : `${t.label}: ${t.model.name}`}
-          onclick={() => {
-            if (!vm.session) actions?.select(t.id);
-          }}
+          data-sel={t.id === vm.selected}
+          title={`${t.label}: ${t.system.model.name || 'no preset'} (${t.status})`}
+          onclick={() => void actions?.select(t.id)}
         >
-          {tierShort(t.label)}{#if running}<i class="rn" class:red={faulted} class:dim={!!dz}></i>{/if}
+          <TabLabel tab={t} short dotSize={7} />
         </button>
       {/each}
     </nav>
@@ -327,6 +347,18 @@
   .act.stop {
     background: rgba(0, 0, 0, 0.4);
   }
+  /* An external server: a quiet note in the control's place. */
+  .act.ext,
+  .act.ext:disabled {
+    background: transparent;
+    border-color: var(--faint);
+    color: var(--muted);
+    opacity: 1;
+    box-shadow: none;
+  }
+  .act.ext::before {
+    background: var(--faint);
+  }
   .act.hot {
     background: rgba(255, 84, 112, 0.16);
   }
@@ -364,11 +396,16 @@
   .tiers {
     position: absolute;
     left: 28px;
+    right: 28px;
     top: 70px;
     display: flex;
     gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
   .tier {
+    flex: none;
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -398,32 +435,11 @@
   .tier.sel::after {
     opacity: 1;
   }
-  .tier.held {
-    opacity: 0.55;
-  }
   .tier.na {
     opacity: 0.4;
   }
-  .tier[aria-disabled='true'] {
-    cursor: default;
-  }
-  .tier:not([aria-disabled='true']):not(.sel):hover {
+  .tier:not(.sel):hover {
     color: var(--text);
-  }
-  .tier .rn {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--mag);
-    box-shadow: 0 0 7px var(--mag);
-  }
-  .tier .rn.dim {
-    background: var(--muted);
-    box-shadow: none;
-  }
-  .tier .rn.red {
-    background: var(--danger);
-    box-shadow: 0 0 7px var(--danger);
   }
   .mline {
     position: absolute;

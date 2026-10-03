@@ -5,13 +5,17 @@
   //   corners     the viewfinder brackets at the panel edges (red in a fault)
   //   top         REC state · timecode
   //   header      KLIF · SPIRIT · Launch / Cancel / Stop / Restart (one fixed width)
-  //   tiers       S1 · S2 · S3 · CGI (select while nothing runs)
-  //   model       the running model, or the selected tier's, and its shape
+  //   systems     one chip per System with its status dot (select any time; scrolls sideways)
+  //   model       the running model, or the selected System's, and its shape
   //   hero        (right) label, one big figure + unit, a status line
   //   bottom      the settings line, the battery (VRAM), the exposure meter
   // Smallest text 20 px, values 26 px and up.
   import type { Actions, ViewModel } from '../../lib/model/types';
   import { fmtTps } from '../../lib/model/format';
+  import { systemLabel } from '../../lib/model/systems';
+  import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import Battery from './Battery.svelte';
   import Ic from './Ic.svelte';
   import Meter from './Meter.svelte';
@@ -34,10 +38,11 @@
 
   const o = useOsd(
     () => vm,
-    (id) => actions?.launch(id),
-    () => actions?.stop(),
-    () => actions?.restart(),
+    (id, stopOthers) => void actions?.launch(id, stopOthers ? { stopOthers: true } : undefined).catch(() => {}),
+    (id) => void actions?.stop(id).catch(() => {}),
+    (id) => void actions?.restart(id).catch(() => {}),
   );
+  const tabs = $derived(tabsFor(vm));
   const s = $derived(o.s);
   const faulted = $derived(o.faulted);
   const canLeave = $derived(!!(vm.host?.panel?.available || vm.host?.panel?.active));
@@ -48,7 +53,7 @@
   const sub = $derived.by(() => {
     const ls = vm.lastSession;
     if (s || !o.selReady || !ls) return o.hero.sub;
-    const tier = vm.slots.find((x) => x.id === ls.slot)?.label;
+    const tier = systemLabel(vm, ls.system) || undefined;
     const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} TOK/S` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} S/IMG` : '';
     return `LAST ${tier ? short(tier) : ls.model.name.toUpperCase()}${speed} · ${ls.ended === 'fault' ? 'FAULT' : 'STOPPED'} ${fmtAgo(ls.endedAgoS)}`;
   });
@@ -70,7 +75,7 @@
       <span class="wm">KLIF</span><span class="vbar"></span><span class="sk">SPIRIT</span>
       <span class="grow"></span>
       <button class="act {o.act.kind}" type="button" onclick={o.act.run} disabled={o.act.disabled || !actions} title={o.act.title}>
-        <span class="g" class:red={o.act.red}><Ic kind={o.act.glyph} /></span>{o.act.kind === 'go' ? o.act.text : o.act.text.replace(/ \S+$/, '')}
+        <span class="g" class:red={o.act.red}><Ic kind={o.act.glyph} /></span>{o.act.kind === 'go' ? o.act.text : o.act.kind === 'ext' ? 'EXTERNAL' : o.act.text.replace(/ \S+$/, '')}
       </button>
       {#if canLeave}
         <button class="back" type="button" onclick={() => actions?.togglePanel()} title="Leave panel mode" aria-label="Leave panel mode">
@@ -79,25 +84,23 @@
       {/if}
     </div>
 
-    <!-- Tiers -->
-    <div class="tiers" role="tablist" aria-label="Tier">
-      {#each vm.slots as t (t.id)}
-        {@const running = !!s && s.slot === t.id && !faulted}
-        {@const locked = !!s && !faulted}
+    <!-- Systems -->
+    <div class="tiers" role="tablist" aria-label="Systems" use:scrollStrip={vm.selected}>
+      {#each tabs as t (t.id)}
         <button
           type="button"
           class="tier"
           class:sel={t.id === vm.selected}
-          class:na={t.availability !== 'ready'}
-          class:flt={faulted && s?.slot === t.id}
+          class:na={t.system.availability !== 'ready' && t.system.status !== 'not-set'}
+          class:flt={t.status === 'fault'}
           role="tab"
           aria-selected={t.id === vm.selected}
-          aria-disabled={locked}
-          title={t.label}
-          onclick={() => {
-            if (!locked) actions?.select(t.id);
-          }}>{short(t.label)}{#if running}<span class="rn" class:hold={o.loading || !!o.dz}><Ic kind="dot" /></span>{/if}</button
+          data-sel={t.id === vm.selected}
+          title={`${t.label}: ${t.system.model.name || 'no preset'} (${t.status})`}
+          onclick={() => void actions?.select(t.id)}
         >
+          <TabLabel tab={t} short dotSize={9} />
+        </button>
       {/each}
     </div>
 
@@ -410,11 +413,16 @@
   .tiers {
     position: absolute;
     left: 38px;
+    right: 38px;
     top: 140px;
     display: flex;
     gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
   .tier {
+    flex: none;
     display: inline-flex;
     align-items: center;
     gap: 9px;
@@ -424,9 +432,6 @@
     font-weight: 500;
     letter-spacing: 0.1em;
     white-space: nowrap;
-  }
-  .tier[aria-disabled='true'] {
-    cursor: default;
   }
   .tier.sel {
     background: var(--ink);
@@ -443,18 +448,6 @@
     background: var(--red);
     color: #140202;
   }
-  .rn {
-    display: inline-flex;
-    font-size: 16px;
-    color: var(--cyan);
-  }
-  .tier.sel .rn {
-    color: #0077a8;
-  }
-  .rn.hold {
-    color: var(--muted);
-  }
-
   /* Model line and shape: 192..250 */
   .mline {
     position: absolute;

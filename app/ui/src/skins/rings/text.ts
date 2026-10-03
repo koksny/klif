@@ -1,18 +1,19 @@
 // Rings text helpers: display strings derived from ViewModel fields (never invented values).
-import type { Availability, GpuMemory, LastSession, ModelRef, Phase, Slot, SlotKind } from '../../lib/model/types';
-import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
+import type { Availability, GpuMemory, LastSession, ModelRef, Phase, System, SystemKind } from '../../lib/model/types';
+import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { shortLabel as tierShort } from '../../lib/model/systems';
 
-/** Why a slot cannot launch, in plain words. */
+/** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
   switch (a) {
     case 'ready':
       return 'ready';
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
+    case 'invalid':
+      return 'needs fixing';
     case 'unsupported':
       return 'unsupported';
     case 'busy':
@@ -49,19 +50,19 @@ export function baselineOf(vram: GpuMemory): number {
 }
 
 /** The selected tier's expected footprint on top of what is in use (idle fit preview), or null. */
-export function fitOf(vram: GpuMemory, slot: Slot | undefined): { base: number; top: number; spare: number } | null {
-  if (!slot?.expectedVram?.length) return null;
+export function fitOf(vram: GpuMemory, slot: System | undefined): { base: number; top: number; spare: number } | null {
+  if (!slot?.expectedVram?.length || slot.external) return null;
   const base = Math.max(baselineOf(vram), vram.usedGiB);
   const top = base + slot.expectedVram.reduce((a, l) => a + l.gib, 0);
   return { base, top, spare: vram.totalGiB - top };
 }
 
 /** The model line: "Qwen 3.8 27B · GSQ-RCO IQ3_S · HIP · RX 9070 XT · ctx 96k · kv q8_0". The name is separate. */
-export function modelRest(m: ModelRef | undefined, kind: SlotKind): string {
+export function modelRest(m: ModelRef | undefined, kind: SystemKind): string {
   if (!m) return '';
   const parts: (string | undefined | false)[] = [
     m.quant,
-    kind === 'image' && m.engine,
+    kind !== 'llm' && m.engine,
     m.backend,
     m.device,
     m.ctxTokens ? `ctx ${fmtCtx(m.ctxTokens)}` : m.imageSize,
@@ -79,8 +80,9 @@ export function modelShort(m: ModelRef | undefined): string {
 }
 
 /** The model's shape as the server reported it: "48 layers · 10+1 of 512 experts" (compact: no "experts"), "64 layers · dense". */
-export function shapeText(m: ModelRef | undefined, kind: SlotKind, compact = false): string {
+export function shapeText(m: ModelRef | undefined, kind: SystemKind, compact = false): string {
   const a = m?.arch;
+  if (kind !== 'llm' && kind !== 'image') return m?.backend || m?.engine || '—';
   if (kind === 'image') return a && a.layers > 0 ? `${a.layers} blocks · dit` : `dit · ${m?.engine ?? 'blocks not reported'}`;
   if (!a || a.layers <= 0) return 'shape after first load';
   if (a.experts > 0) return `${a.layers} layers · ${a.expertsUsed}${a.sharedExperts ? `+${a.sharedExperts}` : ''} of ${fmtInt(a.experts)}${compact ? '' : ' experts'}`;
@@ -88,8 +90,8 @@ export function shapeText(m: ModelRef | undefined, kind: SlotKind, compact = fal
 }
 
 /** "last s2 · 2 h 14 min · 412 requests · 38.1 tok/s · stopped 12 min ago" */
-export function lastSessionText(ls: LastSession, slots: Slot[]): string {
-  const label = slots.find((x) => x.id === ls.slot)?.label;
+export function lastSessionText(ls: LastSession, systems: System[]): string {
+  const label = systems.find((x) => x.id === ls.system)?.label;
   const facts = [fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) facts.push(`${fmtInt(ls.requests)} requests`);
   if (ls.decodeTps !== undefined) facts.push(`${fmtTps(ls.decodeTps)} tok/s`);
@@ -100,8 +102,8 @@ export function lastSessionText(ls: LastSession, slots: Slot[]): string {
 }
 
 /** "last s2 · stopped 21 min ago" */
-export function lastSessionShort(ls: LastSession, slots: Slot[]): string {
-  const label = slots.find((x) => x.id === ls.slot)?.label;
+export function lastSessionShort(ls: LastSession, systems: System[]): string {
+  const label = systems.find((x) => x.id === ls.system)?.label;
   return `last ${label ? tierShort(label) : ls.model.name} · ${ls.ended === 'fault' ? 'fault' : 'stopped'} ${fmtAgo(ls.endedAgoS)}`;
 }
 

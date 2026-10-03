@@ -1,18 +1,19 @@
 // Decode text helpers: display strings derived from ViewModel fields (never invented values).
-import type { Availability, GpuMemory, ModelRef, Phase, SlotKind } from '../../lib/model/types';
-import { fmtCtx, tierShort } from '../../lib/model/format';
+import type { Availability, GpuMemory, ModelRef, Phase, SystemKind } from '../../lib/model/types';
+import { fmtCtx } from '../../lib/model/format';
+import { shortLabel as tierShort } from '../../lib/model/systems';
 
-/** Why a slot cannot launch, in plain words. */
+/** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
   switch (a) {
     case 'ready':
       return 'ready';
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
+    case 'invalid':
+      return 'needs fixing';
     case 'unsupported':
       return 'unsupported';
     case 'busy':
@@ -54,12 +55,12 @@ export function tierWord(label: string): string {
 }
 
 /** The terminal model line: name · quant · backend · device · ctx or size · kv · vision · mode (lower case). */
-export function modelLine(m: ModelRef | undefined, kind: SlotKind): string {
+export function modelLine(m: ModelRef | undefined, kind: SystemKind): string {
   if (!m) return '';
   const parts: (string | undefined | false)[] = [
     m.name,
     m.quant,
-    kind === 'image' && m.engine,
+    kind !== 'llm' && m.engine,
     m.backend,
     m.device,
     m.ctxTokens ? `ctx ${fmtCtx(m.ctxTokens)}` : m.imageSize,

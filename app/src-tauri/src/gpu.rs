@@ -3,13 +3,11 @@
 //! silently falls back to WARP, so it must be checked).
 //!
 //! Adapters are matched by PCI "VEN:DEV" (LUIDs change every boot). Resolution goes through
-//! `klif_telemetry::find_adapter`; the `stub-engine` build uses the local DXGI enumeration below so it does
-//! not depend on unfinished crates. The local enumeration is also used to name whatever adapter the GPU
-//! process was found on (including the software renderer).
+//! `klif_telemetry::find_adapter`. The local DXGI enumeration below names whatever adapter the GPU process was
+//! found on (including the software renderer).
 
 use klif_common::config::Config;
-pub use klif_telemetry::Adapter;
-use serde::Serialize;
+use klif_telemetry::Adapter;
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND,
@@ -18,6 +16,8 @@ use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
     PDH_FMT, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
 };
+
+use crate::shell::GpuReport;
 
 /// wry's own default browser arguments, which it applies ONLY when no arguments are set. Re-appended here.
 pub const WRY_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
@@ -69,6 +69,13 @@ pub fn dxgi_adapters() -> Vec<DxgiAdapter> {
     out
 }
 
+/// One log line per DXGI adapter (startup diagnostics).
+pub fn log_adapters() {
+    for a in dxgi_adapters() {
+        log::info!("adapter {}{}", describe(&a.adapter), if a.software { " (software)" } else { "" });
+    }
+}
+
 /// "VEN:DEV" (hex, optional 0x prefixes) -> (vendor, device).
 pub fn parse_pci(s: &str) -> Option<(u32, u32)> {
     let (v, d) = s.trim().split_once(':')?;
@@ -80,24 +87,8 @@ pub fn parse_pci(s: &str) -> Option<(u32, u32)> {
     Some((hex(v)?, hex(d)?))
 }
 
-#[cfg_attr(not(feature = "stub-engine"), allow(dead_code))]
-fn find_local(pci: &str) -> Option<Adapter> {
-    let (v, d) = parse_pci(pci)?;
-    dxgi_adapters()
-        .into_iter()
-        .find(|a| !a.software && a.adapter.vendor_id == v && a.adapter.device_id == d)
-        .map(|a| a.adapter)
-}
-
 fn find_adapter(pci: &str) -> Option<Adapter> {
-    #[cfg(feature = "stub-engine")]
-    {
-        find_local(pci)
-    }
-    #[cfg(not(feature = "stub-engine"))]
-    {
-        klif_telemetry::find_adapter(pci)
-    }
+    klif_telemetry::find_adapter(pci)
 }
 
 /// The adapter the UI must render on.
@@ -228,17 +219,6 @@ pub fn process_adapter_luid(pid: u32) -> Option<(String, f64)> {
         }
     }
     None
-}
-
-/// What the UI is told after the check (event `klif://gpu`).
-#[derive(Debug, Clone, Serialize)]
-pub struct GpuReport {
-    pub ok: bool,
-    /// The adapter the WebView2 GPU process renders on, if found.
-    pub adapter: Option<String>,
-    /// The adapter it was pinned to, if any.
-    pub expected: Option<String>,
-    pub pid: Option<u32>,
 }
 
 /// Compare where the GPU process `pid` sits with the wanted adapter.

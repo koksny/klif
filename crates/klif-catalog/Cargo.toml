@@ -11,7 +11,11 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 log.workspace = true
-
-[[bin]]
-name = "catalog-parity"
-path = "src/bin/catalog-parity.rs"
+# data/recommendations.toml (embedded) and preset parsing.
+toml.workspace = true
+# store: comment-preserving klif.toml writes.
+toml_edit.workspace = true
+# quant from file names, flag tables.
+regex.workspace = true
+# preset_hash.
+sha2.workspace = true

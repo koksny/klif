@@ -1,5 +1,5 @@
 // Shell UI state: active skin, size class, drawers, toasts, dev bar. One instance for the whole app.
-import type { SlotId } from '../model/types';
+import type { SystemId } from '../model/types';
 import type { Tier } from '../render/scheduler';
 import type { SizeClass, SkinId } from '../../skins/contract';
 import { DEFAULT_SKIN, SKINS, skinMeta } from '../../skins/registry';
@@ -39,7 +39,17 @@ class UiState {
 
   consoleOpen = $state(false);
   tuneOpen = $state(false);
-  tuneSlot = $state<SlotId>('medium');
+  /** The System the Tune drawer shows (null: the selected one). */
+  tuneSystem = $state<SystemId | null>(null);
+  /** The Tune drawer is in add mode ("Add System"). Opened by the "+" of every full-size picker. */
+  tuneAdd = $state(false);
+  /** Old name of tuneSystem (the drawer used to be keyed by slot). */
+  get tuneSlot(): SystemId | null {
+    return this.tuneSystem;
+  }
+  set tuneSlot(id: SystemId | null) {
+    this.tuneSystem = id;
+  }
 
   devbar = $state(false);
   /** Tier currently applied (mirrors data-tier on <html>). */
@@ -78,7 +88,8 @@ class UiState {
     if (this.params.drawer === 'console') this.consoleOpen = true;
     if (this.params.drawer === 'tune') {
       this.tuneOpen = true;
-      this.tuneSlot = this.params.slot ?? 'medium';
+      this.tuneSystem = this.params.system;
+      this.tuneAdd = this.params.add;
     }
   }
 
@@ -114,18 +125,35 @@ class UiState {
     this.consoleOpen = open ?? !this.consoleOpen;
   }
 
-  openTune(slot?: SlotId) {
-    if (slot) this.tuneSlot = slot;
+  /** Open the Tune drawer on a System (add mode: the "Add System" form). */
+  openTune(system?: SystemId, opts: { add?: boolean } = {}) {
+    if (system) this.tuneSystem = system;
+    this.tuneAdd = !!opts.add;
     this.tuneOpen = true;
   }
 
-  closeTune() {
-    this.tuneOpen = false;
+  /** Open the Tune drawer in add mode (the "+" after the last System tab). */
+  openTuneAdd() {
+    this.openTune(undefined, { add: true });
   }
 
+  /**
+   * Set by the Tune drawer while it holds unsaved edits: returns false to keep the drawer open (it asks the
+   * user first). Not reactive on purpose.
+   */
+  tuneCanClose: (() => boolean) | null = null;
+
+  closeTune() {
+    if (this.tuneCanClose && !this.tuneCanClose()) return;
+    this.tuneOpen = false;
+    this.tuneAdd = false;
+  }
+
+  /** Escape. Drawers are hidden in mini (Tune keeps its drafts there), so mini closes nothing. */
   closeDrawers(): boolean {
+    if (this.size !== 'full') return false;
     if (this.tuneOpen) {
-      this.tuneOpen = false;
+      this.closeTune();
       return true;
     }
     if (this.consoleOpen) {

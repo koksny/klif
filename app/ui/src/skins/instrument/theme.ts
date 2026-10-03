@@ -1,6 +1,7 @@
 // Instrument (Zegar): palette, fonts, the machined panel texture and small shared helpers.
-import type { GpuMemory, ModelRef, Phase, Session, Slot, SlotId, SlotKind, ViewModel } from '../../lib/model/types';
-import { fmtCtx, tierShort } from '../../lib/model/format';
+import type { GpuMemory, ModelRef, Phase, Session, System, SystemId, SystemKind, ViewModel } from '../../lib/model/types';
+import { selectedSystem, shortLabel as tierShort } from '../../lib/model/systems';
+import { fmtCtx } from '../../lib/model/format';
 
 export const PAL = {
   window: '#141517',
@@ -73,13 +74,13 @@ export function phaseOf(vm: ViewModel): Phase | 'idle' {
   return vm.session?.phase ?? 'idle';
 }
 
-/** The slot whose pointer the selector shows: the running one, else the launcher's selection. */
-export function pointerSlot(vm: ViewModel): SlotId {
-  return vm.session?.slot ?? vm.selected;
+/** The System whose pointer the selector shows: the selected one (vm.session is always its session). */
+export function pointerSlot(vm: ViewModel): SystemId {
+  return selectedSystem(vm)?.id ?? vm.selected ?? '';
 }
 
-export function slotById(vm: ViewModel, id: SlotId): Slot | undefined {
-  return vm.slots.find((s) => s.id === id);
+export function slotById(vm: ViewModel, id: SystemId): System | undefined {
+  return vm.systems.find((s) => s.id === id);
 }
 
 /** "SYSTEM 2" -> "S2" for the tiny panel. */
@@ -88,35 +89,36 @@ export function shortLabel(label: string): string {
 }
 
 /** Subtitle under a selector detent: "Qwen 3.8 27B · GSQ-RCO IQ3_S · 96k". */
-export function slotSubtitle(slot: Slot): string {
+export function slotSubtitle(slot: System): string {
+  if (slot.status === 'not-set') return 'no preset';
   const m = slot.model;
   const parts = [m.name, m.quant];
   if (slot.kind === 'llm' && m.ctxTokens) parts.push(fmtCtx(m.ctxTokens));
   if (slot.kind === 'image' && m.imageSize) parts.push(m.imageSize);
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 /** The ACTIVE MODEL line, built only from configured facts. */
-export function modelLine(session: Session | null, slot: Slot | undefined): string {
+export function modelLine(session: Session | null, slot: System | undefined): string {
   const m = session?.model ?? slot?.model;
   if (!m) return '';
   // Image engines are named on the line (sd.cpp): the LLM line keeps its approved form.
-  const parts: string[] = m.imageSize ? [m.name, m.quant, m.engine, m.backend, m.device] : [m.name, m.quant, m.backend, m.device];
+  const parts: string[] = m.imageSize || (slot && slot.kind !== 'llm') ? [m.name, m.quant, m.engine, m.backend, m.device] : [m.name, m.quant, m.backend, m.device];
   if (m.ctxTokens) parts.push(`ctx ${fmtCtx(m.ctxTokens)}`);
   if (m.kvType) parts.push(`KV ${m.kvType}`);
   if (m.specMode) parts.push(m.specMode);
   if (m.mode) parts.push(m.mode);
   if (m.vision) parts.push('vision');
   if (m.imageSize) parts.push(m.imageSize);
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 const AVAIL_LABEL: Record<string, string> = {
   ready: 'ready',
   unsupported: 'unsupported',
-  'script-missing': 'script missing',
+  invalid: 'needs fixing',
+  'exe-missing': 'program missing',
   'model-missing': 'model missing',
-  'build-required': 'build required',
   busy: 'port busy',
 };
 export const availLabel = (a: string) => AVAIL_LABEL[a] ?? a;
@@ -125,12 +127,11 @@ export const availLabel = (a: string) => AVAIL_LABEL[a] ?? a;
  * What the panel shows, one word per phase. 'other' = a live session that has not reported its kind's
  * data yet. Every region of the full window keeps its place in all of them; only the contents change.
  */
-export type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'stopping' | 'fault' | 'other';
+export type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'live-gen' | 'stopping' | 'fault' | 'other';
 
-/** The kind the panel reads: the running slot's, or (idle) the selected slot's. */
-export function kindOf(vm: ViewModel): SlotKind {
-  const slot = slotById(vm, pointerSlot(vm));
-  return slot?.kind ?? (vm.session?.image ? 'image' : 'llm');
+/** The kind the panel reads: the selected System's. */
+export function kindOf(vm: ViewModel): SystemKind {
+  return slotById(vm, pointerSlot(vm))?.kind ?? 'llm';
 }
 
 export function viewOf(vm: ViewModel): View {
@@ -142,6 +143,7 @@ export function viewOf(vm: ViewModel): View {
   const kind = kindOf(vm);
   if (kind === 'llm' && s.llm) return 'live-llm';
   if (kind === 'image' && s.image) return 'live-img';
+  if (kind !== 'llm' && kind !== 'image' && s.generic) return 'live-gen';
   return 'other';
 }
 
@@ -152,14 +154,14 @@ export function modelShort(m: ModelRef | undefined): string {
   if (m.ctxTokens) parts.push(fmtCtx(m.ctxTokens));
   if (m.imageSize) parts.push(m.imageSize);
   if (m.mode) parts.push(m.mode);
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 /** The previous session as one line for the timeline caption: label, facts, how it ended. */
 export function lastSessionText(vm: ViewModel): { text: string; fault: boolean } | null {
   const ls = vm.lastSession;
   if (!ls) return null;
-  const label = slotById(vm, ls.slot)?.label ?? ls.model.name;
+  const label = slotById(vm, ls.system)?.label ?? ls.model.name;
   const facts = [fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) facts.push(`${fmtIntLocal(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) facts.push(`${fmtIntLocal(ls.generatedTokens)} tok`);

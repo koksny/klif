@@ -2,8 +2,8 @@
   // Mini panel (960 x 640, read from 1 m): read-only. A fixed 960 x 640 sheet scaled to fit, laid out like the
   // full window in miniature and the same in every state (only the contents change):
   //   header      KLIF · status lamp + phase · uptime / elapsed (version while idle)
-  //   tier strip  HIGH · MEDIUM · LOW · IMAGE with their state lamps (selected, running, cannot launch, locked)
-  //   model line  the running model, or the selected tier's
+  //   system strip  one tab per System with its status dot, scrolls sideways when it overflows
+  //   model line  the running model, or the selected System's
   //   left        the VRAM dial (idle: fit preview of the selected tier) over the backend toggle
   //   right       hero plate: label, the drum counter + unit, a status line; two fixed rows per kind
   //               (LLM: context, prefill; image: last image, images)
@@ -12,10 +12,13 @@
   // Smallest text 24 px (labels), values 34 px and up.
   import { onDestroy } from 'svelte';
   import type { Actions, ViewModel } from '../../../lib/model/types';
-  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtTps, tierShort } from '../../../lib/model/format';
+  import { fmtClock, fmtCtx, fmtGiB, fmtInt, fmtTps } from '../../../lib/model/format';
+  import { EXTERNAL_TITLE, KIND_LABEL, canStop, doLaunch, idleState, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
+  import { strip as scrollStrip } from '../../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../../lib/shell/SystemTabs/tabs';
   import {
     PHASE_LABEL,
-    availLabel,
     fmtAgo,
     fmtDur,
     fmtJobS,
@@ -64,14 +67,15 @@
   const model = $derived(s?.model ?? slot?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
-  const busy = $derived(view === 'loading' || view === 'stopping');
-  const ready = $derived(slot?.availability === 'ready');
+  const gen = $derived(s?.generic ?? null);
+  const tabs = $derived(tabsFor(vm));
+  const idleWhy = $derived(idleState(slot));
 
   const pf = $derived(llm?.prefill ?? null);
   const prefilling = $derived(view === 'live-llm' && !!llm && llm.activity === 'prefill' && !!pf && pf.tokens > 0);
   const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && img.steps > 0);
   const lastJob = $derived(img?.recent.length ? img.recent[img.recent.length - 1] : null);
-  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || slot?.recipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxFrac = $derived(llm ? frac(llm.context.usedTokens, llm.context.totalTokens) : 0);
 
   // GPU dormant: asleep between requests, or waking while the VRAM is restored from system RAM.
@@ -83,7 +87,7 @@
   const lastText = $derived.by(() => {
     const ls = vm.lastSession;
     if (!ls) return '';
-    const who = shortLabel(slotById(vm, ls.slot)?.label ?? ls.model.name);
+    const who = shortLabel(slotById(vm, ls.system)?.label ?? ls.model.name);
     return `last ${who} · ${fmtDur(ls.uptimeS)}${ls.ended === 'fault' ? ' · fault' : ''} · ${fmtAgo(ls.endedAgoS)}`;
   });
 
@@ -95,7 +99,7 @@
   const tpsDrum = (v: number): Fig => ({ kind: 'drum', value: v, int: v >= 99.95 ? 3 : 2, blank: false });
   const hero = $derived.by<Hero>(() => {
     const base = { tone: '' as const, dim: false, lineTone: '' as const };
-    const idleLabel = kind === 'image' ? 'DIFFUSION STEP' : 'DECODE SPEED';
+    const idleLabel = kind === 'image' ? 'DIFFUSION STEP' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase();
     const idleFig: Fig = kind === 'image' ? { kind: 'step', step: 0, steps: img?.steps ?? 8, blank: true } : blankDrum;
     if (sleep) {
       if (waking) return { ...base, label: 'GPU WAKING', tone: 'amber', fig: pctDrum(sleep.restored), unit: '%', line: `${fmtGiB(sleep.pagedGiB)} GiB still in system RAM`, lineTone: 'amber' };
@@ -114,7 +118,7 @@
       const st = s.loading?.steps.find((x) => x.state === 'active');
       return { ...base, label: 'STARTUP', tone: 'amber', fig: pctDrum(frac(s.loading?.fraction ?? 0, 1)), unit: '%', line: st ? `${st.label}${st.detail ? ` · ${st.detail}` : ''}` : 'starting the server' };
     }
-    if (view === 'stopping') return { ...base, label: 'STOPPING', fig: idleFig, unit: kind === 'image' ? '' : 'tok/s', dim: true, line: `releasing ${fmtGiB(vm.vram.usedGiB)} GiB`, lineTone: 'amber' };
+    if (view === 'stopping') return { ...base, label: 'STOPPING', fig: idleFig, unit: kind === 'llm' ? 'tok/s' : '', dim: true, line: `releasing ${fmtGiB(vm.vram.usedGiB)} GiB`, lineTone: 'amber' };
     if (view === 'live-llm' && llm) {
       if (prefilling && pf) return { ...base, label: 'PREFILL PROGRESS', fig: pctDrum(frac(pf.doneTokens, pf.tokens)), unit: '%', line: `${fmtInt(pf.doneTokens)} / ${fmtInt(pf.tokens)} tok` };
       return { ...base, label: 'DECODE SPEED', fig: tpsDrum(llm.decodeTps), unit: 'tok/s', line: `${fmtInt(llm.generatedTokens)} tok generated${llm.activity === 'idle' ? ' · idle' : ''}` };
@@ -124,16 +128,27 @@
       if (generating) return { ...base, label: `DIFFUSION STEP${img.edit ? ' · EDIT' : ''}`, fig, unit: '', line: `${img.sPerIt.toFixed(2)} s/it · ${img.width}×${img.height}` };
       return { ...base, label: 'DIFFUSION STEP', fig, unit: '', dim: true, line: 'waiting for the next job' };
     }
-    if (s) return { ...base, label: idleLabel, fig: idleFig, unit: kind === 'image' ? '' : 'tok/s', dim: true, line: 'waiting for data' };
-    // Idle: the selected tier, not running.
+    if (view === 'live-gen' && gen) {
+      const inFlight = gen.requestsInFlight ?? 0;
+      return {
+        ...base,
+        label: inFlight > 0 ? `${idleLabel} · WORKING` : idleLabel,
+        fig: tpsDrum(gen.requestsTotal ?? 0),
+        unit: 'req',
+        dim: inFlight === 0,
+        line: inFlight > 0 ? `${inFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for a request',
+      };
+    }
+    if (s) return { ...base, label: idleLabel, fig: idleFig, unit: kind === 'llm' ? 'tok/s' : '', dim: true, line: 'waiting for data' };
+    // Idle: the selected System, not running.
     return {
       ...base,
       label: idleLabel,
       fig: idleFig,
-      unit: kind === 'image' ? '' : 'tok/s',
+      unit: kind === 'llm' ? 'tok/s' : '',
       dim: true,
-      line: ready ? lastText || 'not running' : `cannot launch · ${slot?.reason ?? availLabel(slot?.availability ?? 'unsupported')}`,
-      lineTone: ready ? '' : 'amber',
+      line: idleWhy.warn || slot?.status === 'not-set' ? (slot?.reason ?? idleWhy.text) : lastText || idleWhy.text,
+      lineTone: idleWhy.warn ? 'amber' : '',
     };
   });
 
@@ -144,6 +159,12 @@
       return [
         { k: 'LAST IMAGE', v: lastJob ? fmtJobS(lastJob.seconds) : '—', sub: lastJob ? (lastJob.edit ? 'edit' : 'new image') : '' },
         { k: 'IMAGES', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
+    if (kind !== 'llm') {
+      return [
+        { k: 'IN FLIGHT', v: gen ? fmtInt(gen.requestsInFlight ?? 0) : '—', sub: '' },
+        { k: 'LAST REQ', v: gen?.lastActivityS !== undefined ? fmtDur(gen.lastActivityS) : '—', sub: gen?.lastActivityS !== undefined ? 'ago' : '' },
       ];
     }
     return [
@@ -166,7 +187,7 @@
   // ---- VRAM strip -----------------------------------------------------------------------------------------
   const total = $derived(Math.max(0.01, vm.vram.totalGiB));
   const baseline = $derived(vm.vram.baselineGiB ?? vm.vram.usedGiB);
-  const expected = $derived(view === 'idle' ? (slot?.expectedVram ?? []) : []);
+  const expected = $derived(view === 'idle' && !slot?.external ? (slot?.expectedVram ?? []) : []);
   const fitTotal = $derived(baseline + expected.reduce((a, l) => a + l.gib, 0));
   const spare = $derived(vm.vram.totalGiB - fitTotal);
   const spillGiB = $derived(vm.vram.spillMiB / 1024);
@@ -180,19 +201,41 @@
     if (sleep) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: lowFree ? 'amber' : '' };
   });
-  // The panel's one control, in the header: Launch the selected tier (idle), Cancel (loading), Stop (live),
-  // Restart (fault). A tier is picked on the strip while nothing runs.
+  // The panel's one control, in the header: Launch the selected System (idle; with conflicts it reads
+  // "STOP S1 & LAUNCH" and stops them first), Cancel (loading), Stop (live), Restart (fault). Systems are picked
+  // on the strip at any time: selecting never stops anything.
   const act = $derived.by(() => {
     const ph = vm.session?.phase;
-    const pick = vm.slots.find((x) => x.id === vm.selected);
-    if (!ph) {
-      const ok = pick?.availability === 'ready';
-      const word = tierShort(pick?.label ?? '');
-      return { kind: 'go', text: `LAUNCH ${word}`, title: ok ? `Launch ${pick?.label ?? ''}` : `${pick?.label ?? ''} cannot launch`, disabled: !ok, run: () => actions?.launch(vm.selected) };
+    const pick = slot;
+    const mine = !!pick && pick.controllable && !pick.external;
+    // An external server: a quiet note, never Launch / Stop (KLIF only watches it). A launch that waits for
+    // other Systems to stop (starting, no session yet): Cancel.
+    if (pick?.external) return { kind: 'ext', text: 'EXTERNAL SERVER', title: EXTERNAL_TITLE, disabled: true, run: () => {} };
+    if (!ph && isPendingLaunch(pick)) {
+      return { kind: 'stop', text: 'CANCEL', title: pick?.reason ?? 'Cancel the launch', disabled: !canStop(pick), run: () => void actions?.stop(pick?.id) };
     }
-    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the tier that failed', disabled: false, run: () => actions?.restart() };
+    if (!ph) {
+      const ctl = launchCtl(vm, pick, { short: true });
+      const word = shortLabel(pick?.label ?? '');
+      return {
+        kind: 'go',
+        text: ctl.stopOthers ? ctl.text.toUpperCase() : `LAUNCH ${word}`,
+        title: ctl.enabled ? (ctl.stopOthers ? ctl.text : `Launch ${pick?.label ?? ''}`) : `${pick?.label ?? ''} cannot launch: ${ctl.blocked}`,
+        disabled: !ctl.enabled,
+        run: () => {
+          if (actions) doLaunch(actions, pick, ctl);
+        },
+      };
+    }
+    if (ph === 'fault') return { kind: 'hot', text: 'RESTART', title: 'Restart the System that failed', disabled: !mine, run: () => void actions?.restart(pick?.id) };
     if (ph === 'stopping') return { kind: 'stop', text: 'STOPPING', title: 'Stopping', disabled: true, run: () => {} };
-    return { kind: 'stop', text: ph === 'live' ? 'STOP' : 'CANCEL', title: ph === 'live' ? 'Stop the server' : 'Cancel the launch', disabled: false, run: () => actions?.stop() };
+    return {
+      kind: 'stop',
+      text: ph === 'live' ? 'STOP' : 'CANCEL',
+      title: !canStop(pick) ? 'External server: it runs where it was started' : ph === 'live' ? 'Stop the server' : 'Cancel the launch',
+      disabled: !canStop(pick),
+      run: () => void actions?.stop(pick?.id),
+    };
   });
 </script>
 
@@ -233,17 +276,13 @@
     {/if}
   </div>
 
-  <!-- tier strip -->
-  <div class="tiers">
-    {#each vm.slots as t (t.id)}
+  <!-- system strip -->
+  <div class="tiers" use:scrollStrip={vm.selected}>
+    {#each tabs as t (t.id)}
       {@const sel = t.id === ptr}
-      {@const na = t.availability !== 'ready'}
-      {@const running = !!s && s.slot === t.id}
-      <button type="button" class="tier" class:sel class:na class:locked={busy && !running} class:fault={running && view === 'fault'} aria-disabled={!!vm.session} onclick={() => {
-          if (!vm.session) actions?.select(t.id);
-        }}>
-        <Led on={running || na || (sel && !s)} tone={running ? tone : na ? 'orange' : 'cyan'} size="calc(14 * var(--u))" pulse={running && view === 'loading'} />
-        <span>{shortLabel(t.label)}</span>
+      {@const na = t.system.status === 'invalid' || t.system.status === 'unreachable'}
+      <button type="button" class="tier" class:sel class:na class:fault={t.status === 'fault'} data-sel={sel} onclick={() => void actions?.select(t.id)}>
+        <TabLabel tab={t} short dotSize={14} />
       </button>
     {/each}
   </div>
@@ -432,8 +471,12 @@
     top: calc(70 * var(--u));
     height: calc(56 * var(--u));
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(calc(150 * var(--u)), 1fr);
     gap: calc(8 * var(--u));
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
   .tier {
     display: flex;
@@ -459,8 +502,7 @@
       inset 0 0 0 1px rgba(90, 182, 235, 0.35),
       0 0 calc(10 * var(--u)) rgba(90, 182, 235, 0.22);
   }
-  .tier.na,
-  .tier.locked {
+  .tier.na {
     color: rgba(237, 230, 214, 0.4);
   }
   .tier.fault {
@@ -796,6 +838,18 @@
     border-color: var(--orange);
     color: var(--orange);
   }
+  /* An external server: a quiet note in the control's place. */
+  .act.ext,
+  .act.ext:disabled {
+    background: transparent;
+    border-color: rgba(237, 230, 214, 0.16);
+    color: var(--muted);
+    opacity: 1;
+    box-shadow: none;
+  }
+  .act.ext svg {
+    display: none;
+  }
   .act.hot {
     background: var(--orange);
     border-color: var(--orange);
@@ -818,8 +872,5 @@
     font-family: inherit;
     text-align: left;
     cursor: pointer;
-  }
-  button.tier[aria-disabled='true'] {
-    cursor: default;
   }
 </style>

@@ -21,7 +21,8 @@ pub fn set_visible<R: Runtime>(win: &WebviewWindow<R>, visible: bool) {
     });
 }
 
-/// Read the controller's IsVisible (diagnostics).
+/// Read the controller's IsVisible (diagnostics; only the selftest feature uses it).
+#[cfg(feature = "selftest")]
 pub fn is_visible<R: Runtime>(win: &WebviewWindow<R>) -> Option<bool> {
     let (tx, rx) = mpsc::channel();
     let _ = win.with_webview(move |pw| unsafe {

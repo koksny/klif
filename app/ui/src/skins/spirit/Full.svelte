@@ -12,6 +12,10 @@
   // Controls keep their places: the primary act (Launch / Cancel / Stop / Restart after a fault), Restart
   // (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log after a fault).
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
+  import { canLaunch } from '../../lib/model/systems';
+  import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtInt, fmtSeconds } from '../../lib/model/format';
   import Battery from './Battery.svelte';
   import Ic from './Ic.svelte';
@@ -30,10 +34,11 @@
 
   const o = useOsd(
     () => vm,
-    (id) => actions.launch(id),
-    () => actions.stop(),
-    () => actions.restart(),
+    (id, stopOthers) => void actions.launch(id, stopOthers ? { stopOthers: true } : undefined).catch(() => {}),
+    (id) => void actions.stop(id).catch(() => {}),
+    (id) => void actions.restart(id).catch(() => {}),
   );
+  const tabs = $derived(tabsFor(vm));
   const s = $derived(o.s);
   const faulted = $derived(o.faulted);
   const kind = $derived(o.kind);
@@ -59,6 +64,15 @@
         ['MODE', model?.mode ?? '—'],
       ];
     }
+    if (kind !== 'llm') {
+      const gen = o.gen;
+      return [
+        ['REQUESTS', gen?.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—'],
+        ['IN FLIGHT', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+        ['MODEL', model?.name ?? '—'],
+        ['REPORTS', gen?.modelId ?? '—'],
+      ];
+    }
     const pf = llm?.prefill;
     const total = llm?.context.totalTokens || model?.ctxTokens || 0;
     return [
@@ -77,10 +91,11 @@
   const jobs = $derived(o.img ? o.img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
   const maxJob = $derived(Math.max(1, ...jobs.map((j) => j.seconds)));
-  const diedInWork = $derived(faulted && ((!!o.llm && o.llm.activity !== 'idle') || (!!o.img && o.img.activity === 'generating')));
+  const diedInWork = $derived(faulted && ((!!o.llm && o.llm.activity !== 'idle') || (!!o.img && o.img.activity === 'generating') || (o.gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return ' · NOT RUNNING';
     if (o.loading) return kind === 'image' ? ' · NO JOBS YET' : ' · NO REQUESTS YET';
+    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · FAILED' : ' · NO PER-REQUEST LOG FOR THIS KIND';
     const n = kind === 'image' ? jobs.length : requests.length;
     const what = kind === 'image' ? 'JOBS' : 'REQUESTS';
     if (faulted) {
@@ -94,7 +109,7 @@
     `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
 
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
-  const port = $derived(s?.endpoint.port ?? o.selSlot?.recipe?.port);
+  const port = $derived(s?.endpoint.port ?? o.selSlot?.command?.port);
 </script>
 
 <div class="full" bind:clientWidth={w} bind:clientHeight={h} style="--u:{u}">
@@ -112,33 +127,33 @@
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
   </header>
 
-  <!-- Tier tabs: select while nothing runs (or after a fault); double-click launches -->
-  <div class="tiers" role="tablist" aria-label="Tier">
-    {#each vm.slots as t (t.id)}
-      {@const selected = t.id === vm.selected}
-      {@const na = t.availability !== 'ready'}
-      {@const running = !!s && s.slot === t.id && !faulted}
-      {@const locked = !!s && !faulted}
-      <button
-        class="tab"
-        class:sel={selected}
-        class:na
-        class:flt={faulted && s?.slot === t.id}
-        role="tab"
-        aria-selected={selected}
-        aria-disabled={locked}
-        title={locked ? `${t.label}: ${running ? 'running' : `stop ${s?.model.name ?? 'the session'} to change the tier`}` : na ? `${t.label}: ${t.reason ?? availabilityText(t.availability)}` : `${t.label}: ${t.model.name} (double-click to launch)`}
-        onclick={() => {
-          if (!locked) actions.select(t.id);
-        }}
-        ondblclick={() => {
-          if ((!s || faulted) && !na) actions.launch(t.id);
-        }}
-      >
-        <span class="tl">{t.label}{#if running}<span class="rn" class:hold={o.loading || !!o.dz}><Ic kind="dot" /></span>{/if}</span>
-        <span class="tm">{na ? `${t.model.name} · ${availabilityText(t.availability)}` : `${t.model.name} · ${t.model.quant}`}</span>
-      </button>
-    {/each}
+  <!-- System tabs: click selects (never stops anything), double-click launches a System that is ready and has
+       nothing in its way. They scroll sideways; + adds a System. -->
+  <div class="sysbar">
+    <div class="tiers" role="tablist" aria-label="Systems" use:scrollStrip={vm.selected}>
+      {#each tabs as t (t.id)}
+        {@const ts = t.system}
+        {@const selected = t.id === vm.selected}
+        {@const na = ts.availability !== 'ready' && ts.status !== 'not-set'}
+        <button
+          class="tab"
+          class:sel={selected}
+          class:na
+          class:flt={ts.status === 'fault'}
+          role="tab"
+          aria-selected={selected}
+          title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${ts.model.name || 'no preset'} (${ts.status}${ts.reason ? `: ${ts.reason}` : ''})`}
+          onclick={() => actions.select(t.id)}
+          ondblclick={() => {
+            if (canLaunch(ts) && ts.conflicts.length === 0) void actions.launch(ts.id).catch(() => {});
+          }}
+        >
+          <span class="tl"><TabLabel tab={t} /></span>
+          <span class="tm">{ts.status === 'not-set' ? 'no preset' : ts.status === 'unreachable' ? `${t.nodeName ?? 'node'} unreachable` : na ? `${ts.model.name} · ${availabilityText(ts.availability)}` : `${ts.model.name} · ${ts.model.quant}`}</span>
+        </button>
+      {/each}
+    </div>
+    <button class="tab add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>+</button>
   </div>
 
   <div class="mline" class:dim={!s}><span class="mk">{short(o.slot?.label ?? '')}</span><span class="mt">{modelLine(o.model, kind)}</span></div>
@@ -219,7 +234,7 @@
   </section>
 
   <footer class="ctrl">
-    <button class="br chip" onclick={() => actions.copyEndpoint()} disabled={!o.online} title={o.online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
+    <button class="br chip" onclick={() => actions.copyEndpoint(o.selSlot?.id)} disabled={!o.online} title={o.online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
       :{port ?? '—'}{#if !o.online}<em>OFF</em>{/if}
     </button>
     <button class="br chip" onclick={() => actions.copyApiKey()} disabled={!o.online || !s?.apiKeySet} title={s?.apiKeySet ? 'Copy API key' : 'No API key set'}>
@@ -228,12 +243,12 @@
     <span class="grow"></span>
     <button class="act {o.act.kind}" onclick={o.act.run} disabled={o.act.disabled} title={o.act.title}><span class="g" class:red={o.act.red}><Ic kind={o.act.glyph} /></span>{o.act.text}</button>
     {#if faulted}
-      <button class="br w1" onclick={() => actions.dismiss()} title="Back to the launcher">DISMISS</button>
+      <button class="br w1" onclick={() => actions.dismiss(o.selSlot?.id)} disabled={!o.mine} title="Back to the launcher">DISMISS</button>
     {:else}
-      <button class="br w1" onclick={() => actions.restart()} disabled={!s || o.busy} title="Stop and launch again with the current settings">RESTART</button>
+      <button class="br w1" onclick={() => actions.restart(o.selSlot?.id)} disabled={!s || o.busy || !o.mine} title="Stop and launch again with the current settings">RESTART</button>
     {/if}
-    <button class="br w2" onclick={() => actions.openTune(vm.selected)} title={s && s.slot === vm.selected && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}>TUNE</button>
-    <button class="br w3" onclick={() => actions.openEndpoint()} disabled={!o.online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
+    <button class="br w2" onclick={() => actions.openTune(o.selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="br w3" onclick={() => actions.openEndpoint(o.selSlot?.id)} disabled={!o.online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
     <button class="br w3" class:hot={faulted} onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'FULL LOG' : 'CONSOLE'}</button>
   </footer>
   <button class="cline" class:hot={faulted} onclick={() => actions.toggleConsole(true)} title="Open the console"><span class="pr">&gt;</span><span class="lt">{lastLine}</span></button>
@@ -422,12 +437,35 @@
     color: var(--cyan);
   }
 
-  /* ---- tier tabs ---- */
-  .tiers {
+  /* ---- System tabs ---- */
+  .sysbar {
     height: calc(var(--u) * 54px);
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: var(--gap);
+    min-width: 0;
+  }
+  .tiers {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: var(--gap);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tiers::-webkit-scrollbar {
+    display: none;
+  }
+  .tiers .tab {
+    flex: 1 0 calc(var(--u) * 150px);
+  }
+  .tab.add {
+    flex: none;
+    width: calc(var(--u) * 40px);
+    align-items: center;
+    padding: 0;
+    color: var(--cyan);
+    font-size: calc(var(--u) * 20px);
   }
   .tab {
     display: flex;
@@ -443,21 +481,11 @@
   .tab .tl {
     display: flex;
     align-items: center;
-    gap: calc(var(--u) * 8px);
+    min-width: 0;
     font-size: var(--fs-l);
     font-weight: 500;
     letter-spacing: 0.14em;
     white-space: nowrap;
-  }
-  .tab .rn {
-    display: inline-flex;
-    font-size: 0.62em;
-    color: var(--cyan);
-    text-shadow: 0 0 6px rgba(43, 200, 255, 0.7);
-  }
-  .tab .rn.hold {
-    color: var(--muted);
-    text-shadow: none;
   }
   .tab .tm {
     font-size: var(--fs-s);
@@ -468,11 +496,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .tab:hover:not(.sel):not([aria-disabled='true']) {
+  .tab:hover:not(.sel) {
     border-color: var(--rule2);
-  }
-  .tab[aria-disabled='true'] {
-    cursor: default;
   }
   .tab.sel {
     background: var(--ink);
@@ -481,10 +506,6 @@
   }
   .tab.sel .tm {
     color: #26414d;
-  }
-  .tab.sel .rn {
-    color: #0077a8;
-    text-shadow: none;
   }
   .tab.na {
     opacity: 0.4;

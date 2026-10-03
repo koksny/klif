@@ -53,18 +53,19 @@
   {#if player.ready}
     <div class="frame" style={ui.miniFramed ? `transform: translate(-50%, -50%) scale(${scale})` : ''}>
       <SkinHost skinId={ui.skinId} vm={player.vm} actions={player.actions} size={ui.size} />
-      {#if ui.size === 'full'}
-        {#if ui.consoleOpen}<ConsoleDrawer />{/if}
-        {#if ui.tuneOpen}<TuneDrawer />{/if}
-      {/if}
+      {#if ui.consoleOpen && ui.size === 'full'}<ConsoleDrawer />{/if}
+      <!-- Mini/panel never shows Tune, but an open drawer stays mounted (hidden) so its unapplied drafts survive a
+           switch to mini and back; they are only ever dropped through the drawer's discard confirm. -->
+      {#if ui.tuneOpen}<div class="tune-host" class:off={ui.size !== 'full'}><TuneDrawer /></div>{/if}
     </div>
   {:else}
     <!-- Native host before the core's first view model: no invented numbers, just the window. -->
     <div class="waiting" data-tauri-drag-region="deep">
-      <p>{player.nativeError ? `KLIF core unavailable: ${player.nativeError}` : 'Connecting to the KLIF core'}</p>
+      <p>{player.nativeError ? `KLIF core unavailable: ${player.nativeError}` : (player.nativeWaiting ?? 'Connecting to the KLIF core')}</p>
     </div>
   {/if}
-  {#if ui.size === 'full'}<Toast />{/if}
+  <!-- Every layout: a refusal of a mini Launch / Stop / Restart is otherwise invisible. -->
+  <Toast />
   {#if ui.devbar && !ui.shot}<DevBar />{/if}
 </div>
 
@@ -88,6 +89,12 @@
     height: 640px;
     outline: 1px solid var(--k-line, #2e2e2e);
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  }
+  .tune-host {
+    display: contents;
+  }
+  .tune-host.off {
+    display: none;
   }
   .waiting {
     position: absolute;

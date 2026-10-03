@@ -1,18 +1,19 @@
 // Spirit text helpers: OSD strings derived from ViewModel fields (never invented values). OSD text is upper case.
-import type { Availability, GpuMemory, LastSession, LoadStep, ModelArch, ModelRef, Phase, Slot, SlotKind } from '../../lib/model/types';
-import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
+import type { Availability, GpuMemory, LastSession, LoadStep, ModelArch, ModelRef, Phase, System, SystemKind } from '../../lib/model/types';
+import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { shortLabel as tierShort } from '../../lib/model/systems';
 
-/** Why a slot cannot launch, in plain words. */
+/** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
   switch (a) {
     case 'ready':
       return 'ready';
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
+    case 'invalid':
+      return 'needs fixing';
     case 'unsupported':
       return 'unsupported';
     case 'busy':
@@ -61,12 +62,12 @@ export const TC_IDLE = '--:--:--:--';
 export const short = tierShort;
 
 /** The model line: name · quant · backend · device · ctx or size · kv · vision · mode. */
-export function modelLine(m: ModelRef | undefined, kind: SlotKind): string {
+export function modelLine(m: ModelRef | undefined, kind: SystemKind): string {
   if (!m) return '';
   const parts: (string | undefined | false)[] = [
     m.name,
     m.quant,
-    kind === 'image' && m.engine,
+    kind !== 'llm' && m.engine,
     m.backend,
     m.device,
     m.ctxTokens ? `ctx ${fmtCtx(m.ctxTokens)}` : sizeText(m.imageSize),
@@ -89,7 +90,8 @@ export function modelShort(m: ModelRef | undefined, withCtx = true): string {
 }
 
 /** "48L · 10+1/512 EXPERTS" / "64L · DENSE" / "SHAPE AFTER FIRST LOAD" (from ModelRef.arch). */
-export function shapeText(arch: ModelArch | null | undefined, kind: SlotKind): string {
+export function shapeText(arch: ModelArch | null | undefined, kind: SystemKind): string {
+  if (kind !== 'llm' && kind !== 'image') return 'NO SHAPE REPORTED';
   const layers = arch && arch.layers >= 1 ? Math.round(arch.layers) : 0;
   if (!arch || !layers) return kind === 'image' ? 'DIT · SHAPE NOT REPORTED' : 'SHAPE AFTER FIRST LOAD';
   if (kind === 'image') return `${layers}L · DIT`;
@@ -98,8 +100,8 @@ export function shapeText(arch: ModelArch | null | undefined, kind: SlotKind): s
 }
 
 /** "LAST S2 · 2 H 14 MIN · 12 REQUESTS · 47.3 TOK/S · STOPPED 21 MIN AGO" */
-export function lastSessionText(ls: LastSession, slots: Slot[]): string {
-  const label = slots.find((x) => x.id === ls.slot)?.label;
+export function lastSessionText(ls: LastSession, systems: System[]): string {
+  const label = systems.find((x) => x.id === ls.system)?.label;
   const facts = [fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) facts.push(`${fmtInt(ls.requests)} REQUESTS`);
   if (ls.decodeTps !== undefined) facts.push(`${fmtTps(ls.decodeTps)} TOK/S`);
@@ -127,8 +129,8 @@ export function baselineOf(vram: GpuMemory): number {
 }
 
 /** The selected tier's expected footprint on top of what is in use (idle fit preview), or null. */
-export function fitOf(vram: GpuMemory, slot: Slot | undefined): { base: number; top: number; spare: number } | null {
-  if (!slot?.expectedVram?.length) return null;
+export function fitOf(vram: GpuMemory, slot: System | undefined): { base: number; top: number; spare: number } | null {
+  if (!slot?.expectedVram?.length || slot.external) return null;
   const base = Math.max(baselineOf(vram), vram.usedGiB);
   const top = base + slot.expectedVram.reduce((a, l) => a + l.gib, 0);
   return { base, top, spare: vram.totalGiB - top };

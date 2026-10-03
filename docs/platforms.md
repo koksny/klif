@@ -1,0 +1,93 @@
+# Platforms
+
+KLIF is a front-end built for AMD and Windows. That is the build that is tested, and the one every decision here
+favours. Other GPUs and other operating systems are expected to arrive as pull requests, ideally written by your
+coding agent for your hardware. This page says what works today, which parts are platform-specific, and what a good
+port looks like.
+
+## Status
+
+| | Status |
+| --- | --- |
+| Windows 10/11 x64, AMD RDNA GPU, HIP and Vulkan builds of the servers | Tested. The reference build |
+| Windows, NVIDIA or Intel GPU | Untested. Presets are plain commands, so a CUDA or SYCL build of llama.cpp can be launched; GPU memory is read through DXGI and Windows counters, which are not AMD-specific, but nobody has checked them. The dormant-GPU detection is AMD-only |
+| Linux | Not supported. The pure crates (`klif-common`, `klif-catalog`, `klif-supervisor`, `klif-telemetry`) compile for `x86_64-unknown-linux-gnu`; the process host has a basic process-group implementation that has never run; GPU and host telemetry return nothing; `klif-core` and `klif-cli` do not build there yet (they need OpenSSL for `ureq`'s `native-tls`, see below); the shell was never built |
+| macOS | Not supported. Same seams as Linux, nothing written |
+
+"Not supported" means: not tested, not promised, welcome as a PR.
+
+## Where the platform shows
+
+| Layer | Windows | Elsewhere |
+| --- | --- | --- |
+| **Process host** (`klif-supervisor`) | `CreateProcessW` with a named job object (`Local\KLIF-<session>`) and an explicit handle list; output appended to log files; stop = terminate the job and wait; adoption by job name | `unix.rs`: a process group per session (`pgid:<n>`), basic spawn, adopt and stop; unproven |
+| **GPU and host facts** (`klif-telemetry/src/platform.rs`: `GpuPlatform`, `HostPlatform`) | DXGI adapters and memory, PDH counters for per-process VRAM (dedicated, shared, committed), SetupDi power state, the AMD ULPS setting (read-only), CPUID for the CPU name, `GlobalMemoryStatusEx` | A stub that returns nothing. Where to read instead: AMD on Linux `/sys/class/drm/card*/device/mem_info_vram_used` and per-process `/proc/<pid>/fdinfo` (`drm-memory-vram`); NVIDIA through NVML; macOS through IOKit or Metal |
+| **Adapters** (`klif-telemetry`, `klif-catalog/src/facts.rs`) | llama.cpp, sd.cpp, vllm, openai, generic | OS-neutral: they parse logs and call HTTP |
+| **Shell** (`app/src-tauri`) | Windows-only code behind `cfg(windows)`: clipboard (secret formats), GPU pinning for the WebView, WebView2 setup; Tauri for window and tray | `other_os.rs` has stand-ins that were never compiled |
+| **Downloads and bench TLS** | `ureq` with the system trust store (SChannel) | `klif-core` and `klif-cli` build `ureq` with its `native-tls` feature, which on Linux is OpenSSL: the build needs the OpenSSL development files and `pkg-config` (`libssl-dev` and `pkg-config` on Debian and Ubuntu, `openssl-devel` on Fedora), and `cargo check` of those two crates stops in `openssl-sys` without them. The pure crates are unaffected (`klif-telemetry` probes over plain HTTP and uses no TLS). A port may keep `native-tls` and install OpenSSL, or pick the TLS provider per platform |
+| **Config and state locations** | `%APPDATA%\KLIF`, `%LOCALAPPDATA%\KLIF` | `$XDG_CONFIG_HOME/klif` and `$XDG_DATA_HOME/klif` (implemented, untested) |
+| **Command building** | Windows command-line quoting; `.exe`/`.com` only; `.bat` explained | `command` rules need a unix variant (executable bit, no `.exe`) |
+
+The engine, the catalog, the view model, the UI and `klif-cli` are the same everywhere. The seams above are small
+on purpose.
+
+## AMD specifics
+
+- **HIP (ROCm) and Vulkan** are choices of the server build, not of KLIF. A preset launches whichever
+  `llama-server` or `sd-server` you point it at; `backend = "HIP"` only labels it in the window.
+- **Dormant GPU.** On some AMD cards Windows lets the card idle into a low-power state (D3, with ULPS enabled) and
+  pages VRAM contents out. KLIF reads the device power state and the ULPS setting (never writes either), tells
+  committed from resident memory per process, and draws paged-out VRAM as ghosts instead of reporting it as free.
+  The first request after a sleep pays a wake-up delay; changing the ULPS setting is your decision and outside KLIF.
+- **Device selection is in the command.** See below.
+
+### The static HIP device ordinal trade-off
+
+Which GPU a ROCm program uses is chosen by the program's own environment or flags: `HIP_VISIBLE_DEVICES=1`,
+`ROCR_VISIBLE_DEVICES`, or a flag such as llama.cpp's `--device`. Those take an **ordinal** (0, 1, 2), which is the
+order the runtime enumerates the cards in, not a PCI id. KLIF's `gpu = "VEN:DEV"` is a different thing: it says which
+GPU to *measure and plan for* (memory bars, fit, conflicts) and never changes the command.
+
+KLIF could translate one into the other, but it deliberately does not. The trade-off:
+
+- **Static (what KLIF does).** The ordinal lives in the preset's `env` or `args`, visible in `plan`. The command is
+  the whole truth, it works with any server and any runtime, and nothing happens behind your back. The price is that
+  an ordinal belongs to one machine in one configuration: adding a card, moving one to another slot, a driver
+  update or a different runtime can renumber them. Such a preset is not portable, which is why committed examples
+  and recommendations carry no ordinal, and why `preset_from_recommendation` copies the program, working folder and
+  environment from *your* existing preset.
+- **Dynamic (what KLIF avoids).** Resolve `gpu = "VEN:DEV"` to an ordinal at launch by asking the runtime. It would
+  survive renumbering, but only by reimplementing each runtime's enumeration, guessing which variable each server
+  honours, and hiding part of the command.
+
+Your safeguards: set both `gpu` and `HIP_VISIBLE_DEVICES` and check them against `klif-cli --json diag`
+(`engine.gpus[].id` in DXGI order); read the `device` line in the server log (KLIF parses it for llama.cpp and
+sd.cpp). If the server reports a device that does not match the preset's `device` (default: the GPU's name), the
+System shows a warning "The server reports X, not Y: check the preset's device selection (env or args)". The same
+applies to CUDA (`CUDA_VISIBLE_DEVICES`) and Vulkan (`GGML_VK_VISIBLE_DEVICES`) builds.
+
+Do not commit an ordinal from your machine as if it were universal.
+
+## Writing a port
+
+A useful port is small and says what it was tested on. Typical pieces:
+
+1. **GPU facts for another vendor on Windows.** Usually nothing to write: check that `klif-cli --json diag` lists
+   your card with the right `id`, that `status` shows used and total VRAM, and that per-process VRAM
+   (`vramGiB` while a System runs) is non-zero. If a counter is missing, fix it in `klif-telemetry/src/win.rs`.
+2. **A server adapter for a CUDA/SYCL/Metal build.** Usually only a preset (`backend = "CUDA"`, the right environment
+   variable). If the server's log format differs, extend the parser behind the existing adapter instead of adding a
+   new one.
+3. **Linux or macOS.** In order:
+   - make `klif-core` and `klif-cli` build (install the OpenSSL development files and `pkg-config` for
+     `native-tls`, or pick a TLS provider per platform; unix paths);
+   - implement `GpuPlatform` and `HostPlatform` for the platform;
+   - harden the unix `ProcessHost` (the process group needs a reliable adoption and stop story);
+   - compile `app/src-tauri` and replace the Windows-only shell code behind `cfg`;
+   - `config` already has XDG locations; check them.
+4. **Keep Windows intact.** The Windows and AMD build is the reference. Use `cfg` or the platform traits; do not
+   change behaviour there without saying so.
+
+Checks to run and report in the PR: [CONTRIBUTING.md](../CONTRIBUTING.md) lists them, including the Linux
+`cargo check` of the four pure crates. Include `klif-cli --json status` and a `klif-cli bench` from the real
+hardware, with the machine details made fictional where they identify you.

@@ -14,9 +14,13 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 log.workspace = true
-# GetLocalTime for session names (yyyyMMdd-HHmmss-fff, local time like the old GUI).
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
+# Hugging Face downloads (download.rs), bench requests (bench.rs). TLS: select TlsProvider::NativeTls explicitly.
+ureq = { workspace = true, features = ["native-tls"] }
+# Download verification.
+sha2.workspace = true
+# Control-channel and node tokens.
+getrandom.workspace = true
 
-[[bin]]
-name = "klif-cli"
-path = "src/bin/klif-cli.rs"
+[target.'cfg(windows)'.dependencies]
+# GetLocalTime for session names (yyyyMMdd-HHmmss-fff, local time).
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }

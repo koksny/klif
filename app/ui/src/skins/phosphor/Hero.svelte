@@ -8,7 +8,8 @@
   //   wait     : nothing to measure (idle, stopping, no data yet): the kind's own hero dimmed ("—" and a
   //              flat trace) with one word over it, amber when the selected tier cannot launch or it stops
   // GPU dormant: the figure is the last one (faded), the trace is afterglow only, the tag says asleep / waking.
-  import type { GpuMemory, ImageLive, LlmLive, LoadProgress, SlotKind } from '../../lib/model/types';
+  import type { GenericLive, GpuMemory, ImageLive, LlmLive, LoadProgress, SystemKind } from '../../lib/model/types';
+  import { KIND_LABEL } from '../../lib/model/systems';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
   import Scope from './Scope.svelte';
   import { clamp, fmtSPerIt, type GpuSleep } from './geom';
@@ -18,16 +19,18 @@
     kind,
     llm = null,
     img = null,
+    generic = null,
     loading = null,
     vram,
     gpu = null,
     word = '',
     amber = false,
   }: {
-    mode: 'llm' | 'image' | 'loading' | 'wait';
-    kind: SlotKind;
+    mode: 'llm' | 'image' | 'generic' | 'loading' | 'wait';
+    kind: SystemKind;
     llm?: LlmLive | null;
     img?: ImageLive | null;
+    generic?: GenericLive | null;
     loading?: LoadProgress | null;
     vram: GpuMemory;
     gpu?: GpuSleep | null;
@@ -46,6 +49,8 @@
 
   const gen = $derived(!!img && img.activity === 'generating' && img.steps > 0);
   const imgFrac = $derived(gen && img ? clamp(img.step / img.steps, 0, 1) : 0);
+
+  const working = $derived((generic?.requestsInFlight ?? 0) > 0);
 
   const loadFrac = $derived(clamp(loading?.fraction ?? 0, 0, 1));
   const activeStep = $derived(loading?.steps.find((x) => x.state === 'active') ?? null);
@@ -113,6 +118,34 @@
       </div>
     </div>
   </section>
+{:else if mode === 'generic' && generic}
+  <section class="panel grat hero" aria-label={KIND_LABEL[kind]}>
+    <div class="hl">
+      <div class="hhead">
+        <span class="lbl">{KIND_LABEL[kind]}</span>
+        <span class="act" class:on={working}>{working ? 'working' : 'idle'}</span>
+      </div>
+      <div class="fig" class:faded={!working}>
+        <span class="num">{generic.requestsTotal !== undefined ? fmtInt(generic.requestsTotal) : '—'}</span><span class="unit">requests</span>
+      </div>
+    </div>
+    <div class="hr bars">
+      <div class="stat">
+        {#if working}
+          <span><b>{generic.requestsInFlight}</b> in flight</span>
+        {:else}
+          <span class="mut">waiting for the next request</span>
+        {/if}
+        {#if generic.lastActivityS !== undefined}<span class="mut sm end">last activity {fmtSeconds(generic.lastActivityS)} ago</span>{/if}
+      </div>
+      <div class="trow">
+        <span class="track" role="img" aria-label={working ? 'A request is running' : 'Idle'}>
+          <span class="fill" style="transform:scaleX({working ? 1 : 0})"></span>
+        </span>
+        <span class="pct" class:dim={!working}>{working ? 'busy' : '—'}</span>
+      </div>
+    </div>
+  </section>
 {:else if mode === 'loading'}
   <section class="panel grat hero" aria-label="Startup">
     <div class="hl">
@@ -134,14 +167,14 @@
   <!-- nothing to measure: the kind's own hero, dimmed, with a word over it -->
   <section class="panel grat hero wait" aria-label={word}>
     <div class="hl">
-      <div class="hhead"><span class="lbl dimlbl">{kind === 'image' ? 'Image generation' : 'Decode speed'}</span></div>
+      <div class="hhead"><span class="lbl dimlbl">{kind === 'image' ? 'Image generation' : kind === 'llm' ? 'Decode speed' : KIND_LABEL[kind]}</span></div>
       <div class="fig dim">
-        {#if kind === 'image'}<span class="unit pre">step</span><span class="num">—</span>{:else}<span class="num">—</span><span class="unit">tok/s</span>{/if}
+        {#if kind === 'image'}<span class="unit pre">step</span><span class="num">—</span>{:else if kind === 'llm'}<span class="num">—</span><span class="unit">tok/s</span>{:else}<span class="num">—</span><span class="unit">requests</span>{/if}
       </div>
     </div>
     <div class="hr wr">
       <span class="word" class:amb={amber}>{word}</span>
-      {#if kind === 'image'}
+      {#if kind === 'image' || (kind !== 'llm')}
         <div class="trow"><span class="track"></span><span class="pct dim">—</span></div>
       {:else}
         <div class="flat" aria-hidden="true"></div>

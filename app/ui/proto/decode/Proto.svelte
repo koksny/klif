@@ -18,8 +18,8 @@
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
   const dz = $derived(phase === 'live' ? (vm.vram.dormant ?? null) : null);
-  const sel = $derived(vm.slots.find((x) => x.id === vm.selected));
-  const runSlot = $derived(s ? vm.slots.find((x) => x.id === s.slot) : undefined);
+  const sel = $derived(vm.systems.find((x) => x.id === vm.selected));
+  const runSlot = $derived(s ? vm.systems.find((x) => x.id === s.system) : undefined);
   const model = $derived(s?.model ?? sel?.model);
   const kind = $derived(runSlot?.kind ?? sel?.kind ?? 'llm');
 
@@ -154,8 +154,8 @@
     </header>
 
     <nav class="tiers">
-      {#each vm.slots as t, i (t.id)}
-        {@const running = s?.slot === t.id && phase !== 'fault'}
+      {#each vm.systems as t, i (t.id)}
+        {@const running = s?.system === t.id && phase !== 'fault'}
         <button class="tier" class:sel={t.id === vm.selected} class:run={running} class:na={t.availability !== 'ready'} onclick={() => !s && player.actions.select(t.id)}>
           <span class="tk">[{i + 1}]</span><span class="tl">{t.label}</span>{#if running}<span class="rn">▮</span>{/if}
           <span class="tm">{t.model.name.toLowerCase()} · {t.model.quant.toLowerCase()}</span>
@@ -202,7 +202,7 @@
     </section>
 
     <footer class="ctrl">
-      <span class="chip">:{s?.endpoint.port ?? sel?.recipe?.port ?? '—'}{#if phase !== 'live'}<em> offline</em>{/if}</span>
+      <span class="chip">:{s?.endpoint.port ?? sel?.command?.port ?? '—'}{#if phase !== 'live'}<em> offline</em>{/if}</span>
       <span class="chip">{s?.apiKeySet ? '•••••••' : 'no key'}</span>
       <span class="grow"></span>
       {#if !s}

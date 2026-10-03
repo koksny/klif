@@ -4,39 +4,40 @@
   //   [:port] [API key] ............ [PRIMARY] [Restart | Dismiss] [Tune] [Endpoint | Web UI] [Console | Full log]
   // PRIMARY has one fixed width: Launch <TIER> (idle) / Cancel (loading) / Stop (live) / Stopping (disabled) /
   // Restart <TIER> after a fault. Tune is always enabled: on a running tier the drawer offers "Restart to apply".
-  import type { Actions, Session, Slot } from '../../lib/model/types';
-  import { availText } from './geom';
+  import type { Actions, Session, System, ViewModel } from '../../lib/model/types';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../lib/model/systems';
 
   let {
+    vm,
     view,
     session,
     selected,
-    running,
     actions,
     port,
   }: {
+    vm: ViewModel;
     view: 'idle' | 'loading' | 'live' | 'stopping' | 'fault';
     session: Session | null;
-    /** The selected tier (Launch and Tune act on it). */
-    selected: Slot | undefined;
-    /** The session's tier. */
-    running: Slot | undefined;
+    /** The selected System (Launch, Stop and Tune act on it; the session is always its). */
+    selected: System | undefined;
     actions: Actions;
-    /** The session's port, or (idle) the selected tier's recipe port. */
+    /** The session's port, or (idle) the selected System's configured port. */
     port: number | undefined;
   } = $props();
 
   const online = $derived(view === 'live');
-  const image = $derived((running ?? selected)?.kind === 'image');
-  const ready = $derived(selected?.availability === 'ready');
+  const image = $derived(selected?.kind === 'image');
+  /** The launch control: with conflicts it reads "Stop System 1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, selected));
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!selected && selected.controllable && !selected.external);
+  const heldWhy = $derived(selected?.external ? 'External server: it runs where it was started.' : !selected?.controllable ? 'This node does not allow launching.' : '');
   const ep = $derived(session ? `http://${session.endpoint.host}:${session.endpoint.port}` : '');
-  const tuneTip = $derived(
-    session && session.slot === selected?.id && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this tier launches',
-  );
+  const tuneTip = $derived(session && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches');
 </script>
 
 <div class="ctl">
-  <button class="chip" onclick={() => actions.copyEndpoint()} disabled={!online} title={online ? `Copy ${ep}` : 'Endpoint offline'}>
+  <button class="chip" onclick={() => actions.copyEndpoint(selected?.id)} disabled={!online} title={online ? `Copy ${ep}` : 'Endpoint offline'}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a2.7 2.7 0 0 0 3.8 0l2.2-2.2a2.7 2.7 0 0 0-3.8-3.8l-.7.7" /><path d="M9.4 6.6a2.7 2.7 0 0 0-3.8 0L3.4 8.8a2.7 2.7 0 0 0 3.8 3.8l.7-.7" /></svg>
     <span class="mono">{port ? `:${port}` : '—'}</span>{#if !online}<span class="note">offline</span>{/if}
   </button>
@@ -46,41 +47,50 @@
   </button>
   <span class="spacer"></span>
 
-  <!-- the primary place: Launch / Cancel / Stop / Stopping / Restart after a fault -->
-  {#if view === 'idle'}
+  <!-- the primary place: Launch / Cancel / Stop / Stopping / Restart after a fault; a quiet note for an external
+       server (KLIF never starts or stops it); Cancel for a launch that waits for other Systems to stop -->
+  {#if selected?.external}
+    <button class="btn act ext" disabled title={EXTERNAL_TITLE}><span class="al">{EXTERNAL_NOTE}</span></button>
+  {:else if view === 'idle' && isPendingLaunch(selected)}
+    <button class="btn act stop" onclick={() => actions.stop(selected?.id)} disabled={!canStop(selected)} title={selected?.reason ?? 'Cancel the launch'}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" class="solid" /></svg><span class="al">Cancel <b>{selected?.label ?? ''}</b></span>
+    </button>
+  {:else if view === 'idle'}
     <button
       class="btn act go"
-      onclick={() => actions.launch(selected?.id)}
-      disabled={!ready}
-      title={ready ? `Launch ${selected?.label ?? ''}` : `${selected?.label ?? ''}: ${selected?.reason ?? availText(selected?.availability ?? 'unsupported')}`}
+      onclick={() => doLaunch(actions, selected, ctl)}
+      disabled={!ctl.enabled}
+      title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${selected?.reason ?? ''}` : `Launch ${selected?.label ?? ''}`) : `${selected?.label ?? ''}: ${ctl.blocked}`}
     >
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3L13 8L4.5 13Z" class="solid" /></svg><span class="al">Launch <b>{selected?.label ?? ''}</b></span>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3L13 8L4.5 13Z" class="solid" /></svg><span class="al"
+        >{#if ctl.stopOthers}{ctl.text}{:else}Launch <b>{selected?.label ?? ''}</b>{/if}</span
+      >
     </button>
   {:else if view === 'fault'}
-    <button class="btn act fix" onclick={() => actions.restart()} title="Launch {running?.label ?? ''} again">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" /><path d="M12.2 1.8v3h-3" /></svg><span class="al">Restart <b>{running?.label ?? ''}</b></span>
+    <button class="btn act fix" onclick={() => actions.restart(selected?.id)} disabled={!mine} title="Launch {selected?.label ?? ''} again">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" /><path d="M12.2 1.8v3h-3" /></svg><span class="al">Restart <b>{selected?.label ?? ''}</b></span>
     </button>
   {:else}
-    <button class="btn act stop" onclick={() => actions.stop()} disabled={view === 'stopping'}>
+    <button class="btn act stop" onclick={() => actions.stop(selected?.id)} disabled={view === 'stopping' || !canStop(selected)} title={heldWhy}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" class="solid" /></svg><span class="al"
-        >{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{running?.label ?? ''}</b></span
+        >{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{selected?.label ?? ''}</b></span
       >
     </button>
   {/if}
 
   {#if view === 'fault'}
-    <button class="btn w2" onclick={() => actions.dismiss?.()} title="Leave the fault and go back to the launcher">
+    <button class="btn w2" onclick={() => actions.dismiss(selected?.id)} disabled={!mine} title="Leave the fault and go back to the launcher">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3.5" /><path d="M7 4.2L3.2 8L7 11.8" /></svg>Dismiss
     </button>
   {:else}
-    <button class="btn w2" onclick={() => actions.restart()} disabled={!session || view !== 'live'} title="Stop and launch again with the current settings">
+    <button class="btn w2" onclick={() => actions.restart(selected?.id)} disabled={!session || view !== 'live' || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" /><path d="M12.2 1.8v3h-3" /></svg>Restart
     </button>
   {/if}
   <button class="btn tune w3" onclick={() => actions.openTune(selected?.id)} title={tuneTip}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" /><circle cx="10" cy="4" r="1.6" class="knob" /><circle cx="5.5" cy="8" r="1.6" class="knob" /><circle cx="9.5" cy="12" r="1.6" class="knob" /></svg>Tune
   </button>
-  <button class="btn w4" onclick={() => actions.openEndpoint()} disabled={!online} title={image ? 'Open the image server web UI' : 'Open the endpoint'}>
+  <button class="btn w4" onclick={() => actions.openEndpoint(selected?.id)} disabled={!online} title={image ? 'Open the image server web UI' : 'Open the endpoint'}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4" /><path d="M13.5 2.5L7.5 8.5" /><path d="M12 9.5v3.2a.8.8 0 0 1-.8.8H3.3a.8.8 0 0 1-.8-.8V4.8a.8.8 0 0 1 .8-.8h3.2" /></svg>{image ? 'Web UI' : 'Endpoint'}
   </button>
   <button class="btn w5" onclick={() => actions.toggleConsole(view === 'fault' ? true : undefined)}>
@@ -217,6 +227,16 @@
     background: rgba(3, 9, 12, 0.7);
     border-color: var(--ph-rule);
     box-shadow: none;
+  }
+  .btn.ext,
+  .btn.ext:disabled {
+    justify-content: center;
+    opacity: 1;
+    background: transparent;
+    border-color: var(--ph-rule);
+    color: var(--ph-muted);
+    box-shadow: none;
+    text-shadow: none;
   }
   .btn.stop {
     color: #ee6f65;

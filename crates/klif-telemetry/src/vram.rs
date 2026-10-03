@@ -11,7 +11,7 @@ pub const HISTORY_LEN: usize = 300;
 pub const LAYER_ORDER: [VramLayerId; 6] =
     [VramLayerId::Other, VramLayerId::Weights, VramLayerId::Kv, VramLayerId::Buffers, VramLayerId::Draft, VramLayerId::Projector];
 
-fn order_of(id: VramLayerId) -> usize {
+pub(crate) fn order_of(id: VramLayerId) -> usize {
     LAYER_ORDER.iter().position(|x| *x == id).unwrap_or(LAYER_ORDER.len())
 }
 

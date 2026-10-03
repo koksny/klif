@@ -398,7 +398,7 @@ export class LoomScene {
 
   setVm(vm: ViewModel) {
     this.vm = vm;
-    const name = vm.session?.model.name ?? vm.slots.find((s) => s.id === vm.selected)?.model.name;
+    const name = vm.session?.model.name ?? vm.systems.find((s) => s.id === vm.selected)?.model.name;
     const a = archOf(name);
     const key = `${a.kind}${a.layers}${a.experts}`;
     if (key !== this.archKey) {

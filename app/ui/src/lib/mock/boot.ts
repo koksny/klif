@@ -1,7 +1,7 @@
 // Boot sequence planner: process -> device -> weights -> kv -> warmup -> ready, with the VRAM layers
 // building up as the real loader fills memory. Durations come from real log timestamps where logs
 // exist (weights, kv/projector/draft) and from estimates where they do not (process, device, warmup).
-import type { LoadStep, LoadStepId, ModelRef, VramLayer } from '../model/types';
+import type { LoadStep, LoadStepId, ModelRef, SystemKind, VramLayer } from '../model/types';
 import { clamp } from './rng';
 
 export interface BootDurations {
@@ -12,10 +12,14 @@ export interface BootDurations {
   warmupS: number;
 }
 
+/** Which server's log lines the boot prints: llama.cpp, stable-diffusion.cpp, or a plain server. */
+export type LogStyle = 'llama' | 'sd' | 'generic';
+
 export interface BootPlan {
   d: BootDurations;
   total: number;
-  kind: 'llm' | 'image';
+  kind: SystemKind;
+  style: LogStyle;
   model: ModelRef;
   /** Layers the slot will hold once live. */
   target: VramLayer[];
@@ -25,13 +29,14 @@ export interface BootPlan {
 
 export function planBoot(
   d: BootDurations,
-  kind: 'llm' | 'image',
+  kind: SystemKind,
+  style: LogStyle,
   model: ModelRef,
   target: VramLayer[],
   deviceDetail: string,
   port: number,
 ): BootPlan {
-  return { d, total: d.processS + d.deviceS + d.weightsS + d.kvS + d.warmupS, kind, model, target, deviceDetail, port };
+  return { d, total: d.processS + d.deviceS + d.weightsS + d.kvS + d.warmupS, kind, style, model, target, deviceDetail, port };
 }
 
 export interface BootView {
@@ -43,16 +48,16 @@ export interface BootView {
 
 const easeOut = (u: number) => 1 - Math.pow(1 - clamp(u, 0, 1), 1.3);
 
-function stepLabel(id: LoadStepId, kind: 'llm' | 'image'): string {
+function stepLabel(id: LoadStepId, kind: SystemKind): string {
   switch (id) {
     case 'process':
       return 'Start process';
     case 'device':
       return 'Find device';
     case 'weights':
-      return kind === 'llm' ? 'Load weights' : 'Load diffusion weights';
+      return kind === 'llm' ? 'Load weights' : kind === 'image' ? 'Load diffusion weights' : 'Load model';
     case 'kv':
-      return kind === 'llm' ? 'Allocate KV cache' : 'Load text encoder and VAE';
+      return kind === 'llm' ? 'Allocate KV cache' : kind === 'image' ? 'Load text encoder and VAE' : 'Prepare runtime';
     case 'warmup':
       return 'Warm up';
     case 'ready':
@@ -118,6 +123,7 @@ function detail(plan: BootPlan, id: LoadStepId, state: LoadStep['state'], p: num
     case 'kv':
       if (state === 'pending') return undefined;
       if (plan.kind === 'image') return 'text encoder + VAE';
+      if (plan.kind !== 'llm') return 'runtime';
       return `${Math.round((m.ctxTokens ?? 0) / 1024)}k · ${m.kvType ?? 'q8_0'}`;
     default:
       return undefined;
@@ -140,7 +146,7 @@ export function bootLines(plan: BootPlan): BootLine[] {
   const kEnd = wEnd + d.kvS;
   const out: BootLine[] = [];
   const llama = (at: number, text: string) => out.push({ at, proc: at - start, text, level: 'I' });
-  if (plan.kind === 'llm') {
+  if (plan.style === 'llama') {
     llama(start + 0.03, 'cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)');
     llama(start + 0.04, `srv    load_model: loading model ${m.name} ${m.quant}`);
     llama(wEnd, 'cmn          init: llama threadpool init, n_threads = 16');
@@ -151,6 +157,13 @@ export function bootLines(plan: BootPlan): BootLine[] {
     llama(kEnd - 0.06, `srv    load_model: initializing, n_slots = 1, n_ctx_slot = ${m.ctxTokens ?? 0}, kv_unified = 'false'`);
     llama(kEnd, 'srv  llama_server: model loaded');
     llama(kEnd + 0.01, `srv  llama_server: listening on http://127.0.0.1:${plan.port}`);
+  } else if (plan.style === 'generic') {
+    const raw = (at: number, text: string) => out.push({ at, proc: -1, text, level: 'I' });
+    raw(d.processS * 0.5, `Starting ${m.name} (${m.engine}${m.backend ? ` · ${m.backend}` : ''})`);
+    raw(d.processS + d.deviceS, `device: ${m.device}`);
+    raw(start + 0.05, `loading model ${m.name} ${m.quant}`.trim());
+    raw(wEnd, 'model loaded');
+    raw(kEnd, `listening on http://127.0.0.1:${plan.port}`);
   } else {
     const size = m.imageSize ?? '512x768';
     const ram = ((m.weightsGiB ?? 7.4) * 1024 * 1.58).toFixed(2);

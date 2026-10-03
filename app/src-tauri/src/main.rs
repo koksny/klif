@@ -3,24 +3,35 @@
 //! (`klif://vm` events at 2 Hz, `klif_*` commands).
 //!
 //! Dev: the UI dev server registered in .studio/devserver.json (tauri.conf.json devUrl) must be running;
-//! `cargo run` here (add `--features stub-engine` for sample data instead of the real engine).
-//! Nothing is written outside the state directory (the directory of klif.toml): the WebView2 profile,
-//! window geometry and the shell log all live there.
+//! `cargo run` here.
+//! Nothing is written outside KLIF's two folders: the state directory (the folder of klif.toml: window
+//! geometry, panel mode) and the data directory (the WebView2 profile and the shell log, which lives in the
+//! logs folder). The two are the same folder unless klif.toml is the default `%APPDATA%\KLIF` one.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod clipboard;
 mod commands;
+mod endpoint;
 mod engine;
 mod geometry;
-mod gpu;
 mod klog;
+mod opener;
 mod panel;
+#[cfg(feature = "selftest")]
 mod selftest;
 mod shell;
-#[cfg(feature = "stub-engine")]
-mod stub;
 mod tray;
+
+// Windows-only modules; other systems get stand-ins from `other_os` under the same names.
+#[cfg(windows)]
+mod clipboard;
+#[cfg(windows)]
+mod gpu;
+#[cfg(windows)]
 mod webview;
+#[cfg(not(windows))]
+mod other_os;
+#[cfg(not(windows))]
+use other_os::{clipboard, gpu, webview};
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -28,7 +39,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use klif_common::config::{Config, GpuCfg, KreaCfg, LauncherCfg, NetCfg, TelemetryCfg, TiersCfg, UiCfg};
+use klif_common::config::{Config, LoadedConfig};
 use klif_common::vm::{HostInfo, HostKind, PanelInfo};
 use tauri::webview::{PageLoadEvent, PageLoadPayload};
 use tauri::{AppHandle, Emitter, RunEvent, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
@@ -41,35 +52,28 @@ use crate::shell::{main_window, Shell, MAIN};
 const MIN_W: f64 = 760.0;
 const MIN_H: f64 = 640.0;
 
-/// Shell defaults when no klif.toml exists: state in %APPDATA%\KLIF (the documented config location).
-fn fallback_config() -> Config {
-    let state_dir = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("KLIF")).unwrap_or_else(|| PathBuf::from("."));
-    Config {
-        launcher: LauncherCfg { script: PathBuf::new(), gui_script: None, state_file: None, exporter: None, logs_dir: None },
-        net: NetCfg::default(),
-        gpu: GpuCfg::default(),
-        tiers: TiersCfg::default(),
-        ui: UiCfg::default(),
-        telemetry: TelemetryCfg::default(),
-        krea: KreaCfg::default(),
-        source: PathBuf::new(),
-        state_dir,
-    }
-}
-
 fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
     p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into())
 }
 
 fn main() {
-    let (cfg, cfg_err) = match Config::load() {
-        Ok(c) => (c, None),
-        Err(e) => (fallback_config(), Some(format!("{e:#}"))),
-    };
-    klog::init(Some(&cfg.state_path("klif-shell.log")));
-    match &cfg_err {
-        None => log::info!("config {} (state dir {})", cfg.source.display(), cfg.state_dir.display()),
-        Some(e) => log::warn!("no usable klif.toml ({e}); shell state in {}", cfg.state_dir.display()),
+    // Never fails: a missing or broken klif.toml gives an empty config at its path plus issues (the engine shows
+    // them; the state dir is still the right one).
+    let loaded = klif_common::config::load();
+    let cfg = loaded.cfg.clone();
+    // The data folder holds the WebView2 profile and (by default) the logs.
+    let _ = std::fs::create_dir_all(&cfg.data_dir);
+    // The shell log sits with the session logs (`[paths] logs_dir`, default <data_dir>\logs), so "Open logs"
+    // shows both.
+    klog::init(Some(&cfg.logs_dir().join("klif-shell.log")));
+    log::info!(
+        "config {} (state dir {}, data dir {})",
+        cfg.source.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none yet)".into()),
+        cfg.state_dir.display(),
+        cfg.data_dir.display()
+    );
+    for i in &loaded.issues {
+        log::warn!("config: {}", i.text);
     }
     log::info!("engine: {}", engine::KIND);
     log::info!(
@@ -83,9 +87,7 @@ fn main() {
     }
 
     // DXGI before any WebView2 environment exists; LUIDs change every boot.
-    for a in gpu::dxgi_adapters() {
-        log::info!("adapter {}{}", gpu::describe(&a.adapter), if a.software { " (software)" } else { "" });
-    }
+    gpu::log_adapters();
     let ui_gpu = gpu::resolve_ui_adapter(&cfg);
     let browser_args = gpu::browser_args(ui_gpu.as_ref());
     match &ui_gpu {
@@ -105,7 +107,7 @@ fn main() {
     };
     let panel = PanelCtl::load(cfg.state_path("panel.json"), cfg.ui.panel_monitor.clone());
     let shell = Arc::new(Shell::new(host, geometry, panel, ui_gpu));
-    let webview_dir = cfg.state_path("webview-data");
+    let webview_dir = cfg.data_path("webview-data");
 
     let app = tauri::Builder::default()
         // Registered first: a second launch hands its argv to us and exits before anything else runs.
@@ -116,7 +118,13 @@ fn main() {
         .manage(shell)
         .invoke_handler(tauri::generate_handler![
             commands::klif_snapshot,
+            commands::klif_engine_status,
             commands::klif_act,
+            commands::klif_preset_get,
+            commands::klif_command_preview,
+            commands::klif_set_api_key,
+            commands::klif_open_config,
+            commands::klif_open_logs,
             commands::klif_open_endpoint,
             commands::klif_copy_endpoint,
             commands::klif_copy_api_key,
@@ -125,7 +133,7 @@ fn main() {
             commands::klif_skins,
         ])
         .setup(move |app| {
-            setup(app.handle(), cfg, cfg_err, browser_args, webview_dir)?;
+            setup(app.handle(), cfg, loaded, browser_args, webview_dir)?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -152,11 +160,11 @@ fn main() {
     });
 }
 
-fn setup(app: &AppHandle, cfg: Config, cfg_err: Option<String>, browser_args: String, webview_dir: PathBuf) -> tauri::Result<()> {
+fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: String, webview_dir: PathBuf) -> tauri::Result<()> {
     let s = shell::shell(app);
     let t = Instant::now();
     let page_app = app.clone();
-    let win = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+    let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
         .title("KLIF")
         .decorations(!cfg.ui.frameless)
         .transparent(false)
@@ -164,9 +172,13 @@ fn setup(app: &AppHandle, cfg: Config, cfg_err: Option<String>, browser_args: St
         .inner_size(1024.0, 1152.0)
         .visible(false)
         .data_directory(webview_dir.clone())
-        .additional_browser_args(&browser_args)
-        .on_page_load(move |w, p| on_page_load(&page_app, &w, &p))
-        .build()?;
+        .on_page_load(move |w, p| on_page_load(&page_app, &w, &p));
+    // WebView2 only: the GPU pin (and wry's own default arguments, re-appended there).
+    #[cfg(windows)]
+    let builder = builder.additional_browser_args(&browser_args);
+    #[cfg(not(windows))]
+    let _ = &browser_args;
+    let win = builder.build()?;
     log::info!(
         "window built in {} ms (frameless {}, webview data {})",
         t.elapsed().as_millis(),
@@ -204,7 +216,7 @@ fn setup(app: &AppHandle, cfg: Config, cfg_err: Option<String>, browser_args: St
         win.on_window_event(move |e| on_window_event(&h, e));
     }
     tray::build(app)?;
-    start_engine(app.clone(), cfg, cfg_err);
+    start_engine(app.clone(), loaded);
     {
         // Geometry is written at most every 2 s while it changes, and on exit. Every 10 s the monitors are
         // re-read, so a status screen plugged in later makes panel mode available.
@@ -224,30 +236,57 @@ fn setup(app: &AppHandle, cfg: Config, cfg_err: Option<String>, browser_args: St
                 }
             })?;
     }
+    #[cfg(feature = "selftest")]
     selftest::exit_after(app);
     Ok(())
 }
 
+/// How long to wait before asking again while another process holds the engine.
+const ENGINE_RETRY: Duration = Duration::from_secs(2);
+
 /// Start the engine off the main thread so the window appears at once; the UI shows "Connecting" until
-/// `klif_snapshot` returns. A failure (or a panic in an unfinished engine) becomes the UI's error line.
-fn start_engine(app: AppHandle, cfg: Config, cfg_err: Option<String>) {
+/// `klif_snapshot` returns. While another process (klif-cli) holds `engine.lock` the start is retried every
+/// 2 s for as long as it takes: there is never a second engine. Any other failure (or a panic in an unfinished
+/// engine) becomes the UI's error line.
+fn start_engine(app: AppHandle, loaded: LoadedConfig) {
     let spawned = std::thread::Builder::new().name("klif-engine-start".into()).spawn(move || {
         let s = shell::shell(&app);
-        if let (Some(e), false) = (&cfg_err, cfg!(feature = "stub-engine")) {
-            log::error!("engine not started: {e}");
-            s.set_engine(Err(format!("No usable klif.toml: {e}")));
-            return;
-        }
-        let host = s.host.lock().unwrap().clone();
         let t = Instant::now();
-        let r = match std::panic::catch_unwind(AssertUnwindSafe(|| engine::Engine::start(cfg, host))) {
-            Ok(Ok(h)) => Ok(h),
-            Ok(Err(e)) => Err(e.to_string()),
-            Err(p) => Err(format!("the engine crashed while starting ({})", panic_text(&*p))),
+        let mut first = Some(loaded);
+        let mut attempt = 0u32;
+        let mut shown: Option<String> = None;
+        let mut logged: Option<Instant> = None;
+        let r = loop {
+            attempt += 1;
+            // A retry re-reads klif.toml, so fixes made while waiting are picked up.
+            let cfg = first.take().unwrap_or_else(klif_common::config::load);
+            let host = s.host.lock().unwrap().clone();
+            match std::panic::catch_unwind(AssertUnwindSafe(|| begin_engine(cfg, host, attempt))) {
+                Ok(Ok(h)) => break Ok(h),
+                Ok(Err(engine::StartError::Busy { pid })) => {
+                    let msg = format!("klif-cli (pid {pid}) holds the engine \u{2014} retrying");
+                    if shown.as_deref() != Some(msg.as_str()) {
+                        s.set_waiting(msg.clone());
+                        tray::set_tooltip(&app, Some(&format!("KLIF: {msg}")));
+                        shown = Some(msg.clone());
+                    }
+                    // Once at first and then every 30 s, not every retry.
+                    if logged.map(|l| l.elapsed() >= Duration::from_secs(30)).unwrap_or(true) {
+                        log::warn!("{msg} (attempt {attempt}, {} s so far)", t.elapsed().as_secs());
+                        logged = Some(Instant::now());
+                    }
+                    std::thread::sleep(ENGINE_RETRY);
+                }
+                Ok(Err(e)) => break Err(e.to_string()),
+                Err(p) => break Err(format!("the engine crashed while starting ({})", panic_text(&*p))),
+            }
         };
+        if shown.is_some() {
+            tray::set_tooltip(&app, None);
+        }
         match &r {
             Ok(h) => {
-                log::info!("engine started in {} ms", t.elapsed().as_millis());
+                log::info!("engine started in {} ms ({attempt} attempt{})", t.elapsed().as_millis(), if attempt == 1 { "" } else { "s" });
                 let push = s.clone();
                 let ah = app.clone();
                 h.subscribe(Box::new(move |vm| {
@@ -258,16 +297,16 @@ fn start_engine(app: AppHandle, cfg: Config, cfg_err: Option<String>) {
                             // First push and every ~5 min: enough real values to tell from the log alone that
                             // live data (not an empty or sample view model) reaches the UI.
                             log::info!(
-                                "klif://vm pushed #{n}: {} slots, session {}, vram {} {:.2}/{:.1} GiB{}, ram {:.1}/{:.1} GiB, cpu {:.0}%",
-                                vm.slots.len(),
+                                "klif://vm pushed #{n}: {} systems, session {}, vram {} {:.2}/{:.1} GiB{}, ram {:.1}/{:.1} GiB, cpu {:.0}%",
+                                vm.systems.len(),
                                 vm.session.as_ref().map(|x| format!("{:?}", x.phase)).unwrap_or_else(|| "none".into()),
                                 vm.vram.device,
                                 vm.vram.used_gib,
                                 vm.vram.total_gib,
                                 if vm.vram.dormant.is_some() { " (dormant)" } else { "" },
-                                vm.system.ram_used_gib,
-                                vm.system.ram_total_gib,
-                                vm.system.cpu_pct
+                                vm.machine.ram_used_gib,
+                                vm.machine.ram_total_gib,
+                                vm.machine.cpu_pct
                             );
                         }
                     }
@@ -284,6 +323,15 @@ fn start_engine(app: AppHandle, cfg: Config, cfg_err: Option<String>) {
     }
 }
 
+/// One start attempt. The `selftest` build can pretend that klif-cli holds the engine (KLIF_SELFTEST_BUSY).
+fn begin_engine(loaded: LoadedConfig, host: HostInfo, _attempt: u32) -> Result<engine::EngineHandle, engine::StartError> {
+    #[cfg(feature = "selftest")]
+    if let Some(pid) = selftest::fake_busy(_attempt) {
+        return Err(engine::StartError::Busy { pid });
+    }
+    engine::Engine::start(loaded, host)
+}
+
 fn on_page_load<R: Runtime>(app: &AppHandle<R>, _w: &WebviewWindow<R>, p: &PageLoadPayload<'_>) {
     let url = p.url().to_string();
     match p.event() {
@@ -292,21 +340,35 @@ fn on_page_load<R: Runtime>(app: &AppHandle<R>, _w: &WebviewWindow<R>, p: &PageL
             log::info!("page loaded: {url} (UI source: {})", if tauri::is_dev() { "DEV SERVER (devUrl)" } else { "embedded assets" });
             let s = shell::shell(app);
             if !s.page_loaded.swap(true, Ordering::Relaxed) {
-                let h = app.clone();
-                std::thread::spawn(move || {
-                    // The GPU process exists shortly after the first paint.
-                    std::thread::sleep(Duration::from_millis(1500));
-                    verify_ui_gpu(&h);
-                    watch_gpu_process(&h);
-                });
-                selftest::run(app);
-                selftest::run_panel(app);
+                check_ui_gpu(app);
+                #[cfg(feature = "selftest")]
+                {
+                    selftest::run(app);
+                    selftest::run_panel(app);
+                }
             }
         }
     }
 }
 
+/// Once the first page is up: check which adapter the WebView2 GPU process renders on, and keep checking
+/// when WebView2 restarts it. (WebView2 only.)
+#[cfg(windows)]
+fn check_ui_gpu<R: Runtime>(app: &AppHandle<R>) {
+    let h = app.clone();
+    std::thread::spawn(move || {
+        // The GPU process exists shortly after the first paint.
+        std::thread::sleep(Duration::from_millis(1500));
+        verify_ui_gpu(&h);
+        watch_gpu_process(&h);
+    });
+}
+
+#[cfg(not(windows))]
+fn check_ui_gpu<R: Runtime>(_app: &AppHandle<R>) {}
+
 /// Locate the WebView2 GPU process and check which adapter it renders on; tell the UI.
+#[cfg(windows)]
 fn verify_ui_gpu<R: Runtime>(app: &AppHandle<R>) {
     let s = shell::shell(app);
     let Some(win) = main_window(app) else { return };
@@ -331,6 +393,7 @@ fn verify_ui_gpu<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Re-check when WebView2 restarts its GPU process (e.g. after a driver reset).
+#[cfg(windows)]
 fn watch_gpu_process<R: Runtime>(app: &AppHandle<R>) {
     let Some(win) = main_window(app) else { return };
     let h = app.clone();

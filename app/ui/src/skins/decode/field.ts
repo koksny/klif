@@ -3,9 +3,9 @@
 //   locked text    = context in use (its share of the screen is the real context fill), read prompt in darker
 //                    blue, generated text in light blue; it stops churning
 //   prefill        = the frontier sweeps forward and freezes the noise into the prompt
-//   decode         = the cursor at the end of the context FINDS whole tokens in the noise: the characters there
-//                    shuffle, lock into the token and glow, then cool down; the rate follows tok/s, drafts
-//                    accepted by speculation land in bursts
+//   decode         = whole tokens surface from the noise anywhere on the screen: the characters there shuffle,
+//                    lock into the token with a soft blue phosphor flash and a scan streak, then cool back into
+//                    the noise; the rate follows tok/s, drafts accepted by speculation land in bursts on one line
 //   load           = the terminal boots: characters print in as the model loads
 //   Krea           = the noise settles step by step into an ASCII picture
 //   dormant GPU    = everything freezes and goes amber (waking: it thaws as the VRAM comes back)
@@ -41,7 +41,7 @@ const LAYER_RGB: Record<string, RGB> = {
 const ASCII = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~';
 const SHAPES = ['█', '░', '·', '─', '¦'];
 const CHARS = [...ASCII, ...SHAPES];
-const HALO = CHARS.length;
+const HALO = CHARS.length; // a soft gaussian blot (blooms are drawn with it, stretched over their rectangle)
 const GLYPH = new Map<string, number>(CHARS.map((c, i) => [c, i]));
 const BLANK = -1;
 const g = (c: string) => (c === ' ' ? BLANK : (GLYPH.get(c) ?? GLYPH.get('?')!));
@@ -195,7 +195,7 @@ export class DecodeField {
   private ovGlyph = new Int16Array(0);
   private ovRgb = new Float32Array(0);
   private ovA = new Float32Array(0);
-  private ovHalo = new Uint8Array(0);
+  private ovBase = new Float32Array(0); // > 0: the cell's own glyph also shows at this weight (a find fading out)
   private stamp = 0;
   // context text
   private text: number[] = [];
@@ -203,7 +203,6 @@ export class DecodeField {
   private tokenCursor = 0;
   private locked = 0; // cells in use (float, eased)
   private lockedInt = 0;
-  private writeAt = 0; // where the next find lands (cells after the frontier)
   private finds: Find[] = [];
   private banners: Banner[] = [];
   private findAcc = 0;
@@ -292,7 +291,7 @@ export class DecodeField {
     this.ovGlyph = new Int16Array(this.cells);
     this.ovRgb = new Float32Array(this.cells * 3);
     this.ovA = new Float32Array(this.cells);
-    this.ovHalo = new Uint8Array(this.cells);
+    this.ovBase = new Float32Array(this.cells);
     for (let i = 0; i < this.cells; i++) {
       this.noise[i] = this.noiseGlyph(i, 0);
       this.nextT[i] = this.t + hash(i, 3) * 2;
@@ -307,7 +306,6 @@ export class DecodeField {
       this.locked = 0;
       this.lockedInt = 0;
     }
-    this.writeAt = 0;
     this.finds = [];
     this.banners = [];
     this.setHero(this.heroCss);
@@ -364,7 +362,7 @@ export class DecodeField {
 
   private events(vm: ViewModel) {
     const s = vm.session;
-    const key = s ? `${s.slot}|${s.model.name}` : '';
+    const key = s ? `${s.system}|${s.model.name}` : '';
     if (key !== this.sessionKey) {
       this.sessionKey = key;
       this.seed = Math.floor(hash(key.length, Date.now() & 0xffff) * 1e6);
@@ -454,7 +452,9 @@ export class DecodeField {
     // decode: finds at the token rate (capped so each one can still be seen)
     if (this.mode === 'decode' && s?.llm) {
       const tps = s.llm.decodeTps;
-      this.findAcc += Math.min(28, 3 + tps * 0.32) * dt;
+      // finds land all over the screen, so a small field (the mini panel) gets proportionally fewer
+      const area = clamp(this.cells / 2600, 0.3, 1);
+      this.findAcc += Math.min(28, 3 + tps * 0.32) * area * dt;
       while (this.findAcc >= 1) {
         this.findAcc -= 1;
         this.find(s.llm.spec?.acceptancePct ?? 0);
@@ -489,19 +489,43 @@ export class DecodeField {
     return r < 0.12 ? BLANK : pick(NOISE, hash(i, salt, 5));
   }
 
-  /** One token found in the noise just past the frontier; drafts accepted by speculation come in pairs/triples. */
+  /**
+   * One token surfacing from the noise somewhere on the screen (any row, clear of the hero, of other tokens and of
+   * banners). Drafts accepted by speculation come in pairs/triples, written one after another on the same line.
+   */
   private find(acceptPct: number) {
     const burst = acceptPct > 0 && hash(this.tokenCursor, 9) < acceptPct / 100 ? 2 + Math.floor(hash(this.tokenCursor, 10) * 2) : 1;
-    const band = this.tcols * 3;
-    for (let b = 0; b < burst; b++) {
-      const tk = this.tokens[(this.tokenCursor++ + 4000) % this.tokens.length];
-      const glyphs = [...tk].map(g);
-      if (this.writeAt + glyphs.length > band) this.writeAt = 0;
-      const i0 = this.lockedInt + this.writeAt;
-      this.writeAt += glyphs.length;
-      if (i0 + glyphs.length >= this.cells) continue;
-      this.finds.push({ i0, text: glyphs, t0: this.t + b * 0.03, hold: 1.1 + hash(i0, 4) * 0.6 });
+    const run = [];
+    for (let b = 0; b < burst; b++) run.push([...this.tokens[(this.tokenCursor++ + 4000) % this.tokens.length]].map(g));
+    const len = run.reduce((n, gl) => n + gl.length, 0);
+    const i0 = this.findSpot(len);
+    if (i0 < 0) return;
+    let at = i0;
+    run.forEach((glyphs, b) => {
+      this.finds.push({ i0: at, text: glyphs, t0: this.t + b * 0.07, hold: 1.1 + hash(at, 4) * 0.6 });
+      at += glyphs.length;
+    });
+  }
+
+  /** A free run of `len` cells within one row of the terminal (first cell index), or -1. */
+  private findSpot(len: number): number {
+    const cols = this.tcols;
+    if (this.rows < 2 || len + 2 > cols) return -1;
+    for (let tries = 0; tries < 14; tries++) {
+      const row = Math.floor(hash(this.seed++, 21) * this.rows);
+      const col = 1 + Math.floor(hash(this.seed++, 23) * (cols - len - 1));
+      const i0 = row * cols + col;
+      if (this.inHero(i0) || this.inHero(i0 + len - 1)) continue;
+      const clash = (o: { i0: number; text: number[] }, pad: number) => {
+        const r = Math.floor(o.i0 / cols);
+        if (Math.abs(r - row) > pad) return false;
+        const c0 = o.i0 - r * cols;
+        return col < c0 + o.text.length + 2 && c0 < col + len + 2;
+      };
+      if (this.finds.some((f) => clash(f, 0)) || this.banners.some((b) => clash(b, 1))) continue;
+      return i0;
     }
+    return -1;
   }
 
   /** A line that resolves from the noise somewhere free; the first text that fits wins (short forms last). */
@@ -552,7 +576,7 @@ export class DecodeField {
     return x + this.cw > x0 - this.cw * 2 && x < x1 + this.cw * 2 && y + this.ch > y0 - this.ch && y < y1 + this.ch;
   }
 
-  private over(i: number, glyph: number, rgb: RGB, a: number, halo: boolean) {
+  private over(i: number, glyph: number, rgb: RGB, a: number, base = 0) {
     if (i < 0 || i >= this.cells) return;
     this.ovStamp[i] = this.stamp;
     this.ovGlyph[i] = glyph;
@@ -560,7 +584,7 @@ export class DecodeField {
     this.ovRgb[i * 3 + 1] = rgb[1];
     this.ovRgb[i * 3 + 2] = rgb[2];
     this.ovA[i] = a;
-    this.ovHalo[i] = halo ? 1 : 0;
+    this.ovBase[i] = base;
   }
 
   // ---- drawing ----------------------------------------------------------------------------------------------------
@@ -584,6 +608,7 @@ export class DecodeField {
         let glyph = f.text[k];
         let rgb: RGB = ICE;
         let a = 1;
+        let base = 0;
         const lockAt = 0.09 + k * 0.012;
         if (age < lockAt) {
           if (glyph === BLANK) continue;
@@ -591,14 +616,28 @@ export class DecodeField {
           rgb = ARC;
           a = 0.85;
         } else if (age > f.hold) {
-          const k2 = (age - f.hold) / 0.5;
+          // cools back into the noise: the token fades out while the cell's own glyph fades in under it
+          const k2 = clamp((age - f.hold) / 0.5);
           rgb = mix(WRITTEN_RGB, NOISE_RGB, k2);
-          a = 0.9 - k2 * 0.6;
+          a = 0.9 * (1 - k2);
+          base = Math.max(0.001, k2);
         } else {
           const cool = clamp((age - lockAt) / f.hold);
           rgb = mix(ICE, WRITTEN_RGB, cool * cool);
         }
-        this.over(i, glyph, rgb, a, age >= lockAt && age < lockAt + 0.25);
+        this.over(i, glyph, rgb, a, base);
+      }
+      // the lock-in flash: a soft blue phosphor bloom over the whole token and a thin scan streak through it
+      const since = age - 0.09;
+      if (since > 0 && since < 0.9) {
+        const env = Math.min(1, since / 0.05) * Math.exp(-since / 0.3);
+        const row = Math.floor(f.i0 / this.tcols);
+        const col = f.i0 - row * this.tcols;
+        const w = f.text.length * this.cw;
+        const x = col * this.cw;
+        const y = row * this.ch + this.ch / 2;
+        this.bloom(x - this.cw * 1.4, y - this.ch * 0.95, w + this.cw * 2.8, this.ch * 1.9, ARC, 0.5 * env);
+        this.bloom(x - this.cw * 6, y - this.ch * 0.16, w + this.cw * 12, this.ch * 0.32, mix(ARC, ICE, 0.35), 0.34 * env);
       }
     }
     for (const b of this.banners) {
@@ -619,7 +658,7 @@ export class DecodeField {
           if (hash(k, b.i0, 3) < k2) continue;
           a = 0.95 - k2 * 0.6;
         }
-        this.over(i, glyph, rgb, a, false);
+        this.over(i, glyph, rgb, a);
       }
     }
 
@@ -629,11 +668,12 @@ export class DecodeField {
       const col = i - row * this.tcols;
       const x = col * this.cw;
       const y = row * this.ch;
+      let baseK = 1;
       if (this.ovStamp[i] === this.stamp) {
         const rgb: RGB = [ov[i * 3], ov[i * 3 + 1], ov[i * 3 + 2]];
         if (this.ovGlyph[i] !== BLANK) this.quad(x, y, this.cw, this.ch, this.ovGlyph[i], rgb, this.ovA[i]);
-        if (this.ovHalo[i]) this.halo(x, y, ICE, 0.32);
-        continue;
+        baseK = this.ovBase[i];
+        if (baseK <= 0) continue;
       }
       let glyph: number;
       let rgb: RGB;
@@ -676,19 +716,19 @@ export class DecodeField {
         }
       }
       if (glyph === BLANK) continue;
-      this.quad(x, y, this.cw, this.ch, glyph, rgb, a);
+      this.quad(x, y, this.cw, this.ch, glyph, rgb, a * baseK);
     }
 
     // the cursor at the end of the context (blinks while waiting, solid while writing); image models have none
     if (this.vm?.session?.llm && mode !== 'fault' && mode !== 'load' && mode !== 'stop') {
-      const i = Math.min(this.cells - 1, this.lockedInt + (mode === 'decode' ? this.writeAt : 0));
+      const i = Math.min(this.cells - 1, this.lockedInt);
       const on = mode === 'decode' || mode === 'prefill' || Math.floor(t * 1.8) % 2 === 0;
       if (on) {
         const x = (i % this.tcols) * this.cw;
         const y = Math.floor(i / this.tcols) * this.ch;
         const c = cold > 0 ? mix(ICE, AMBER, Math.max(0.6, cold)) : ICE;
         this.quad(x, y, this.cw, this.ch, CURSOR, c, 0.95);
-        this.halo(x, y, c, 0.5);
+        this.bloom(x - this.cw * 1.2, y - this.ch * 0.45, this.cw * 3.4, this.ch * 1.9, cold > 0 ? c : ARC, 0.32);
       }
     }
     // the edge between the terminal and memory
@@ -745,7 +785,7 @@ export class DecodeField {
       for (const l of layers) segs.push({ label: l.label, gib: l.gib, rgb: LAYER_RGB[l.id] ?? STREAM });
     }
     if (!vm.session) {
-      const sel = vm.slots.find((x) => x.id === vm.selected);
+      const sel = vm.systems.find((x) => x.id === vm.selected);
       for (const l of sel?.expectedVram ?? []) segs.push({ label: l.label, gib: l.gib, rgb: LAYER_RGB[l.id] ?? STREAM, ghost: true });
     }
 
@@ -817,9 +857,9 @@ export class DecodeField {
     d[o + 8] = a;
   }
 
-  private halo(x: number, y: number, rgb: RGB, a: number) {
-    const s = this.ch * 2.6;
-    this.quad(x + this.cw / 2 - s / 2, y + this.ch / 2 - s / 2, s, s, HALO, rgb, a);
+  /** A soft gaussian glow stretched over a rectangle (additive). */
+  private bloom(x: number, y: number, w: number, h: number, rgb: RGB, a: number) {
+    if (a > 0.004) this.quad(x, y, w, h, HALO, rgb, a);
   }
 
   private render() {
@@ -934,11 +974,20 @@ export class DecodeField {
     });
     const hx = (HALO % ATLAS_COLS) * cw;
     const hy = Math.floor(HALO / ATLAS_COLS) * ch;
-    const grad = x.createRadialGradient(hx + cw / 2, hy + ch / 2, 0, hx + cw / 2, hy + ch / 2, cw / 2);
-    grad.addColorStop(0, 'rgba(255,255,255,0.9)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = grad;
-    x.fillRect(hx, hy, cw, ch);
+    const blot = x.createImageData(cw, ch);
+    const edge = Math.exp(-4.5);
+    for (let py = 0; py < ch; py++) {
+      for (let px = 0; px < cw; px++) {
+        const u = ((px + 0.5) / cw) * 2 - 1;
+        const v = ((py + 0.5) / ch) * 2 - 1;
+        const gu = (Math.exp(-4.5 * u * u) - edge) / (1 - edge);
+        const gv = (Math.exp(-4.5 * v * v) - edge) / (1 - edge);
+        const o = (py * cw + px) * 4;
+        blot.data[o] = blot.data[o + 1] = blot.data[o + 2] = 255;
+        blot.data[o + 3] = Math.round(255 * Math.max(0, gu * gv));
+      }
+    }
+    x.putImageData(blot, hx, hy);
 
     const tex = gl.createTexture()!;
     gl.activeTexture(gl.TEXTURE0);

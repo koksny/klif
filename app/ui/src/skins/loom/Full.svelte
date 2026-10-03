@@ -1,16 +1,20 @@
 <script lang="ts">
   // Loom, full window. The transformer in 3D (scene.ts) on an amber phosphor screen, inside the fixed KLIF
-  // skeleton: header, tier strip, model line, the scene (hero overlay + labels projected through the CRT
+  // skeleton: header, System strip, model line, the scene (hero overlay + labels projected through the CRT
   // barrel), detail rows, request timeline / recent jobs, controls, console line. A phase change only changes
   // what the regions say and what the tower does, never where they are:
   //   idle      - the selected tier's tower, dim and orbiting; STANDBY; configured values; the VRAM fit ring
-  //   loading   - layers build bottom-up with the load fraction; LOAD %; the other tiers locked
+  //   loading   - layers build bottom-up with the load fraction; LOAD %
   //   live-llm  - decode (one token at a time, router fork, attention arcs, logits) or prefill (a curtain)
   //   live-img  - one DiT pass per sampling step, the latent patches resolving
   //   dormant   - the GPU asleep: paged-out layers ghosted, the helix and the fill ring dim
   //   fault     - the tower flickers red and stops; FAULT in the hero, exit and log in the rows
   import { prefersReducedMotion } from 'svelte/motion';
-  import type { Actions, RequestRecord, Slot, ViewModel } from '../../lib/model/types';
+  import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
+  import { strip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
   import Stage from './Stage.svelte';
   import Lock from './Lock.svelte';
@@ -31,13 +35,13 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const runSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const selSlot = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  const kind = $derived(runSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (selSlot?.kind ?? 'llm')));
+  const selSlot = $derived(selectedSystem(vm) ?? undefined);
+  const tabs = $derived(tabsFor(vm));
+  const kind = $derived(selSlot?.kind ?? 'llm');
   const model = $derived(s?.model ?? selSlot?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const shape = $derived(shapeOf(vm));
   const arch = $derived(shape.arch);
 
@@ -48,7 +52,12 @@
   const sleep = useSleep(() => vm);
   const dz = $derived(online ? sleep.info : null);
   const waking = $derived(!!dz && sleep.waking);
-  const selReady = $derived(selSlot?.availability === 'ready');
+  /** The launch control: with conflicts it reads "STOP S1 & LAUNCH" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, selSlot, { short: true }));
+  const idleWhy = $derived(idleState(selSlot));
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!selSlot && selSlot.controllable && !selSlot.external);
+  const heldWhy = $derived(selSlot?.external ? 'External server: it runs where it was started.' : !selSlot?.controllable ? 'This node does not allow launching.' : '');
   const frameless = $derived(!!vm.host?.frameless);
   const panel = $derived(vm.host?.panel?.available ? vm.host.panel : null);
   const panelTip = $derived(`Panel mode: show on the small screen${panel?.target ? ` (${panel.target})` : ''}`);
@@ -62,8 +71,9 @@
   const hero = $derived.by<Hero>(() => {
     const base = { note: '', tone: '' as const, subTone: '' as const };
     if (!s) {
-      const sub = selReady ? (vm.lastSession ? lastSessionText(vm.lastSession, vm.slots) : 'nothing running') : `${selSlot?.label.toLowerCase() ?? ''}: ${(selSlot?.reason ?? availabilityText(selSlot?.availability ?? 'unsupported')).toLowerCase()}`;
-      return { ...base, label: 'STANDBY', value: '—', unit: kind === 'image' ? 'steps' : 'tok/s', sub, tone: 'dim', subTone: selReady ? '' : 'amb' };
+      const blocked = idleWhy.warn || selSlot?.status === 'not-set';
+      const sub = !blocked ? (vm.lastSession ? lastSessionText(vm.lastSession, vm.systems) : 'nothing running') : `${selSlot?.label.toLowerCase() ?? ''}: ${(selSlot?.reason ?? idleWhy.text).toLowerCase()}`;
+      return { ...base, label: 'STANDBY', value: '—', unit: kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests', sub, tone: 'dim', subTone: idleWhy.warn ? 'amb' : '' };
     }
     if (faulted) return { ...base, label: 'FAULT', note: s.fault ? fmtAgo(s.fault.sinceS) : '', value: 'ERR', unit: '', sub: s.fault?.title ?? 'the server stopped', tone: 'red' };
     if (phase === 'stopping') return { ...base, label: 'STOPPING', value: '—', unit: '', sub: `releasing ${fmtGiB(vm.vram.usedGiB)} GiB`, tone: 'dim' };
@@ -108,6 +118,18 @@
       const dil = prefersReducedMotion.current ? '' : tps.current > SHOWN_TPS ? ` · time ×1/${Math.round(tps.current / SHOWN_TPS)}` : ' · real time';
       return { ...base, label: 'DECODE', note: decoding ? `one token per pass${dil}` : 'idle', value: fmtTps(tps.current), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated`, tone: decoding ? '' : 'dim' };
     }
+    if (gen) {
+      const on = (gen.requestsInFlight ?? 0) > 0;
+      return {
+        ...base,
+        label: KIND_LABEL[kind].toUpperCase(),
+        note: on ? 'a request is running' : 'idle',
+        value: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—',
+        unit: 'requests',
+        sub: on ? `${gen.requestsInFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for the next request',
+        tone: on ? '' : 'dim',
+      };
+    }
     if (img) {
       if (img.activity === 'generating' && img.steps > 0)
         return { ...base, label: 'DIFFUSION', note: 'one pass per step, real time', value: `${img.step}/${img.steps}`, unit: 'steps', sub: `${img.sPerIt.toFixed(2)} s/it · ${img.width}x${img.height}${img.edit ? ' · edit' : ''}` };
@@ -128,6 +150,14 @@
         ['images', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
         ['size', model?.imageSize ?? '—'],
         ['mode', model?.mode?.toLowerCase() ?? '—'],
+      ];
+    }
+    if (kind !== 'llm') {
+      return [
+        ['in flight', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+        ['last activity', gen?.lastActivityS !== undefined ? `${fmtDur(gen.lastActivityS)} ago` : '—'],
+        ['model', model?.name ? `${model.name.toLowerCase()}${model.quant ? ` · ${model.quant.toLowerCase()}` : ''}` : '—'],
+        ['reports', gen?.modelId?.toLowerCase() ?? '—'],
       ];
     }
     const heads = arch?.heads ? ` · ${arch.heads} heads${arch.kvHeads ? ` / ${arch.kvHeads} kv` : ''}` : '';
@@ -152,6 +182,7 @@
   const tlCaption = $derived.by(() => {
     if (!s) return ' · not running';
     if (loading) return kind === 'image' ? ' · no jobs yet' : ' · no requests yet';
+    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · failed' : ' · no per-request log for this kind';
     if (kind === 'image') {
       if (!img) return faulted ? ' · no jobs: failed during startup' : ' · no jobs yet';
       return jobs.length ? ` · bar height = time, last ${jobs.length} of ${fmtInt(img.imagesThisSession)}` : ' · no finished jobs yet';
@@ -171,14 +202,14 @@
     return `vram ${fmtGiB(v.usedGiB)} / ${fmtGiB(v.totalGiB)}${v.spillMiB > 0 ? ` · spill ${fmtGiB(v.spillMiB / 1024)}` : ''}`;
   });
   const topLabel = $derived(
-    kind === 'image' ? `latent patches${img?.activity === 'generating' && img.steps > 0 ? ` · step ${img.step} / ${img.steps}` : ''}` : `logits${arch?.vocab ? ` · ${fmtInt(arch.vocab)} vocab` : ''} · top-20 · sampled token`,
+    kind === 'image' ? `latent patches${img?.activity === 'generating' && img.steps > 0 ? ` · step ${img.step} / ${img.steps}` : ''}` : kind !== 'llm' ? `${KIND_LABEL[kind].toLowerCase()} · output` : `logits${arch?.vocab ? ` · ${fmtInt(arch.vocab)} vocab` : ''} · top-20 · sampled token`,
   );
-  const bottomLabel = $derived(kind === 'image' ? 'patch embedding · block 1' : `embedding${arch?.embd ? ` · ${fmtInt(arch.embd)} wide` : ''} · layer 1`);
+  const bottomLabel = $derived(kind === 'image' ? 'patch embedding · block 1' : kind !== 'llm' ? 'input · layer 1' : `embedding${arch?.embd ? ` · ${fmtInt(arch.embd)} wide` : ''} · layer 1`);
 
   const statusTone = $derived(faulted ? 'red' : dz || loading ? 'amb' : s ? 'live' : 'off');
   const statusText = $derived(dz ? (waking ? 'GPU WAKING' : 'GPU ASLEEP') : s ? phase.toUpperCase() : 'IDLE');
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
-  const port = $derived(s?.endpoint.port ?? selSlot?.recipe?.port);
+  const port = $derived(s?.endpoint.port ?? selSlot?.command?.port);
 
   function reqTitle(r: RequestRecord): string {
     return `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
@@ -199,31 +230,33 @@
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
   </header>
 
-  <!-- Tier strip: click selects, double-click launches (nothing running, or after a fault); locked while starting or stopping -->
-  <nav class="tiers" aria-label="Tier">
-    {#each vm.slots as t (t.id)}
-      {@const running = s?.slot === t.id && !faulted}
-      {@const locked = busy && t.id !== s?.slot}
-      {@const na = t.availability !== 'ready'}
-      <button
-        class="tier"
-        class:sel={t.id === vm.selected}
-        class:na
-        class:locked
-        class:fault={faulted && s?.slot === t.id}
-        disabled={locked}
-        aria-pressed={t.id === vm.selected}
-        title={locked ? `${t.label}: locked while ${s?.model.name ?? 'the session'} is ${phase}` : na ? `${t.label}: ${t.reason ?? availabilityText(t.availability)}` : `${t.label}: ${t.model.name}`}
-        onclick={() => actions.select(t.id)}
-        ondblclick={() => {
-          if ((!s || faulted) && !na) actions.launch(t.id);
-        }}
-      >
-        <span class="tn">{t.label}</span>{#if running}<span class="rn">■</span>{:else if locked}<span class="rn lk">▪</span>{/if}
-        <span class="tm" class:bad={na}>{na ? `${modelShort(t.model)} · ${availabilityText(t.availability)}` : modelShort(t.model)}</span>
-      </button>
-    {/each}
-  </nav>
+  <!-- System strip: click selects (never stops anything), double-click launches a System that is ready and has
+       nothing in its way. Scrolls sideways; + adds a System. -->
+  <div class="strip">
+    <nav class="tiers" aria-label="Systems" use:strip={vm.selected}>
+      {#each tabs as t (t.id)}
+        {@const ts = t.system}
+        {@const na = ts.availability !== 'ready' && ts.status !== 'not-set'}
+        <button
+          class="tier"
+          class:sel={t.id === vm.selected}
+          class:na
+          class:fault={ts.status === 'fault'}
+          aria-pressed={t.id === vm.selected}
+          data-sel={t.id === vm.selected}
+          title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${ts.model.name || 'no preset'} (${ts.status}${ts.reason ? `: ${ts.reason}` : ''})`}
+          onclick={() => actions.select(t.id)}
+          ondblclick={() => {
+            if (canLaunch(ts) && ts.conflicts.length === 0) void actions.launch(ts.id).catch(() => {});
+          }}
+        >
+          <span class="tn"><TabLabel tab={t} /></span>
+          <span class="tm" class:bad={na}>{ts.status === 'not-set' ? 'no preset' : ts.status === 'unreachable' ? `${t.nodeName ?? 'node'} unreachable` : na ? `${modelShort(ts.model)} · ${availabilityText(ts.availability)}` : modelShort(ts.model)}</span>
+        </button>
+      {/each}
+    </nav>
+    <button class="tier add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>+</button>
+  </div>
 
   <div class="mline" class:dim={!s}><span class="pr">&gt;</span> <span class="mt">{modelText(model)}</span><span class="caret">▌</span></div>
 
@@ -276,31 +309,35 @@
   </section>
 
   <footer class="ctrl">
-    <button class="chip" onclick={() => actions.copyEndpoint()} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
+    <button class="chip" onclick={() => actions.copyEndpoint(selSlot?.id)} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
       :{port ?? '—'}{#if !online}<em>offline</em>{/if}
     </button>
     <button class="chip" onclick={() => actions.copyApiKey()} disabled={!online || !s?.apiKeySet} title={s?.apiKeySet ? 'Copy API key' : 'No API key set'}>
       {#if s?.apiKeySet}•••••••<em>copy</em>{:else}<em class="nk">no key</em>{/if}
     </button>
     <span class="grow"></span>
-    {#if !s}
-      <button class="btn act go" onclick={() => actions.launch(vm.selected)} disabled={!selReady} title={selReady ? `Launch ${selSlot?.label ?? ''}` : `${selSlot?.label ?? ''}: ${selSlot?.reason ?? availabilityText(selSlot?.availability ?? 'unsupported')}`}>
-        ▶ LAUNCH {shortTier(selSlot?.label ?? '')}
+    {#if selSlot?.external}
+      <button class="btn act ext" disabled title={EXTERNAL_TITLE}>{EXTERNAL_NOTE.toUpperCase()}</button>
+    {:else if !s && isPendingLaunch(selSlot)}
+      <button class="btn act stop" onclick={() => actions.stop(selSlot?.id)} disabled={!canStop(selSlot)} title={selSlot?.reason ?? 'Cancel the launch'}>■ CANCEL {shortTier(selSlot?.label ?? '')}</button>
+    {:else if !s}
+      <button class="btn act go" onclick={() => doLaunch(actions, selSlot, ctl)} disabled={!ctl.enabled} title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${selSlot?.reason ?? ''}` : `Launch ${selSlot?.label ?? ''}`) : `${selSlot?.label ?? ''}: ${ctl.blocked}`}>
+        ▶ {ctl.stopOthers ? ctl.text.toUpperCase() : `LAUNCH ${shortTier(selSlot?.label ?? '')}`}
       </button>
     {:else if faulted}
-      <button class="btn act hot" onclick={() => actions.restart()} title="Launch the tier that failed again">↻ RESTART {shortTier(runSlot?.label ?? '')}</button>
+      <button class="btn act hot" onclick={() => actions.restart(selSlot?.id)} disabled={!mine} title="Launch the System that failed again">↻ RESTART {shortTier(selSlot?.label ?? '')}</button>
     {:else if phase === 'stopping'}
       <button class="btn act stop" disabled>■ STOPPING</button>
     {:else}
-      <button class="btn act stop" onclick={() => actions.stop()} title={loading ? 'Cancel the launch' : 'Stop the server'}>■ {loading ? 'CANCEL' : 'STOP'} {shortTier(runSlot?.label ?? '')}</button>
+      <button class="btn act stop" onclick={() => actions.stop(selSlot?.id)} disabled={!canStop(selSlot)} title={heldWhy || (loading ? 'Cancel the launch' : 'Stop the server')}>■ {loading ? 'CANCEL' : 'STOP'} {shortTier(selSlot?.label ?? '')}</button>
     {/if}
     {#if faulted}
-      <button class="btn w7" onclick={() => actions.dismiss()} title="Back to the launcher">DISMISS</button>
+      <button class="btn w7" onclick={() => actions.dismiss(selSlot?.id)} disabled={!mine} title="Back to the launcher">DISMISS</button>
     {:else}
-      <button class="btn w7" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">RESTART</button>
+      <button class="btn w7" onclick={() => actions.restart(selSlot?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>RESTART</button>
     {/if}
-    <button class="btn w4" onclick={() => actions.openTune(vm.selected)} title={s && s.slot === vm.selected && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}>TUNE</button>
-    <button class="btn w8" onclick={() => actions.openEndpoint()} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
+    <button class="btn w4" onclick={() => actions.openTune(selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="btn w8" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
     <button class="btn w8" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'FULL LOG' : 'CONSOLE'}</button>
   </footer>
   <button class="cline" onclick={() => actions.toggleConsole(true)} title="Open the console"><span class="pr">&gt;</span> <span class="lt">{lastLine}</span></button>
@@ -480,11 +517,35 @@
   }
 
   /* Tier strip */
-  .tiers {
+  .strip {
     height: calc(var(--u) * 52px);
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: var(--gap);
+    min-width: 0;
+  }
+  .tiers {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: var(--gap);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tiers::-webkit-scrollbar {
+    display: none;
+  }
+  .tiers .tier {
+    flex: 1 0 calc(var(--u) * 170px);
+  }
+  .tier.add {
+    flex: none;
+    width: calc(var(--u) * 44px);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    color: var(--amber);
+    font-size: calc(var(--u) * 20px);
   }
   .tier {
     display: grid;
@@ -498,24 +559,18 @@
     min-width: 0;
     text-align: left;
   }
-  .tier:hover:not(:disabled):not(.sel) {
+  .tier:hover:not(.sel) {
     border-color: var(--rule2);
   }
   .tier .tn {
+    grid-column: 1 / -1;
+    display: flex;
+    min-width: 0;
     font-size: var(--fs-label);
     letter-spacing: 0.16em;
     color: var(--hot);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tier .rn {
-    color: var(--amber);
-    font-size: calc(var(--u) * 10px);
-    align-self: center;
-  }
-  .tier .rn.lk {
-    color: var(--muted);
   }
   .tier .tm {
     grid-column: 1 / -1;
@@ -540,21 +595,13 @@
   .tier.sel .tm {
     color: #c08a3c;
   }
-  .tier.na .tn,
-  .tier.locked .tn {
+  .tier.na .tn {
     color: var(--muted);
-  }
-  .tier.locked {
-    cursor: default;
-    opacity: 0.7;
   }
   .tier.fault {
     border-color: var(--red);
     background: linear-gradient(180deg, #2a0a04, #160402);
     box-shadow: 0 0 20px rgba(255, 59, 48, 0.15) inset;
-  }
-  .tier.fault .rn {
-    color: var(--red);
   }
 
   /* Model line */
@@ -947,6 +994,13 @@
     border-color: var(--rule2);
     color: var(--muted);
     box-shadow: none;
+  }
+  .btn.ext,
+  .btn.ext:disabled {
+    opacity: 1;
+    background: transparent;
+    border-color: var(--rule2);
+    color: var(--muted);
   }
   .btn.stop {
     border-color: var(--ember);

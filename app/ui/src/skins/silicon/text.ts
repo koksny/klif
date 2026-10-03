@@ -1,18 +1,18 @@
 // Silicon text helpers: display strings derived from ViewModel fields (never invented values).
-import type { Availability, GpuMemory, LastSession, ModelRef, Slot } from '../../lib/model/types';
+import type { Availability, GpuMemory, LastSession, ModelRef, System, SystemKind } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 
-/** Why a slot cannot launch, in plain words. */
+/** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
   switch (a) {
     case 'ready':
       return 'ready';
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
+    case 'invalid':
+      return 'needs fixing';
     case 'unsupported':
       return 'unsupported';
     case 'busy':
@@ -25,14 +25,14 @@ export function modelShort(m: ModelRef): string {
   const parts = [m.name, m.quant];
   if (m.ctxTokens) parts.push(fmtCtx(m.ctxTokens));
   else if (m.imageSize) parts.push(m.imageSize);
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 /** The full model line under the tabs. */
-export function modelLine(m: ModelRef | undefined, kind: 'llm' | 'image', steps?: number): string {
+export function modelLine(m: ModelRef | undefined, kind: SystemKind, steps?: number): string {
   if (!m) return '';
   const parts = [m.name, m.quant];
-  if (kind === 'image') parts.push(m.engine);
+  if (kind !== 'llm') parts.push(m.engine);
   parts.push(m.backend, m.device);
   if (m.ctxTokens) parts.push(`ctx ${fmtCtx(m.ctxTokens)}`);
   if (m.kvType) parts.push(`KV ${m.kvType}`);
@@ -41,7 +41,7 @@ export function modelLine(m: ModelRef | undefined, kind: 'llm' | 'image', steps?
   if (m.mode) parts.push(m.mode);
   if (m.imageSize) parts.push(m.imageSize);
   if (kind === 'image' && steps) parts.push(`${steps} steps`);
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 /** 8047 -> "2 h 14 min", 754 -> "12 min", 42 -> "42 s" */
@@ -67,9 +67,9 @@ export function fmtEta(sec: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-/** Last session one-liner parts (label resolved from the slots). */
-export function lastSessionParts(ls: LastSession, slots: Slot[]): { label: string; facts: string[] } {
-  const label = slots.find((x) => x.id === ls.slot)?.label ?? ls.model.name;
+/** Last session one-liner parts (label resolved from the Systems). */
+export function lastSessionParts(ls: LastSession, systems: System[]): { label: string; facts: string[] } {
+  const label = systems.find((x) => x.id === ls.system)?.label ?? ls.model.name;
   const facts = [fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) facts.push(`${fmtInt(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) facts.push(`${fmtInt(ls.generatedTokens)} tok`);

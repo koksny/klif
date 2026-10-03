@@ -1,21 +1,27 @@
-//! Win32 measurement primitives: DXGI adapters, PDH queries, RAM, CPU name, RAM type.
+//! Win32 measurement primitives: DXGI adapters, PDH queries, device power state, the AMD ULPS value of one
+//! device's driver key, RAM, and (feature `smbios`) the RAM type. Private: the rest of the crate reaches these
+//! through `platform` (non-Windows targets compile without them). No HKLM ProcessorNameString read (the CPU
+//! name comes from CPUID, see `platform::cpu_brand`) and no display-class key scan.
 
 use crate::Adapter;
-use windows::core::{HSTRING, PCWSTR, PWSTR};
+use windows::core::{GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW, SetupDiGetDeviceInstanceIdW, SetupDiGetDevicePropertyW,
-    SetupDiGetDeviceRegistryPropertyW, DIGCF_PRESENT, GUID_DEVCLASS_DISPLAY, HDEVINFO, SETUP_DI_REGISTRY_PROPERTY, SPDRP_DEVICEDESC,
-    SPDRP_DRIVER, SP_DEVINFO_DATA,
+    SetupDiGetDeviceRegistryPropertyW, SetupDiOpenDevRegKey, DICS_FLAG_GLOBAL, DIGCF_PRESENT, DIREG_DRV, GUID_DEVCLASS_DISPLAY, HDEVINFO,
+    SETUP_DI_REGISTRY_PROPERTY, SPDRP_DEVICEDESC, SPDRP_DRIVER, SP_DEVINFO_DATA,
 };
 use windows::Win32::Devices::Properties::{DEVPKEY_Device_PowerData, DEVPROPTYPE};
+use windows::Win32::Foundation::DEVPROPKEY;
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND};
 use windows::Win32::System::Performance::{
     PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhGetFormattedCounterValue,
     PdhOpenQueryW, PdhRemoveCounter, PDH_FMT, PDH_FMT_COUNTERVALUE, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER,
     PDH_HQUERY, PDH_MORE_DATA,
 };
-use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
-use windows::Win32::System::SystemInformation::{GetSystemFirmwareTable, GlobalMemoryStatusEx, MEMORYSTATUSEX, RSMB};
+use windows::Win32::System::Registry::{RegCloseKey, RegGetValueW, HKEY, KEY_READ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+#[cfg(feature = "smbios")]
+use windows::Win32::System::SystemInformation::{GetSystemFirmwareTable, RSMB};
+use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 fn wstr(buf: &[u16]) -> String {
     let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
@@ -144,10 +150,27 @@ pub struct DisplayDevice {
 // HDEVINFO is a handle owned by this value; SP_DEVINFO_DATA is plain data.
 unsafe impl Send for DisplayDevice {}
 
+/// `DEVPKEY_Gpu_Luid` (devpkey.h, DEVPROP_TYPE_UINT64): the adapter LUID of a display device node, which ties
+/// a SetupDi device to its DXGI adapter even among identical cards.
+const DEVPKEY_GPU_LUID: DEVPROPKEY = DEVPROPKEY { fmtid: GUID::from_u128(0x60b193cb_5276_4d0f_96fc_f173abad3ec6), pid: 2 };
+
 impl DisplayDevice {
+    /// The first present display device with this VEN/DEV.
     pub fn open(vendor_id: u32, device_id: u32) -> Option<DisplayDevice> {
+        Self::open_matching(vendor_id, device_id, None, 0)
+    }
+
+    /// The display device of one DXGI adapter: matched by its LUID (`DEVPKEY_Gpu_Luid`) when the property can
+    /// be read, else the `nth` present device with the adapter's VEN/DEV (SetupDi order, normally the same bus
+    /// order DXGI uses).
+    pub fn open_adapter(a: &Adapter, nth: usize) -> Option<DisplayDevice> {
+        Self::open_matching(a.vendor_id, a.device_id, Some((a.luid_high, a.luid_low)), nth)
+    }
+
+    fn open_matching(vendor_id: u32, device_id: u32, luid: Option<(i32, u32)>, nth: usize) -> Option<DisplayDevice> {
         let set = unsafe { SetupDiGetClassDevsW(Some(&GUID_DEVCLASS_DISPLAY), PCWSTR::null(), None, DIGCF_PRESENT) }.ok()?;
         let needle = format!("VEN_{vendor_id:04X}&DEV_{device_id:04X}");
+        let mut matches: Vec<(SP_DEVINFO_DATA, String)> = Vec::new();
         for i in 0u32..64 {
             let mut data = SP_DEVINFO_DATA { cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32, ..Default::default() };
             if unsafe { SetupDiEnumDeviceInfo(set, i, &mut data) }.is_err() {
@@ -159,14 +182,29 @@ impl DisplayDevice {
                 continue;
             }
             let id = wstr(&buf);
-            if id.to_ascii_uppercase().contains(&needle) {
-                return Some(DisplayDevice { set, data, instance_id: id });
+            if !id.to_ascii_uppercase().contains(&needle) {
+                continue;
             }
+            if let Some(want) = luid {
+                if device_luid(set, &data) == Some(want) {
+                    return Some(DisplayDevice { set, data, instance_id: id });
+                }
+            }
+            matches.push((data, id));
+        }
+        if matches.len() > nth {
+            let (data, id) = matches.swap_remove(nth);
+            return Some(DisplayDevice { set, data, instance_id: id });
         }
         unsafe {
             let _ = SetupDiDestroyDeviceInfoList(set);
         }
         None
+    }
+
+    /// The adapter LUID of this device node (high, low), if the driver publishes it.
+    pub fn luid(&self) -> Option<(i32, u32)> {
+        device_luid(self.set, &self.data)
     }
 
     /// `DEVPKEY_Device_PowerData` -> `CM_POWER_DATA.PD_MostRecentPowerState` (raw: 1 = D0 .. 4 = D3).
@@ -202,48 +240,41 @@ impl DisplayDevice {
     pub fn device_desc(&self) -> Option<String> {
         self.registry_string(SPDRP_DEVICEDESC)
     }
-}
 
-impl Drop for DisplayDevice {
-    fn drop(&mut self) {
+    /// A DWORD and a string value of the device's own driver key (`SetupDiOpenDevRegKey(DIREG_DRV)`,
+    /// read-only). Never scans other keys.
+    pub fn driver_values(&self, dword: &str, string: &str) -> Option<(Option<u32>, Option<String>)> {
+        let key: HKEY = unsafe { SetupDiOpenDevRegKey(self.set, &self.data, DICS_FLAG_GLOBAL.0, 0, DIREG_DRV, KEY_READ.0) }.ok()?;
+        let d = key_dword(key, dword);
+        let s = key_sz(key, string);
         unsafe {
-            let _ = SetupDiDestroyDeviceInfoList(self.set);
+            let _ = RegCloseKey(key);
         }
+        Some((d, s))
     }
 }
 
-pub const CLASS_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Class";
-pub const DISPLAY_CLASS: &str = "{4d36e968-e325-11ce-bfc1-08002be10318}";
-
-/// A REG_SZ value under HKLM (read-only).
-pub fn reg_sz(subkey: &str, value: &str) -> Option<String> {
-    let mut buf = vec![0u16; 512];
-    let mut size = (buf.len() * 2) as u32;
-    let s = unsafe {
-        RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            &HSTRING::from(subkey),
-            &HSTRING::from(value),
-            RRF_RT_REG_SZ,
-            None,
-            Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
-            Some(&mut size),
-        )
-    };
-    if s.0 != 0 {
+fn device_luid(set: HDEVINFO, data: &SP_DEVINFO_DATA) -> Option<(i32, u32)> {
+    let mut ty = DEVPROPTYPE::default();
+    let mut buf = [0u8; 16];
+    let mut need = 0u32;
+    unsafe { SetupDiGetDevicePropertyW(set, data, &DEVPKEY_GPU_LUID, &mut ty, Some(&mut buf), Some(&mut need), 0) }.ok()?;
+    if need < 8 {
         return None;
     }
-    Some(wstr(&buf).trim().to_string())
+    // LUID { LowPart: u32, HighPart: i32 } as one little-endian UINT64.
+    let lo = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let hi = i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    Some((hi, lo))
 }
 
-/// A REG_DWORD value under HKLM (read-only). None when the key or value cannot be read.
-pub fn reg_dword(subkey: &str, value: &str) -> Option<u32> {
+fn key_dword(key: HKEY, value: &str) -> Option<u32> {
     let mut v = 0u32;
     let mut size = 4u32;
     let s = unsafe {
         RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            &HSTRING::from(subkey),
+            key,
+            PCWSTR::null(),
             &HSTRING::from(value),
             RRF_RT_REG_DWORD,
             None,
@@ -254,24 +285,14 @@ pub fn reg_dword(subkey: &str, value: &str) -> Option<u32> {
     if s.0 == 0 { Some(v) } else { None }
 }
 
-// ------------------------------------------------------------------------------------- RAM / CPU
-
-/// (total bytes, available bytes).
-pub fn memory_status() -> Option<(u64, u64)> {
-    let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
-    unsafe { GlobalMemoryStatusEx(&mut m) }.ok()?;
-    Some((m.ullTotalPhys, m.ullAvailPhys))
-}
-
-/// `ProcessorNameString` of CPU 0 from the registry.
-pub fn cpu_brand() -> Option<String> {
-    let mut buf = vec![0u16; 256];
+fn key_sz(key: HKEY, value: &str) -> Option<String> {
+    let mut buf = vec![0u16; 512];
     let mut size = (buf.len() * 2) as u32;
     let s = unsafe {
         RegGetValueW(
-            HKEY_LOCAL_MACHINE,
-            &HSTRING::from(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"),
-            &HSTRING::from("ProcessorNameString"),
+            key,
+            PCWSTR::null(),
+            &HSTRING::from(value),
             RRF_RT_REG_SZ,
             None,
             Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
@@ -281,27 +302,32 @@ pub fn cpu_brand() -> Option<String> {
     if s.0 != 0 {
         return None;
     }
-    let s = wstr(&buf).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    let v = wstr(&buf).trim().to_string();
+    if v.is_empty() { None } else { Some(v) }
 }
 
-/// "AMD Ryzen 9 9950X3D 16-Core Processor" -> "9950X3D"; "13th Gen Intel(R) Core(TM) i9-13900K" ->
-/// "i9-13900K". Falls back to the full brand string.
-pub fn short_cpu_name(brand: &str) -> String {
-    let skip = |t: &str| {
-        let l = t.to_ascii_lowercase();
-        l.ends_with("-core") || l.ends_with("-thread") || l.ends_with("ghz") || l.contains("gen") || l.starts_with('@')
-    };
-    for tok in brand.split_whitespace() {
-        let digits = tok.chars().filter(|c| c.is_ascii_digit()).count();
-        if digits >= 3 && !skip(tok) {
-            return tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-').to_string();
+impl Drop for DisplayDevice {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = SetupDiDestroyDeviceInfoList(self.set);
         }
     }
-    brand.trim().to_string()
 }
 
-/// Memory type from SMBIOS type 17 records (one firmware-table read at startup).
+/// The Class key the driver keys live under (for the `UlpsSetting.key` display path only).
+pub const CLASS_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Class";
+
+// ------------------------------------------------------------------------------------- RAM / CPU
+
+/// (total bytes, available bytes).
+pub fn memory_status() -> Option<(u64, u64)> {
+    let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    unsafe { GlobalMemoryStatusEx(&mut m) }.ok()?;
+    Some((m.ullTotalPhys, m.ullAvailPhys))
+}
+
+/// Memory type from SMBIOS type 17 records (feature `smbios` only: klif-cli diag).
+#[cfg(feature = "smbios")]
 pub fn ram_type() -> Option<String> {
     let n = unsafe { GetSystemFirmwareTable(RSMB, 0, None) };
     if n == 0 || n > 4 * 1024 * 1024 {
@@ -347,6 +373,7 @@ pub fn ram_type() -> Option<String> {
     None
 }
 
+#[cfg(feature = "smbios")]
 fn smbios_mem_type(t: u8) -> Option<&'static str> {
     Some(match t {
         0x18 => "DDR3",

@@ -1,10 +1,5 @@
-//! Which engine drives the shell: the real `klif_core` engine, or the sample-data stub (feature
-//! `stub-engine`). Both expose the same `Engine::start` / `EngineHandle` API.
+//! The engine that drives the shell: the `klif_core` engine. The UI has its own mock engine for browser development.
 
-#[cfg(feature = "stub-engine")]
-pub use crate::stub::{Engine, EngineHandle};
+pub use klif_core::{Engine, EngineHandle, StartError};
 
-#[cfg(not(feature = "stub-engine"))]
-pub use klif_core::{Engine, EngineHandle};
-
-pub const KIND: &str = if cfg!(feature = "stub-engine") { "stub" } else { "klif-core" };
+pub const KIND: &str = "klif-core";

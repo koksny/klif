@@ -1,51 +1,245 @@
-# KLIF configuration template. Copy to .local/klif.toml (dev, gitignored) or %APPDATA%\KLIF\klif.toml
-# and fill in your machine's values. Never commit a filled-in copy.
-
-[launcher]
-# The PowerShell launcher that owns the model catalog (cards, profiles, presets).
-script = 'D:\path\to\workshop\Launch-LLM.ps1'
-gui_script = 'D:\path\to\workshop\Launch-LLM.Gui.ps1'
-# Optional: the old launcher's state file (API key and runs to adopt are read from it, read-only).
-state_file = 'D:\path\to\workshop\.llm-launcher-state.json'
-# Optional overrides:
-# exporter = 'scripts\Export-KlifCatalog.ps1'
-# logs_dir = 'D:\path\to\runtime-logs'
+# KLIF configuration template (0.3).
+#
+# Copy this file to %APPDATA%\KLIF\klif.toml and edit it, or point the KLIF_CONFIG environment variable at your
+# copy. A developer checkout can also use .local\klif.toml (gitignored). Never commit a filled-in copy.
+#
+# Every path, address and model name below is fictional (D:\llama.cpp, D:\models, 192.0.2.x). Replace them with
+# yours. Until you do, the Systems show as "invalid" with the reason (program or model file missing); nothing
+# is started by KLIF on its own.
+#
+# How the file is organised:
+#   [systems.<id>]   one tab, one server at a time, in the order you write them here.
+#   [presets.<id>]   one launch command (program, arguments, environment). A System points at one preset.
+#   [net] [gpu] [ui] [telemetry] [paths] [security] [launch]   machine-wide settings.
+#   [node] / [nodes.<id>]   optional, for several machines (examples at the end, commented out).
+#
+# KLIF edits this file when you change something in the Tune drawer or with klif-cli. It keeps your comments and
+# the order of your tables, except for comments inside an array KLIF has to rewrite (an edited `args` list), so
+# put explanations above an array rather than inside it. A comment directly above a [table] header travels with
+# that table; leave a blank line under a section comment if it should stay where it is.
+# Edits you make in an editor are picked up while KLIF runs. A file that does not parse is ignored (KLIF keeps the
+# last good configuration and shows the error).
 
 [net]
-# Where your LLM starters bind their servers (loopback by default).
+# Default address a server binds to and KLIF talks to. Loopback unless you want the LAN to reach it.
+# Presets of kind image use image_host, every other kind uses llm_host. A preset can override it with `host`.
 llm_host = "127.0.0.1"
 image_host = "127.0.0.1"
 
 [gpu]
-# PCI "VEN:DEV" of the inference GPU and of the GPU the UI should render on.
-# inference = "1002:7550"   # example: an RDNA4 16 GiB card
-# ui = "1002:731F"          # example: a second card that drives the displays
+# PCI "VEN:DEV" ids (hex). `inference` is the card presets run on unless they say otherwise (their `gpu`).
+# KLIF uses it for the memory bars, the fit check and conflicts between Systems. With two identical cards,
+# "VEN:DEV" is the first one and "VEN:DEV#1" the second (DXGI order). The ids KLIF sees are listed by:
+#   klif-cli --json diag        (engine.gpus[].id)
+# inference = "1002:7550"      # example: an RDNA4 16 GiB card
+# ui = "1002:731F"             # optional: the card the window should render on (one that drives displays)
 # inference_name = "RX 9070 XT"
 
 [ui]
 frameless = true
-# Panel mode = the read-only mini layout on a small status screen (a 3.5" 960x640 monitor, say). The
-# window's button / F3 / the tray's "Panel mode" move KLIF onto that monitor and fill it; leaving brings
-# the previous window back. Which monitor: a resolution ("960x640") or part of the monitor's device name
-# ("DISPLAY3"). Unset = automatic: with 2+ monitors, the smallest one if it is at most 1280x800.
+# Panel mode = the read-only mini layout on a small status screen (a 3.5" 960x640 monitor, say). Which monitor:
+# a resolution ("960x640") or part of the monitor's device name ("DISPLAY3"). Unset = automatic: with two or more
+# monitors, the smallest one if it is at most 1280x800.
 # panel_monitor = "960x640"
 
 [telemetry]
+# Skins warn when free VRAM falls below this many GiB.
 warn_below_gib = 0.15
+# llama.cpp presets with managed = true get verbose logging, which is where KLIF reads the VRAM breakdown from.
 verbose_llama_logs = true
+# ram_type = "DDR5"            # display only; KLIF does not read firmware tables in the GUI
 
-# Tier defaults. Each tier starts from a launcher preset or a card id, plus optional overrides.
-[tiers.high]
-preset = "qwen-moe"
-[tiers.medium]
-preset = "qwen-dense"
-[tiers.low]
-preset = "gemma-tavern"
-[tiers.krea]
-preset = "krea"
+[paths]
+# Where "Recommended" models are downloaded to. Unset = downloads are refused.
+models_dir = 'D:\models'
+# logs_dir = 'D:\klif-logs'    # default: <data folder>\logs
 
-# Optional: the fast Krea starter (a patched sd.cpp build). When set, the Krea cards on HIP + the inference GPU
-# launch through it (`-Variant -Size -Port -Precision Low|Medium|High -Edit On|Off`) and the Tune drawer offers
-# Edit and Precision. Leave it out to launch Krea through the catalog's own starter.
-# [krea]
-# fast_starter = 'D:\path\to\workshop\sd-server\Start-Krea2-929.ps1'
+[security]
+# The API key KLIF puts into llama.cpp and vLLM servers it starts (and into its own requests to them):
+#   "file"      <folder of this klif.toml>\api-key.txt   (default; set it with: klif-cli key set)
+#   "env:NAME"  read from KLIF's own environment variable NAME
+#   "none"      no key (servers run without auth)
+api_key = "file"
+
+[launch]
+# What Launch does when other Systems must stop first (same port, an exclusive System, or not enough free VRAM):
+#   "ask"   refuse and name them; the Launch button then reads "Stop <names> & launch" (default)
+#   "stop"  stop them first, then launch. A System that is busy generating is never stopped without an explicit
+#           choice (klif-cli launch --stop-others, or the "Stop ... & launch" button).
+on_conflict = "ask"
+
+# ------------------------------------------------------------------------------------------------ Systems
+# Tab order = the order of these tables. Systems are independent: each has its own server, session and logs.
+# Without a `label` KLIF derives one from kind and class (System 1/2/3, System CGI, System TTS, ...); a second
+# System that would get the same label becomes "System 1 (2)", "System 1 (3)", ...
+
+[systems.s1]
+label = "System 1"             # tab label (default derived from kind and class: System 1/2/3, System CGI, ...)
+kind = "llm"                   # llm | image | tts | stt | video
+class = "fast"                 # llm only, optional: fast | deep | max (groups recommendations, default labels)
+preset = "fast-8b"             # absent = "not set"
+params = { reasoning = "on" }  # choices for the params the preset declares
+
+[systems.s2]
+label = "System 2"
+kind = "llm"
+class = "deep"
+preset = "deep-27b"
+
+[systems.s3]
+label = "System 3"
+kind = "llm"
+class = "max"
+preset = "max-moe"
+exclusive = true               # needs the whole GPU: launching it lists every other System on that GPU as a conflict
+
+[systems.cgi]
+label = "System CGI"
+kind = "image"
+preset = "image-turbo"
+params = { size = "1024" }
+
+[systems.tts]
+label = "System TTS"
+kind = "tts"
+preset = "tts-local"
+
+[systems.lan-chat]             # an external server: KLIF only watches it, never starts or stops it
+label = "Chat box"
+kind = "llm"
+preset = "chat-box"
+
+# ------------------------------------------------------------------------------------------------ Presets
+# A preset is a launch command, nothing hidden: the program, the argument list and the environment are exactly
+# what KLIF starts (the Tune drawer and `klif-cli plan <system>` show the final command line).
+#
+# Placeholders in command, args, cwd and env values:
+#   {model} {mmproj} {ctx}    the preset's own fields
+#   {host} {port}             the effective address (see port / host)
+#   {models_dir} {state_dir} {data_dir}
+#   {stamp}                   the launch's time stamp, yyyyMMdd-HHmmss-fff (local time), for names that differ per launch
+#                             (a server's --log-file, say). Previews show the text {stamp}.
+#   {env:NAME}                KLIF's own environment variable NAME, read when the command is built
+#   {p.NAME}                  a param (below): a whole args token that expands to the chosen choice's args
+#   {p.NAME.VAR}              a param variable, one value
+# Unknown placeholders are errors. Braces that do not look like {identifier} (JSON, say) stay as they are.
+
+# llama.cpp. Pass {host} and {port} through, or the server listens somewhere KLIF is not looking.
+# "{p.reasoning}" expands to the args of the selected choice (zero or more tokens).
+# Flag names follow current llama.cpp; check llama-server --help for your build.
+[presets.fast-8b]
+name = "Fast 8B"
+adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | openai | generic
+command = 'D:\llama.cpp\llama-server.exe'   # absolute path, or a program name on PATH; .exe/.com only
+args = [
+  "-m", "{model}",
+  "-c", "{ctx}",
+  "-ngl", "99",
+  "--jinja",
+  "--host", "{host}",
+  "--port", "{port}",
+  "{p.reasoning}",
+]
+cwd = 'D:\llama.cpp'           # default: the folder of the program
+env = { HIP_VISIBLE_DEVICES = "0", PATH = 'D:\ROCm\bin;{env:PATH}' }
+port = 7030
+model = 'D:\models\fast-8b-Q4_K_M.gguf'
+ctx = 16384
+quant = "Q4_K_M"
+backend = "HIP"                # display only: HIP | Vulkan | CUDA | Metal | CPU | free text
+
+[presets.fast-8b.params.reasoning]
+label = "Reasoning"
+default = "on"
+choices.on = { args = ["--reasoning", "on"] }
+choices.off = { label = "Off", args = ["--reasoning", "off"] }
+
+[presets.deep-27b]
+name = "Deep 27B"
+adapter = "llama.cpp"
+command = 'D:\llama.cpp\llama-server.exe'
+args = ["-m", "{model}", "-c", "{ctx}", "-ngl", "99", "--jinja", "--host", "{host}", "--port", "{port}"]
+env = { HIP_VISIBLE_DEVICES = "0", PATH = 'D:\ROCm\bin;{env:PATH}' }
+port = 7031
+model = 'D:\models\deep-27b-Q4_K_M.gguf'
+ctx = 32768
+quant = "Q4_K_M"
+backend = "HIP"
+
+# "--cpu-moe" keeps the expert weights of a mixture-of-experts model in system RAM.
+[presets.max-moe]
+name = "Max MoE 120B (CPU experts)"
+adapter = "llama.cpp"
+command = 'D:\llama.cpp\llama-server.exe'
+args = ["-m", "{model}", "-c", "{ctx}", "-ngl", "99", "--cpu-moe", "--host", "{host}", "--port", "{port}"]
+env = { HIP_VISIBLE_DEVICES = "0", PATH = 'D:\ROCm\bin;{env:PATH}' }
+port = 7032
+model = 'D:\models\max-moe-120b-Q4_K_M.gguf'
+ctx = 65536
+quant = "Q4_K_M"
+backend = "HIP"
+
+# stable-diffusion.cpp: an image preset. "{p.size}" is a param (below), so one preset serves every size.
+[presets.image-turbo]
+name = "Image turbo"
+adapter = "sd.cpp"             # kind defaults to image for sd.cpp
+command = 'D:\stable-diffusion.cpp\sd-server.exe'
+args = [
+  "--diffusion-model", "{model}",
+  "--vae", 'D:\models\image-vae.safetensors',
+  "--steps", "8",
+  "{p.size}",
+  "--listen-ip", "{host}",
+  "--listen-port", "{port}",
+]
+env = { HIP_VISIBLE_DEVICES = "0" }
+port = 1234
+model = 'D:\models\image-turbo-Q8_0.gguf'
+backend = "HIP"
+
+[presets.image-turbo.params.size]
+label = "Size"
+default = "1024"
+choices.512 = { label = "512 x 512", args = ["-W", "512", "-H", "512"] }
+choices.1024 = { label = "1024 x 1024", args = ["-W", "1024", "-H", "1024"] }
+
+# Text to speech through the generic adapter: any server that listens on a port. KLIF needs the kind (what the
+# System is for) and a way to tell it is up (a port, plus optionally an HTTP health path). This one is fictional:
+# put your own TTS server's program and arguments here.
+[presets.tts-local]
+name = "Local TTS"
+adapter = "generic"
+kind = "tts"
+command = 'D:\tts\tts-server.exe'
+args = ["--host", "{host}", "--port", "{port}"]
+port = 8880
+health = "/health"             # "/path" = HTTP, "tcp" = a listening port; absent = TCP for generic
+gpu = "cpu"                    # "VEN:DEV" or "cpu": which GPU it counts against (display and fit only)
+backend = "CPU"
+
+# An external server: `endpoint` instead of `command`. KLIF never starts, stops or restarts it; it only shows
+# whether it answers and what it is doing. Launch and Stop are refused with a sentence.
+[presets.chat-box]
+name = "Chat box (other machine)"
+adapter = "openai"             # llama.cpp | vllm | openai | generic all work as external
+endpoint = "http://192.0.2.20:11434"
+model_name = "Some model on that machine"   # display only
+backend = "CPU"
+
+# ------------------------------------------------------------------------------------------ More machines
+# Make THIS machine reachable from another KLIF (off unless `listen` is set). Read docs/nodes.md first:
+# "edit" lets the other machine run arbitrary commands here, and traffic is plain TCP (not encrypted).
+# Create the token once with:  klif-cli node token --create     (printed once, stored in node-token.txt)
+#
+# [node]
+# name = "Render box"
+# listen = "0.0.0.0:7340"      # opt-in; default port 7340
+# allow = ["launch"]           # besides view: "launch" (launch/stop/restart/params), "edit" (presets, Systems, downloads)
+#
+# Show another machine's Systems in this KLIF. The token is never written here: "file:" (relative to this file's
+# folder, or absolute) or "env:NAME".
+#
+# [nodes.render-box]
+# address = "192.0.2.10:7340"
+# token = "file:render-box.token"
+# name = "Render box"          # display; default: what the node reports

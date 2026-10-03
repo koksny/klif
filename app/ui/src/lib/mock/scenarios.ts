@@ -1,10 +1,11 @@
 // Scenario registry. A scenario is a deterministic starting script for the mock engine plus the moment
 // at which the first frame is taken (so every skin can be looked at in the state it needs).
 import { SAMPLE_NOW } from '../model/sample';
-import type { SlotId, ViewModel, VramLayer } from '../model/types';
+import type { SystemId, ViewModel, VramLayer } from '../model/types';
 import { MockEngine, type DormantOpts, type EngineHooks } from './engine';
 import { browserHost } from './host';
 import { hashSeed } from './rng';
+import { classicWorld, emptyWorld, kindsWorld, multiWorld, type World } from './world';
 
 export interface ScenarioDef {
   name: string;
@@ -12,6 +13,8 @@ export interface ScenarioDef {
   blurb: string;
   /** True for the frozen sample snapshot (no engine). */
   isStatic?: boolean;
+  /** The configuration the scenario starts from (default: the operator's four Systems). */
+  world?: () => World;
   /** Run the script, leaving the engine at t=0. */
   setup(e: MockEngine): void;
   /** Minimum simulated seconds before the first frame. */
@@ -31,17 +34,17 @@ const llmDecoding = (vm: ViewModel) => {
   return !!l && l.activity === 'decode' && l.decodeTps > 20 && l.requests.length >= 8 && l.decodeHistory.length >= 240;
 };
 
-const liveSession = (slot: SlotId, until: (vm: ViewModel) => boolean) => (vm: ViewModel) =>
-  vm.session?.slot === slot && vm.session.phase === 'live' && until(vm);
+const liveSession = (system: SystemId, until: (vm: ViewModel) => boolean) => (vm: ViewModel) =>
+  vm.session?.system === system && vm.session.phase === 'live' && until(vm);
 
-function boot(slot: SlotId, label: string, blurb: string): ScenarioDef {
+function boot(name: string, system: SystemId, label: string, blurb: string): ScenarioDef {
   return {
-    name: `boot-${slot}`,
+    name,
     label,
     blurb,
     setup: (e) => {
-      e.select(slot);
-      e.launch(slot);
+      e.select(system);
+      e.launch(system);
     },
     startT: 0,
     shotUntil: (vm) => {
@@ -54,23 +57,24 @@ function boot(slot: SlotId, label: string, blurb: string): ScenarioDef {
   };
 }
 
-function live(slot: SlotId, name: string, label: string, blurb: string, until: (vm: ViewModel) => boolean): ScenarioDef {
+function live(system: SystemId, name: string, label: string, blurb: string, until: (vm: ViewModel) => boolean, world?: () => World): ScenarioDef {
   return {
     name,
     label,
     blurb,
+    ...(world ? { world } : {}),
     setup: (e) => {
-      e.select(slot);
-      e.launch(slot);
+      e.select(system);
+      e.launch(system);
     },
     startT: 600,
-    startUntil: liveSession(slot, until),
+    startUntil: liveSession(system, until),
     searchS: 3600,
   };
 }
 
 /**
- * Agent Medium with the 9070 XT asleep between requests (AMD ULPS, device state D3). The allocations are
+ * System 2 with the 9070 XT asleep between requests (AMD ULPS, device state D3). The allocations are
  * what the real session held (llama-server, 98k context); the device drives no display, so ~12 s after
  * the last request the driver pages the VRAM out to system RAM and the next request waits ~4 s for it.
  */
@@ -114,8 +118,8 @@ function dormantScenario(name: string, label: string, blurb: string, until: (vm:
     label,
     blurb,
     setup: (e) => {
-      e.select('medium');
-      e.launch('medium', { skipBoot: true, uptimeOffsetS: 1800, dormant: DORMANT_SESSION });
+      e.select('s2');
+      e.launch('s2', { skipBoot: true, uptimeOffsetS: 1800, dormant: DORMANT_SESSION });
     },
     startT: 0,
     startUntil: until,
@@ -133,28 +137,116 @@ export const SCENARIOS: ScenarioDef[] = [
     setup: () => {},
     startT: 0,
   },
+  // ---- the 0.3 worlds: several Systems at once ----
+  live(
+    's1',
+    'multi',
+    'Multi-System (default)',
+    'System 1 online/busy, System 2 offline (launching it asks to stop System 1), System 3 not set, CGI offline, an external TTS server online, and a remote node with one image System.',
+    (vm) => {
+      const l = vm.session?.llm;
+      return !!l && l.activity === 'decode' && l.decodeTps > 20 && l.requests.length >= 6 && l.decodeHistory.length >= 240;
+    },
+    multiWorld,
+  ),
+  {
+    name: 'kinds',
+    label: 'Every kind of System',
+    blurb: 'LLM, image, external TTS, transcription and video Systems: the generic display for kinds without a dedicated one.',
+    world: kindsWorld,
+    setup: (e) => {
+      e.launch('stt', { skipBoot: true, uptimeOffsetS: 900 });
+      e.launch('video', { skipBoot: true, uptimeOffsetS: 400 });
+      e.select('tts');
+    },
+    startT: 120,
+    searchS: 400,
+  },
+  {
+    name: 'empty',
+    label: 'Empty: no Systems',
+    blurb: 'A fresh install: no Systems in klif.toml, no models directory. The shell shows the onboarding card.',
+    world: emptyWorld,
+    setup: () => {},
+    startT: 0,
+  },
+  {
+    name: 'node-down',
+    label: 'Remote node unreachable',
+    blurb: 'The multi world with the remote node offline: its System is unreachable, last known state only.',
+    world: () => multiWorld('offline'),
+    setup: (e) => {
+      e.launch('s1', { skipBoot: true, uptimeOffsetS: 300 });
+      e.select('render-box/cgi');
+    },
+    startT: 60,
+  },
+  {
+    name: 'many',
+    label: 'Many Systems (strip overflow)',
+    blurb: 'Twelve Systems of every status, some with long labels and a remote suffix, to check the picker overflow.',
+    world: () => {
+      const w = kindsWorld();
+      const more = [
+        { id: 's4', label: 'Experimental coder with a long label', kind: 'llm' as const },
+        { id: 'cgi2', label: 'CGI portraits', kind: 'image' as const, preset: 'qwen-image' },
+        { id: 's5', label: 'System 5', kind: 'llm' as const, preset: 'flash-next-q2' },
+        { id: 'tts2', label: 'Voice', kind: 'tts' as const },
+      ];
+      w.systems.splice(4, 0, ...more);
+      w.selected = 's1';
+      return w;
+    },
+    setup: (e) => {
+      e.launch('s1', { skipBoot: true, uptimeOffsetS: 300 });
+    },
+    startT: 60,
+  },
+  {
+    name: 'invalid',
+    label: 'Invalid preset (model missing)',
+    blurb: 'System 3 points at a preset whose model file is missing: status invalid, Launch refused with the reason.',
+    world: () => {
+      const w = multiWorld();
+      w.systems = w.systems.map((s) => (s.id === 's3' && !s.node ? { ...s, preset: 'flash-next-q2' } : s));
+      w.selected = 's3';
+      return w;
+    },
+    setup: () => {},
+    startT: 0,
+  },
+  {
+    name: 'downloads',
+    label: 'Downloads running',
+    blurb: 'Two recommendation downloads in progress (the Tune drawer shows percentages).',
+    world: multiWorld,
+    setup: (e) => {
+      e.select('s3');
+      e.downloadRecommendation('whisper-large-v3-turbo-q8');
+      e.downloadRecommendation('kokoro-82m');
+    },
+    startT: 6,
+  },
+  // ---- the 0.2 scenarios, on the operator's four Systems (low=s1, medium=s2, high=s3, krea=cgi) ----
   {
     name: 'idle',
     label: 'Idle (no session)',
-    blurb: 'Nothing running. All four slots ready; launch one. The last session (Agent Medium, stopped 21 min ago) is summarised.',
+    blurb: 'Nothing running. All four Systems ready; launch one. The last session (System 2, stopped 21 min ago) is summarised.',
     setup: (e) => {
-      e.select('medium');
-      e.setLastSession(
-        { slot: 'medium', model: e.slotModel('medium'), uptimeS: 8047, ended: 'stopped', requests: 12, generatedTokens: 11420, decodeTps: 47.3 },
-        1260,
-      );
+      e.select('s2');
+      e.setLastSession('s2', { model: e.systemModel('s2'), uptimeS: 8047, ended: 'stopped', requests: 12, generatedTokens: 11420, decodeTps: 47.3 }, 1260);
     },
     startT: 0,
   },
-  boot('medium', 'Boot: Agent Medium', 'Starting, then loading steps with weights and VRAM layers building, then live.'),
-  live('medium', 'live-medium', 'Live: Agent Medium (Qwen 27B)', 'Requests arrive, prefill bursts, decode at real speeds, history rolling, spec acceptance varying.', llmDecoding),
+  boot('boot-medium', 's2', 'Boot: System 2', 'Starting, then loading steps with weights and VRAM layers building, then live.'),
+  live('s2', 'live-medium', 'Live: System 2 (Qwen 27B)', 'Requests arrive, prefill bursts, decode at real speeds, history rolling, spec acceptance varying.', llmDecoding),
   {
     name: 'prefill-high',
-    label: 'Prefill: Agent High (Flash-Next)',
+    label: 'Prefill: System 3 (Flash-Next)',
     blurb: 'One 66k-token prompt prefilling at ~370 tok/s for ~3 min, then decode at ~9 tok/s.',
     setup: (e) => {
-      e.select('high');
-      e.launch('high', { skipBoot: true, uptimeOffsetS: 236, big: true });
+      e.select('s3');
+      e.launch('s3', { skipBoot: true, uptimeOffsetS: 236, big: true });
     },
     startT: 0,
     shotUntil: (vm) => {
@@ -163,18 +255,18 @@ export const SCENARIOS: ScenarioDef[] = [
     },
     searchS: 200,
   },
-  live('high', 'live-high', 'Live: Agent High (Flash-Next)', 'Flash-Next replayed from real sessions: slow prefill, ~12 tok/s decode, high spec acceptance.', (vm) => {
+  live('s3', 'live-high', 'Live: System 3 (Flash-Next)', 'Flash-Next replayed from real sessions: slow prefill, ~12 tok/s decode, high spec acceptance.', (vm) => {
     const l = vm.session?.llm;
     return !!l && l.activity !== 'idle' && l.requests.length >= 3;
   }),
   {
     name: 'spill-high',
-    label: 'Spill: Agent High over the edge',
+    label: 'Spill: System 3 over the edge',
     blurb:
       'Flash-Next at 128k, one long prefill: compute buffers swell until the demand passes the VRAM edge. spillMiB ramps 0 to ~900 and relaxes back; free VRAM hits 0 while it spills.',
     setup: (e) => {
-      e.select('high');
-      e.launch('high', { skipBoot: true, uptimeOffsetS: 236, big: true, spill: true });
+      e.select('s3');
+      e.launch('s3', { skipBoot: true, uptimeOffsetS: 236, big: true, spill: true });
     },
     startT: 0,
     startUntil: (vm) => vm.vram.spillMiB >= 650,
@@ -182,17 +274,16 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     name: 'warn',
-    label: 'Warn: Agent Medium, tight VRAM',
-    blurb:
-      'Agent Medium decoding while another process takes ~0.15 GiB of VRAM: free VRAM drops below warnBelowGiB (0.15) but nothing spills.',
+    label: 'Warn: System 2, tight VRAM',
+    blurb: 'System 2 decoding while another process takes ~0.15 GiB of VRAM: free VRAM drops below warnBelowGiB (0.15) but nothing spills.',
     setup: (e) => {
-      e.select('medium');
-      e.launch('medium');
+      e.select('s2');
+      e.launch('s2');
       // A browser or video player grabs VRAM 560 s in; the baseline ('other' layer) steps up.
       e.scheduleBaseline(560, 0.27);
     },
     startT: 600,
-    startUntil: liveSession('medium', (vm) => {
+    startUntil: liveSession('s2', (vm) => {
       const l = vm.session?.llm;
       const free = vm.vram.totalGiB - vm.vram.usedGiB;
       return !!l && l.activity === 'decode' && l.requests.length >= 3 && free < vm.vram.warnBelowGiB && vm.vram.spillMiB === 0;
@@ -201,31 +292,31 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   dormantScenario(
     'dormant',
-    'Dormant: GPU asleep (Agent Medium)',
+    'Dormant: GPU asleep (System 2)',
     'The 9070 XT drives no display, so ULPS puts it in D3 ~12 s after the last request: allocations stay, Dedicated Usage falls to ~0 (paged out to RAM). Every ~40 s a request wakes it: ~4 s at 0 tok/s while VRAM is restored. Freezes while asleep.',
     gpuAsleep,
   ),
   dormantScenario(
     'waking',
-    'Waking: restore in flight (Agent Medium)',
+    'Waking: restore in flight (System 2)',
     'The same session frozen mid-wake: a request is waiting at 0 tok/s, ~7 GiB of the VRAM restored, ~8.4 GiB still paged out.',
     gpuWaking,
     0.05,
   ),
-  live('low', 'live-low', 'Live: Agent Low (Gemma)', 'Gemma 4 26B-A4B: measured ~76-92 tok/s decode; request mix scaled to a 16k context (prefill speed estimated).', (vm) => {
+  live('s1', 'live-low', 'Live: System 1 (Gemma)', 'Gemma 4 26B-A4B: measured ~76-92 tok/s decode; request mix scaled to a 16k context (prefill speed estimated).', (vm) => {
     const l = vm.session?.llm;
     return !!l && l.activity === 'decode' && l.requests.length >= 4;
   }),
   {
     name: 'krea',
-    label: 'Live: Krea (image jobs)',
+    label: 'Live: CGI (image jobs)',
     blurb: '8-step jobs replayed from real sessions: ~13 s plain, ~27 s edit, up to ~56 s for large edits.',
     setup: (e) => {
-      e.select('krea');
-      e.launch('krea');
+      e.select('cgi');
+      e.launch('cgi');
     },
     startT: 300,
-    startUntil: liveSession('krea', (vm) => {
+    startUntil: liveSession('cgi', (vm) => {
       const i = vm.session?.image;
       return !!i && i.activity === 'generating' && i.step >= 4 && i.recent.length >= 5;
     }),
@@ -233,11 +324,11 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     name: 'fault-krea',
-    label: 'Fault: Krea crash',
+    label: 'Fault: CGI crash',
     blurb: 'Image server dies mid edit job (exit code -1073740791 / 0xC0000409), real crash pattern.',
     setup: (e) => {
-      e.select('krea');
-      e.launch('krea', { crashOnJob: 4 });
+      e.select('cgi');
+      e.launch('cgi', { crashOnJob: 4 });
     },
     startT: 0,
     startUntil: (vm) => vm.session?.phase === 'fault' && (vm.session.fault?.sinceS ?? 0) >= 15,
@@ -245,22 +336,22 @@ export const SCENARIOS: ScenarioDef[] = [
   },
   {
     name: 'fault-medium',
-    label: 'Fault: starter died',
-    blurb: 'The launcher script dies 2 s after start with a PowerShell error.',
+    label: 'Fault: server exited',
+    blurb: 'The llama.cpp server exits 2 s after start with a model load error.',
     setup: (e) => {
-      e.select('medium');
-      e.launch('medium', { failAtS: 2, failKind: 'powershell' });
+      e.select('s2');
+      e.launch('s2', { failAtS: 2, failKind: 'exit' });
     },
     startT: 0,
     startUntil: (vm) => vm.session?.phase === 'fault' && (vm.session.fault?.sinceS ?? 0) >= 6,
     searchS: 60,
   },
-  boot('high', 'Boot: Agent High', 'Flash-Next loading (real log timings; cold loads can take 30 s).'),
-  boot('low', 'Boot: Agent Low', 'Gemma loading.'),
-  boot('krea', 'Boot: Krea', 'Image server loading (durations estimated).'),
+  boot('boot-high', 's3', 'Boot: System 3', 'Flash-Next loading (real log timings; cold loads can take 30 s).'),
+  boot('boot-low', 's1', 'Boot: System 1', 'Gemma loading.'),
+  boot('boot-krea', 'cgi', 'Boot: CGI', 'Image server loading (durations estimated).'),
 ];
 
-export const DEFAULT_SCENARIO = 'live-medium';
+export const DEFAULT_SCENARIO = 'multi';
 export const SHOT_DEFAULT_SCENARIO = 'sample';
 
 export function scenarioDef(name: string | null | undefined): ScenarioDef | null {
@@ -281,7 +372,7 @@ export interface BuildCtx {
 /** Create the engine for a scenario and fast-forward it to its first frame. */
 export function buildEngine(def: ScenarioDef, ctx: BuildCtx): MockEngine {
   const epoch0 = ctx.shot ? SAMPLE_NOW : Math.floor(Date.now() / 1000);
-  const e = new MockEngine(epoch0, hashSeed(def.name) ^ ctx.seed, ctx.hooks);
+  const e = new MockEngine(epoch0, hashSeed(def.name) ^ ctx.seed, ctx.hooks, (def.world ?? classicWorld)());
   e.host = browserHost(ctx.frameless);
   def.setup(e);
   if (ctx.t !== null) {

@@ -7,7 +7,12 @@
 //   event   klif://gpu   { ok, adapter, expected?, pid? } after the WebView2 GPU process was located
 //   invoke  klif_snapshot -> ViewModel
 //   invoke  klif_act { action: EngineAction }            (serde shape of klif_common::vm::Action)
-//   invoke  klif_open_endpoint | klif_copy_endpoint | klif_copy_api_key   (handled natively; the key never reaches JS)
+//   invoke  klif_open_endpoint | klif_copy_endpoint { system? } | klif_copy_api_key   (handled natively; the key
+//                                                         never reaches JS)
+//   invoke  klif_preset_get { id, node? } -> PresetDetail | null       (secrets masked)
+//   invoke  klif_command_preview { spec, system? } -> CommandView      (an unsaved preset; Tune's debounced preview)
+//   invoke  klif_set_api_key { key: string | null }                    (native; never echoed back)
+//   invoke  klif_open_config | klif_open_logs
 //   invoke  klif_toggle_panel                            (panel mode: the window moves onto the small status
 //                                                         screen and fills it, or comes back; the state
 //                                                         arrives as ViewModel.host.panel)
@@ -16,17 +21,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { Recipe, SlotId, ViewModel } from '../model/types';
+import type { CommandView, EngineAction, PresetDetail, PresetSpec, SystemId, ViewModel } from '../model/types';
 import { SKINS } from '../../skins/registry';
 
-/** klif_common::vm::Action, internally tagged by "type". */
-export type EngineAction =
-  | { type: 'select'; slot: SlotId }
-  | { type: 'launch'; slot?: SlotId }
-  | { type: 'stop' }
-  | { type: 'restart' }
-  | { type: 'dismiss' }
-  | { type: 'setRecipe'; slot: SlotId; patch: Partial<Recipe> };
+/** klif_common::vm::Action, internally tagged by "type" (declared in model/types.ts). */
+export type { EngineAction };
 
 export interface GpuReport {
   ok: boolean;
@@ -45,9 +44,14 @@ export interface NativeHandlers {
 
 export interface NativeLink {
   act(action: EngineAction): Promise<void>;
-  openEndpoint(): Promise<void>;
-  copyEndpoint(): Promise<void>;
-  copyApiKey(): Promise<void>;
+  openEndpoint(system?: SystemId): Promise<void>;
+  copyEndpoint(system?: SystemId): Promise<void>;
+  copyApiKey(system?: SystemId): Promise<void>;
+  presetGet(id: string, node?: string): Promise<PresetDetail | null>;
+  commandPreview(spec: PresetSpec, system?: SystemId): Promise<CommandView>;
+  setApiKey(key: string | null): Promise<void>;
+  openConfig(): Promise<void>;
+  openLogs(): Promise<void>;
   /** Panel mode on / off. Rejects with a sentence when there is no small screen to move to. */
   togglePanel(): Promise<void>;
   minimize(): Promise<void>;
@@ -56,6 +60,11 @@ export interface NativeLink {
   log(line: string): void;
   disconnect(): void;
 }
+
+/** Where the core start stands (`klif_engine_status`): "waiting" = another process holds the engine; the shell
+ *  retries every 2 s and `message` says which process. */
+export type EngineStatus = { state: 'starting' | 'waiting' | 'ready' | 'failed'; message?: string };
+export const engineStatus = () => invoke<EngineStatus>('klif_engine_status');
 
 /** Errors from commands arrive as plain strings (user-facing sentences); anything else is stringified. */
 export function errorText(e: unknown): string {
@@ -104,14 +113,19 @@ export async function connect(h: NativeHandlers): Promise<NativeLink> {
   ]);
   const first = await invoke<ViewModel>('klif_snapshot');
   apply(first, 'snapshot');
-  log(`connected: snapshot with ${first.slots.length} slots, session ${first.session?.phase ?? 'none'}, ${location.href}`);
+  log(`connected: snapshot with ${first.systems.length} systems, session ${first.session?.phase ?? 'none'}, ${location.href}`);
 
   const win = getCurrentWindow();
   return {
     act: (action) => invoke('klif_act', { action }),
-    openEndpoint: () => invoke('klif_open_endpoint'),
-    copyEndpoint: () => invoke('klif_copy_endpoint'),
-    copyApiKey: () => invoke('klif_copy_api_key'),
+    openEndpoint: (system) => invoke('klif_open_endpoint', { system: system ?? null }),
+    copyEndpoint: (system) => invoke('klif_copy_endpoint', { system: system ?? null }),
+    copyApiKey: (system) => invoke('klif_copy_api_key', { system: system ?? null }),
+    presetGet: (id, node) => invoke<PresetDetail | null>('klif_preset_get', { id, node: node ?? null }),
+    commandPreview: (spec, system) => invoke<CommandView>('klif_command_preview', { spec, system: system ?? null }),
+    setApiKey: (key) => invoke('klif_set_api_key', { key }),
+    openConfig: () => invoke('klif_open_config'),
+    openLogs: () => invoke('klif_open_logs'),
     togglePanel: () => invoke('klif_toggle_panel'),
     minimize: () => win.minimize(),
     toggleMaximize: () => win.toggleMaximize(),

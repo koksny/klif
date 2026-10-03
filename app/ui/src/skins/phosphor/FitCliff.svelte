@@ -2,14 +2,14 @@
   // VRAM cliff in FIT PREVIEW (idle launcher). Same frame as the live cliff: y = GiB from 0 (floor)
   // to the dashed ceiling at totalGiB, the edge at the right drops to the SYSTEM RAM floor.
   // - The bright line is what is in use right now (baselineGiB: driver and other processes).
-  // - The ghost stack on top of it is the selected slot's expectedVram, strictly to scale, labelled
+  // - The ghost stack on top of it is the selected System's expectedVram, strictly to scale, labelled
   //   on the left. It is a projection, not a history: the traces are flat.
   // - "fits · N GiB spare" = total - baseline - expected (amber); a stack over the edge says by how much.
-  import type { GpuMemory, Slot } from '../../lib/model/types';
+  import type { GpuMemory, System } from '../../lib/model/types';
   import { fmtGiB } from '../../lib/model/format';
   import { P, nextUid } from './palette';
 
-  let { vram, slot, variant = 'full', k = 1 }: { vram: GpuMemory; slot: Slot | undefined; variant?: 'full' | 'mini'; k?: number } =
+  let { vram, system, variant = 'full', k = 1 }: { vram: GpuMemory; system: System | undefined; variant?: 'full' | 'mini'; k?: number } =
     $props();
 
   let w = $state(0);
@@ -36,7 +36,7 @@
 
   const stack = $derived.by(() => {
     let acc = base;
-    return (slot?.expectedVram ?? []).map((l, j) => {
+    return (system?.expectedVram ?? []).map((l, j) => {
       const lo = acc;
       acc += l.gib;
       return { ...l, j, lo, hi: acc };
@@ -87,7 +87,7 @@
       height={h}
       viewBox="0 0 {w} {h}"
       role="img"
-      aria-label="Fit preview: {slot?.label ?? ''} needs {fmtGiB(need)} GiB on top of {fmtGiB(base)} GiB in use; {fits
+      aria-label="Fit preview: {system?.label ?? ''} needs {fmtGiB(need)} GiB on top of {fmtGiB(base)} GiB in use; {fits
         ? `${fmtGiB(spare)} GiB spare`
         : `${fmtGiB(-spare)} GiB over`} of {fmtGiB(vram.totalGiB)} GiB"
     >
@@ -150,7 +150,7 @@
             >{fits ? `fits · ${fmtGiB(spare)} GiB spare` : `over the edge · ${fmtGiB(-spare)} GiB`}</text
           >
         {:else}
-          <text class="t mut" x={geo.padL + fs} y={(geo.yCeil + geo.yRam) / 2} style="font-size:{fs}px">no fit preview for this recipe</text>
+          <text class="t mut" x={geo.padL + fs} y={(geo.yCeil + geo.yRam) / 2} style="font-size:{fs}px">no fit preview for this preset</text>
         {/if}
 
         <text class="t ram" x={w - geo.padR} y={geo.yRam - fs * 0.6} text-anchor="end" style="font-size:{fs}px">SYSTEM RAM</text>

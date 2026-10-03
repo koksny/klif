@@ -4,12 +4,12 @@
   // drop at the failure (decode tok/s for an LLM that was serving, otherwise the VRAM history), or the
   // load checklist when the process died while loading (fault.steps), beside the last log lines.
   // The ways out (Restart, Dismiss, Full log) are in the controls bar, in their usual places.
-  import type { GpuMemory, Session, Slot } from '../../lib/model/types';
+  import type { GpuMemory, Session, System } from '../../lib/model/types';
   import FaultTrace from './FaultTrace.svelte';
   import Steps from './Steps.svelte';
   import { fmtAgo } from './geom';
 
-  let { session, slot, vram, k }: { session: Session; slot: Slot | undefined; vram: GpuMemory; k: number } = $props();
+  let { session, system, vram, k }: { session: Session; system: System | undefined; vram: GpuMemory; k: number } = $props();
 
   const f = $derived(session.fault);
   const since = $derived(f?.sinceS ?? 0);
@@ -45,7 +45,7 @@
     <svg class="ico" viewBox="0 0 48 44" aria-hidden="true"><path d="M24 3.5 L45 40.5 H3 Z" /><path d="M24 16v12.5" /><circle cx="24" cy="34.2" r="1.6" class="idot" /></svg>
     <div class="ft">
       <div class="ftitle" title={f?.title}>{f?.title ?? 'The server stopped unexpectedly.'}</div>
-      <div class="fsub">{slot?.label ?? ''} · {session.model.name} · <span class="code">{exitText}</span></div>
+      <div class="fsub">{system?.label ?? ''} · {session.model.name} · <span class="code">{exitText}</span></div>
     </div>
     <div class="ago">{fmtAgo(since)}</div>
   </div>

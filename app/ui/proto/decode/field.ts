@@ -276,7 +276,7 @@ export class DecodeField {
 
   private events(vm: ViewModel) {
     const s = vm.session;
-    const key = s ? `${s.slot}|${s.model.name}` : '';
+    const key = s ? `${s.system}|${s.model.name}` : '';
     if (key !== this.sessionKey) {
       this.sessionKey = key;
       this.seed = Math.floor(hash(key.length, Date.now() & 0xffff) * 1e6);
@@ -610,7 +610,7 @@ export class DecodeField {
       for (const l of layers) segs.push({ label: l.label, gib: l.gib, rgb: LAYER_RGB[l.id] ?? STREAM });
     }
     if (!vm.session) {
-      const sel = vm.slots.find((x) => x.id === vm.selected);
+      const sel = vm.systems.find((x) => x.id === vm.selected);
       for (const l of sel?.expectedVram ?? []) segs.push({ label: l.label, gib: l.gib, rgb: LAYER_RGB[l.id] ?? STREAM, ghost: true });
     }
 

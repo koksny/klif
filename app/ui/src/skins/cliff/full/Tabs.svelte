@@ -1,83 +1,91 @@
 <script lang="ts">
-  // Tier strip: the same four tabs in every phase. LLM slots are tiers (SYSTEM 1 / 2 / 3); the
-  // model behind each tier is the second line. The dot is the tier's state: kelp = ready, amber ring =
-  // cannot launch, sky = this tier runs. Click selects; double-click launches when nothing runs (or after
-  // a fault). While a session starts or stops the other tiers are locked; after a fault its tier is red.
-  import type { Actions, SlotId, ViewModel } from '../../../lib/model/types';
+  // System strip: one tab per System in vm.systems (no fixed four), the same in every phase. The label
+  // carries the status dot (online / busy / starting / offline / fault / unreachable; not set and invalid are a
+  // muted label) and, for a System on another node, a muted node suffix; the model behind it is the second
+  // line. Click selects (never stops anything); double-click launches a System that is ready and has nothing
+  // in its way. The strip scrolls sideways when it overflows; the last tab, +, adds a System.
+  import type { Actions, ViewModel } from '../../../lib/model/types';
+  import { canLaunch } from '../../../lib/model/systems';
+  import { strip } from '../../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../../lib/shell/SystemTabs/tabs';
   import { availabilityText, modelShort } from '../util';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
-  const s = $derived(vm.session);
-  const busy = $derived(!!s && (s.phase === 'starting' || s.phase === 'loading' || s.phase === 'stopping'));
-  const faulted = $derived(s?.phase === 'fault');
-  const verb = $derived(s?.phase === 'stopping' ? 'stopping' : 'loading');
+  const tabs = $derived(tabsFor(vm));
 
-  function onKey(e: KeyboardEvent, id: SlotId) {
+  function onKey(e: KeyboardEvent, id: string) {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const n = vm.slots.length;
-    const i = vm.slots.findIndex((x) => x.id === id);
-    for (let k = 1; k < n; k++) {
-      const next = vm.slots[(i + (e.key === 'ArrowRight' ? k : n - k)) % n];
-      const el = (e.currentTarget as HTMLElement).parentElement?.querySelector<HTMLButtonElement>(`[data-slot="${next.id}"]`);
-      if (el?.disabled) continue;
-      actions.select(next.id);
-      el?.focus();
-      return;
-    }
+    const n = vm.systems.length;
+    const i = vm.systems.findIndex((x) => x.id === id);
+    const next = vm.systems[(i + (e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+    if (!next) return;
+    void actions.select(next.id);
+    (e.currentTarget as HTMLElement).parentElement?.querySelector<HTMLButtonElement>(`[data-system="${CSS.escape(next.id)}"]`)?.focus();
+  }
+
+  /** The second line of a tab: the model, or why the System cannot start. */
+  function sub(t: (typeof tabs)[number]): string {
+    const s = t.system;
+    if (s.status === 'not-set') return 'no preset';
+    if (s.status === 'unreachable') return `${t.nodeName ?? 'node'} unreachable`;
+    const why = availabilityText(s.availability);
+    if (why) return s.model.name ? `${s.model.name} · ${why}` : why;
+    return s.external && s.status === 'offline' ? `${modelShort(s.model)} · not answering` : modelShort(s.model);
   }
 </script>
 
-<div class="tabs" role="tablist" aria-label="Tier">
-  {#each vm.slots as slot (slot.id)}
-    {@const sel = slot.id === vm.selected}
-    {@const why = availabilityText(slot.availability)}
-    {@const mine = s?.slot === slot.id}
-    {@const running = mine && !faulted}
-    {@const locked = busy && !mine}
-    {@const failed = mine && faulted}
-    <button
-      role="tab"
-      data-slot={slot.id}
-      aria-selected={sel}
-      tabindex={sel ? 0 : -1}
-      class="tab"
-      class:sel
-      class:na={!!why}
-      class:locked
-      class:failed
-      disabled={locked}
-      title={locked
-        ? `${slot.label}: locked while ${s?.model.name ?? 'the session'} is ${verb}`
-        : `${slot.label}: ${slot.model.name} · ${slot.model.quant}${running ? ' (running)' : ''}${why ? ` (${slot.reason ?? why})` : ''}`}
-      onclick={() => actions.select(slot.id)}
-      ondblclick={() => {
-        if ((!s || faulted) && !why) actions.launch(slot.id);
-      }}
-      onkeydown={(e) => onKey(e, slot.id)}
-    >
-      <span class="lbl">
-        {#if locked}
-          <svg class="lock" viewBox="0 0 12 14" aria-label="locked"
-            ><rect x="1.5" y="6" width="9" height="7" rx="1.2" /><path d="M3.6 6V4.3a2.4 2.4 0 0 1 4.8 0V6" /></svg
-          >
-        {:else}
-          <i class="st" class:run={running} class:bad={!!why} class:pulse={running && busy} aria-hidden="true"></i>
-        {/if}
-        <span class="tx">{slot.label}</span>
-      </span>
-      <span class="sub" class:bad={!!why}>{why ? `${slot.model.name} · ${why}` : modelShort(slot.model)}</span>
-    </button>
-  {/each}
+<div class="strip">
+  <div class="tabs" role="tablist" aria-label="Systems" use:strip={vm.selected}>
+    {#each tabs as t (t.id)}
+      {@const s = t.system}
+      {@const sel = t.id === vm.selected}
+      {@const bad = s.status === 'invalid' || s.status === 'unreachable' || (s.availability !== 'ready' && s.status !== 'not-set')}
+      <button
+        role="tab"
+        data-system={t.id}
+        aria-selected={sel}
+        tabindex={sel ? 0 : -1}
+        class="tab"
+        class:sel
+        class:na={bad}
+        class:failed={s.status === 'fault'}
+        title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${s.model.name || 'no preset'}${s.model.quant ? ` · ${s.model.quant}` : ''} (${s.status}${s.reason ? `: ${s.reason}` : ''})`}
+        onclick={() => actions.select(t.id)}
+        ondblclick={() => {
+          if (canLaunch(s) && s.conflicts.length === 0) void actions.launch(s.id).catch(() => {});
+        }}
+        onkeydown={(e) => onKey(e, t.id)}
+      >
+        <span class="lbl"><TabLabel tab={t} /></span>
+        <span class="sub" class:bad>{sub(t)}</span>
+      </button>
+    {/each}
+  </div>
+  <button class="tab add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>
+    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" /></svg>
+  </button>
 </div>
 
 <style>
-  .tabs {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .strip {
+    display: flex;
     gap: var(--gap);
     height: max(42px, calc(var(--u) * 48));
     min-width: 0;
+  }
+  .tabs {
+    display: flex;
+    flex: 1 1 auto;
+    gap: var(--gap);
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
   }
   .tab {
     display: flex;
@@ -94,12 +102,27 @@
       border-color 160ms ease-out,
       background 160ms ease-out;
   }
-  .tab:hover:not(.sel):not(:disabled) {
+  .tabs .tab {
+    flex: 1 0 max(150px, calc(var(--u) * 168));
+  }
+  .tab.add {
+    flex: none;
+    width: max(40px, calc(var(--u) * 44));
+    align-items: center;
+    padding: 0;
+    color: var(--mist);
+  }
+  .add svg {
+    width: max(12px, calc(var(--u) * 13));
+    height: max(12px, calc(var(--u) * 13));
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+  }
+  .tab:hover:not(.sel) {
     border-color: #3a4850;
     background: rgba(34, 44, 50, 0.8);
-  }
-  .tab:disabled {
-    opacity: 1;
   }
   .tab.sel {
     border-color: var(--sky);
@@ -114,7 +137,6 @@
   .lbl {
     display: flex;
     align-items: center;
-    gap: max(6px, calc(var(--u) * 7));
     min-width: 0;
     font-family: var(--f-ui);
     font-weight: 600;
@@ -123,10 +145,6 @@
     text-transform: uppercase;
     color: var(--mist);
     white-space: nowrap;
-  }
-  .tx {
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .sel .lbl {
     color: var(--foam);
@@ -150,56 +168,5 @@
   }
   .na .lbl {
     color: #9fb0b8;
-  }
-  .locked {
-    border-color: #222b30;
-  }
-  .locked .lbl,
-  .locked .sub {
-    color: #66767e;
-  }
-  /* Tier state */
-  .st {
-    width: max(7px, calc(var(--u) * 8));
-    height: max(7px, calc(var(--u) * 8));
-    flex: none;
-    border-radius: 50%;
-    background: var(--kelp);
-  }
-  .st.bad {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--amber);
-  }
-  .st.run {
-    background: var(--sky);
-    box-shadow: 0 0 0 max(2px, calc(var(--u) * 2.5)) rgba(90, 182, 235, 0.25);
-  }
-  .failed .st {
-    background: var(--danger);
-    box-shadow: none;
-  }
-  .st.pulse {
-    animation: pulse 1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.35;
-    }
-  }
-  .lock {
-    width: max(9px, calc(var(--u) * 10));
-    height: max(10px, calc(var(--u) * 12));
-    flex: none;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.4;
-  }
-  .lock rect {
-    fill: currentColor;
-    fill-opacity: 0.25;
   }
 </style>

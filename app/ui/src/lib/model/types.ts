@@ -1,4 +1,5 @@
 // KLIF view model: the single contract between the core (or the mock) and every skin.
+// Mirrored 1:1 in crates/klif-common/src/vm.rs (serde camelCase); change both together.
 //
 // Rules:
 // - Skins only READ this. They never invent a number that is not here.
@@ -6,35 +7,55 @@
 // - Units are in field names (GiB, MiB, S = seconds, Tps = tokens per second, Pct = 0..100).
 // - The view model is replaced wholesale at the telemetry rate (1-2 Hz). Skins interpolate between
 //   snapshots themselves (see lib/render), never by polling.
+//
+// 0.3: KLIF manages N user-defined Systems (klif.toml [systems.<id>], tabs in file order) running concurrently,
+// each with its own session, plus Systems on remote KLIF nodes ("<node>/<id>") and external servers. A System runs
+// a PRESET ([presets.<id>]) whose command is shown exactly (CommandView). Skins switch on `kind`, never on ids.
 
-/** The four job slots. LLM slots are tiers, not models: the model behind a tier is swappable. */
-export type SlotId = 'high' | 'medium' | 'low' | 'krea';
+/** A System id: a local id from `[systems.<id>]` ("s1", "cgi", "tts"...) or "<node>/<id>" for a remote System. */
+export type SystemId = string;
 
-export type SlotKind = 'llm' | 'image';
+export type SystemKind = 'llm' | 'image' | 'tts' | 'stt' | 'video';
+
+/** LLM System class: fast = System 1, deep = System 2, max = System 3. */
+export type LlmClass = 'fast' | 'deep' | 'max';
 
 /**
- * Catalog availability of the model assigned to a slot (mirrors the launcher's precedence).
- * 'busy' = the slot's port is held by a process KLIF does not own.
+ * A System's tab status.
+ * not-set: no preset · invalid: preset/kind errors, exe/model missing, port held by a foreign process (reason says
+ * which) · offline: ready, not running (external: not answering) · starting: boot/loading · online: live idle ·
+ * busy: live and working · stopping · fault · unreachable: its remote node is down/unauthorized/incompatible.
  */
-export type Availability =
-  | 'ready'
-  | 'unsupported'
-  | 'script-missing'
-  | 'model-missing'
-  | 'build-required'
-  | 'busy';
+export type SystemStatus =
+  | 'not-set'
+  | 'invalid'
+  | 'offline'
+  | 'starting'
+  | 'online'
+  | 'busy'
+  | 'stopping'
+  | 'fault'
+  | 'unreachable';
 
-export type Backend = 'HIP' | 'Vulkan' | 'CPU';
+/** Launch availability of a preset (or of a System's active preset). 'busy' = its port is held by a foreign process. */
+export type Availability = 'ready' | 'unsupported' | 'invalid' | 'exe-missing' | 'model-missing' | 'busy';
 
-/** What runs behind a slot. All strings are display-ready. */
+/** The server family a preset launches (telemetry, defaults, managed env). */
+export type AdapterId = 'llama.cpp' | 'sd.cpp' | 'vllm' | 'openai' | 'generic';
+
+/** How KLIF decides the server is ready. 'auto' = the adapter's default chain. */
+export type HealthCheck = { type: 'auto' } | { type: 'http'; path: string } | { type: 'tcp' };
+
+/** What runs behind a System. All strings are display-ready. */
 export interface ModelRef {
   /** "Qwen 3.8 27B" */
   name: string;
-  /** "GSQ-RCO IQ3_S" */
+  /** "IQ3_S" ("" unknown) */
   quant: string;
-  /** Inference engine family, e.g. "llama.cpp", "sd.cpp". Engine-agnostic on purpose. */
+  /** Adapter label, e.g. "llama.cpp", "sd.cpp", "vllm", "openai", "generic". */
   engine: string;
-  backend: Backend;
+  /** Display text: "HIP", "Vulkan", "CUDA", "Metal", "CPU" or free text; "" when unknown. Compare case-insensitively. */
+  backend: string;
   /** "RX 9070 XT" */
   device: string;
   /** Context window in tokens (LLM only). */
@@ -45,7 +66,7 @@ export interface ModelRef {
   specMode?: string;
   /** Vision projector loaded (LLM only). */
   vision?: boolean;
-  /** Reasoning mode, e.g. "Thinking" / "Instruct" (LLM); Krea on the fast starter: "Edit · Low" / "Generate · Low". */
+  /** Reasoning mode, e.g. "Thinking" / "Instruct" (LLM); "Edit" (image). */
   mode?: string;
   /** Default output size for image models, e.g. "512x768". */
   imageSize?: string;
@@ -76,86 +97,303 @@ export interface ModelArch {
   params?: string;
 }
 
-export interface Slot {
-  id: SlotId;
-  /** "SYSTEM 3" */
+// ------------------------------------------------------------------------------------------ commands
+
+/** One validation finding. Errors block Launch (status invalid); warnings never do. */
+export interface Issue {
+  level: 'error' | 'warn';
+  /** The field it is about: "command", "args", "env.HIP_PATH", "port", "presets.my-id", "systems.s1", "file"... */
+  field?: string;
+  /** One plain sentence. */
+  text: string;
+}
+
+/** One environment row of a command as shown (never the value of a secret). */
+export interface EnvView {
+  name: string;
+  /** Absent for a secret (shown as ••••). */
+  value?: string;
+  secret: boolean;
+  /** Set by KLIF (telemetry / API key), not by the preset. */
+  managed: boolean;
+  /** An inherited variable the preset removes. */
+  removed: boolean;
+  /** A managed variable the preset's own env overrides. */
+  overridden: boolean;
+}
+
+/** Exactly what a preset launches for a System, secrets masked. */
+export interface CommandView {
+  /** Resolved program path (or the command as written when it cannot be resolved). "" for an external preset. */
+  program: string;
+  /** Final argument tokens; values after secret flags are "••••". */
+  args: string[];
+  cwd: string;
+  env: EnvView[];
+  port: number;
+  host: string;
+  health: HealthCheck;
+  adapter: AdapterId;
+  /** The exact command line (secrets masked, {env:X} shown as %X%). */
+  display: string;
+  issues: Issue[];
+  /** Hash of what runs (program/args/env/cwd). Compare Session.command.hash with System.command.hash. */
+  hash: string;
+  /** The endpoint URL of an external preset (KLIF never starts or stops it). */
+  external?: string;
+}
+
+export interface ParamOption {
+  value: string;
   label: string;
-  kind: SlotKind;
+}
+
+/** A preset param with the System's current selection (segmented control / select in Tune). */
+export interface ParamView {
+  name: string;
+  label: string;
+  value: string;
+  choices: ParamOption[];
+}
+
+// ------------------------------------------------------------------------------------------- presets
+
+/** The latest benchmark of a preset. */
+export interface BenchSummary {
+  /** Seconds since epoch of the run. */
+  at: number;
+  runs: number;
+  loadS?: number;
+  ttftS?: number;
+  prefillTps?: number;
+  decodeTps?: number;
+  secondsPerImage?: number;
+  peakVramGiB?: number;
+  spillMiB?: number;
+  backendBuild?: string;
+  klifVersion: string;
+  /** Recorded for a different preset hash (the command changed since). */
+  stale: boolean;
+}
+
+/** A preset as listed. */
+export interface PresetInfo {
+  id: string;
+  name: string;
+  adapter: AdapterId;
+  kind: SystemKind;
   model: ModelRef;
   availability: Availability;
-  /** One plain sentence when availability !== 'ready', e.g. "Model file not found". */
   reason?: string;
-  /** Expected VRAM layers if launched with the current recipe (for the "will it fit" preview). */
-  expectedVram?: VramLayer[];
-  /** What is launched for this slot. Changed with Actions.setRecipe (the Tune drawer). */
-  recipe?: Recipe;
-  /** The choices the Tune drawer may offer for this slot, from the catalog. */
-  options?: RecipeOptions;
+  /** The recommendation it was made from. */
+  recommended?: string;
+  bench?: BenchSummary;
+  /** The GPU it runs on: "VEN:DEV" or "cpu". */
+  gpu?: string;
+  /** An external server (endpoint): watched, never started or stopped. */
+  external: boolean;
+  /** The node it lives on (absent = this machine). vm.presets are local; remote ones are vm.nodes[n].presets. */
+  node?: string;
+  /** = PresetDetail.specHash of the stored spec: a clean Tune draft reloads when it changes. */
+  specHash?: string;
 }
 
-/** The launch recipe of a slot. Values are catalog values; display text lives in ModelRef. */
-export interface Recipe {
-  /** Catalog card id, e.g. "qwen-gsq". */
-  cardId: string;
-  backend: Backend;
-  /** Catalog hardware value, e.g. "9070", "Dual", "9950X3D". */
-  hardware: string;
-  /** LLM context in tokens. */
-  ctxTokens?: number;
-  /** Image output size, e.g. "512x768". */
-  imageSize?: string;
-  kvType?: 'q4_0' | 'q8_0';
-  promptCacheMiB?: number;
+/** `choices.<value>` of a param (klif.toml snake_case). */
+export interface ParamChoiceSpec {
+  label?: string;
+  vars?: Record<string, string>;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/** `[presets.<id>.params.<NAME>]`. */
+export interface ParamSpec {
+  label?: string;
+  default?: string;
+  choices: Record<string, ParamChoiceSpec>;
+}
+
+/**
+ * `[presets.<id>]` exactly as in klif.toml (snake_case keys, mirrors Rust PresetCfg). Absent fields take their
+ * defaults: adapter 'llama.cpp', managed TRUE, api_key TRUE. Secret env values arrive as "••••" and may be sent back
+ * as "••••" (= keep the stored value; resolved against secretsFrom / the id).
+ */
+export interface PresetSpec {
+  name?: string;
+  adapter?: AdapterId;
+  /** Default: image for sd.cpp, llm for llama.cpp/vllm/openai; REQUIRED for generic. */
+  kind?: SystemKind;
+  /** Absolute path, or a name on PATH (.exe/.com only). Empty for an external preset. */
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  env_remove?: string[];
   port?: number;
-  /** LLM: the vision projector. Krea on the fast starter: Qwen3-VL also reads the reference images (Edit on). */
-  vision?: boolean;
-  /** Reasoning mode, e.g. "Thinking" / "Instruct", only where the card supports it. */
-  mode?: string;
-  /**
-   * Krea speed/quality level (image slot, only where options.precisions is offered: the fast Krea starter).
-   * low = rank-64 edit LoRA + quarter-size reference, medium = rank-64 + half-size reference,
-   * high = the full identity LoRA + half-size reference. Default 'low'.
-   */
-  precision?: Precision;
-  /**
-   * Krea identity edit (image slot, only where options.editToggle is true). Off = plain generation; on = the
-   * edit LoRA and reference preset per precision, with the identity LoRA applied to every request that names
-   * no LoRA itself. Default false.
-   */
-  edit?: boolean;
+  host?: string;
+  /** External server URL (command must be empty). */
+  endpoint?: string;
+  /** "/path" = HTTP, "tcp" = TCP listen; absent = the adapter's default chain. */
+  health?: string;
+  model?: string;
+  mmproj?: string;
+  ctx?: number;
+  /** "VEN:DEV", "VEN:DEV#n", "cpu", or a comma list; default [gpu] inference. Display/telemetry only. */
+  gpu?: string;
+  /** Default true: KLIF adds the adapter's telemetry env. */
+  managed?: boolean;
+  /** Default true: KLIF injects its API key into the adapter's key env var. */
+  api_key?: boolean;
+  model_name?: string;
+  quant?: string;
+  backend?: string;
+  device?: string;
+  notes?: string;
+  recommended?: string;
+  params?: Record<string, ParamSpec>;
 }
 
-/** The three Krea precision levels (Recipe.precision). */
-export type Precision = 'low' | 'medium' | 'high';
+/** One preset in full, for the Tune editor (klif_preset_get). */
+export interface PresetDetail {
+  id: string;
+  spec: PresetSpec;
+  command: CommandView;
+  info: PresetInfo;
+  /** Hash of the stored spec as served (every field, masked): send it back as SavePreset's baseHash. Empty from a
+   *  node that does not report it. */
+  specHash: string;
+}
 
-export interface RecipeChoice<T> {
-  value: T;
+// ------------------------------------------------------------------------- recommendations/downloads
+
+export interface RecFile {
+  /** Path of the file in the Hugging Face repo. */
+  name: string;
+  role: 'model' | 'mmproj' | 'other';
+  sizeBytes?: number;
+}
+
+/** Measured on one machine (a starting point, not a promise). */
+export interface Measured {
+  decodeTps?: number;
+  prefillTps?: number;
+  secondsPerImage?: number;
+  hardware: string;
+  backend: string;
+  date: string;
+}
+
+/** A model recommendation for a kind (and LLM class) of System. Shown with the disclaimer. */
+export interface RecommendationInfo {
+  id: string;
+  kind: SystemKind;
+  class?: LlmClass;
+  name: string;
+  adapter: AdapterId;
+  hfRepo: string;
+  /** Commit sha. */
+  revision: string;
+  files: RecFile[];
+  quant: string;
+  license: string;
+  hardwareClass: string;
+  minVramGiB?: number;
+  measured?: Measured;
+  notes?: string;
+  /** Files present in the models dir (or already referenced by a preset). */
+  installed: boolean;
+  /** Preset id already using these files. */
+  existing?: string;
+}
+
+export type DownloadState = 'running' | 'verifying' | 'done' | 'failed' | 'cancelled';
+
+/** One file of a recommendation being downloaded (one entry per (id, file)). */
+export interface DownloadInfo {
+  /** Recommendation id. */
+  id: string;
+  file: string;
+  doneBytes: number;
+  totalBytes?: number;
+  state: DownloadState;
+  error?: string;
+}
+
+// -------------------------------------------------------------------------------------------- config
+
+export interface ApiKeyInfo {
+  /** "file" | "env:NAME" | "none" */
+  source: string;
+  set: boolean;
+}
+
+/** `[launch] on_conflict`: what Launch does when other Systems must stop first. */
+export type OnConflict = 'ask' | 'stop';
+
+export interface ConfigInfo {
+  /** The klif.toml in use (absent: defaults, no file yet). */
+  path?: string;
+  stateDir: string;
+  dataDir: string;
+  issues: Issue[];
+  apiKey: ApiKeyInfo;
+  /** `[paths] models_dir` (absent: downloads are refused until it is set). */
+  modelsDir?: string;
+  onConflict: OnConflict;
+}
+
+// ------------------------------------------------------------------------------------------- systems
+
+/** One System (a tab): its configuration, what it would run, and its live state. */
+export interface System {
+  id: SystemId;
+  /** "System 1" */
   label: string;
-  availability: Availability;
+  kind: SystemKind;
+  class?: LlmClass;
+  /** The remote node it lives on (absent = this machine). Display name via vm.nodes. */
+  node?: string;
+  status: SystemStatus;
+  /** One plain sentence for not-set / invalid / fault / unreachable (and conflicts). */
   reason?: string;
+  /** Launch availability of the active preset. */
+  availability: Availability;
+  model: ModelRef;
+  /** The active preset id. */
+  preset?: string;
+  /** The active preset's params with this System's selection. */
+  params: ParamView[];
+  /** What Launch would run now. */
+  command?: CommandView;
+  bench?: BenchSummary;
+  /** Expected VRAM layers if launched now (the "will it fit" preview). */
+  expectedVram?: VramLayer[];
+  expectedVramSource?: 'measured' | 'file-size';
+  /** The first GPU it runs on ("VEN:DEV", "VEN:DEV#n" or "cpu"): the fit display. */
+  gpu?: string;
+  /** Every GPU it runs on. */
+  gpus: string[];
+  /** Its preset is an external server (watched only; Launch/Stop are refused). */
+  external: boolean;
+  /** Needs the whole GPU. */
+  exclusive: boolean;
+  /** False for remote Systems whose node does not grant "edit" (and ghost sessions). */
+  editable: boolean;
+  /** May be launched / stopped from here (local: true; remote: the node grants "launch"). */
+  controllable: boolean;
+  /** Running Systems that must stop before this one can launch: Launch shows "Stop <labels> & launch". */
+  conflicts: SystemId[];
+  /** The base URL clients use (LLM: ".../v1"). */
+  endpoint?: string;
+  session?: Session;
+  lastSession?: LastSession;
+  /** 0..1: how hard it works right now, for the tab pulse. */
+  activity: number;
 }
 
-export interface RecipeOptions {
-  /** Models that may sit behind this slot (cards), with their availability. */
-  cards: (RecipeChoice<string> & { name: string; quant: string })[];
-  backends: RecipeChoice<Backend>[];
-  hardware: RecipeChoice<string>[];
-  contexts?: RecipeChoice<number>[];
-  imageSizes?: RecipeChoice<string>[];
-  kvTypes?: ('q4_0' | 'q8_0')[];
-  /** Prompt cache sizes, already capped where the catalog caps them. */
-  promptCacheMiB?: number[];
-  ports?: number[];
-  /** True when the current card supports the vision projector (LLM) or reference vision (fast Krea starter). */
-  vision?: boolean;
-  modes?: string[];
-  /** Krea precision levels with a one-line hint each ("fastest · ~19 s edit 1024×768"); fast Krea starter only. */
-  precisions?: (RecipeChoice<Precision> & { hint: string })[];
-  /** True when the current card takes the Edit toggle (fast Krea starter only). */
-  editToggle?: boolean;
-}
+// ------------------------------------------------------------------------------------------- session
 
-/** Lifecycle of the one running session. */
+/** Lifecycle of a session. */
 export type Phase = 'starting' | 'loading' | 'live' | 'stopping' | 'fault';
 
 export type LoadStepId = 'process' | 'device' | 'weights' | 'kv' | 'warmup' | 'ready';
@@ -192,9 +430,9 @@ export interface Fault {
   steps?: LoadStep[];
 }
 
-/** Summary of the previous session, shown by the idle launcher. */
+/** Summary of a System's previous session, shown while it is offline. */
 export interface LastSession {
-  slot: SlotId;
+  system: SystemId;
   model: ModelRef;
   /** How long it ran. */
   uptimeS: number;
@@ -287,8 +525,18 @@ export interface ImageLive {
   imagesThisSession: number;
 }
 
+/** What KLIF can tell about a server without a dedicated parser (tts / stt / video, generic, openai). */
+export interface GenericLive {
+  requestsInFlight?: number;
+  requestsTotal?: number;
+  /** Seconds since the last log line / request activity. */
+  lastActivityS?: number;
+  /** The model id the server reports (/v1/models). */
+  modelId?: string;
+}
+
 export interface Session {
-  slot: SlotId;
+  system: SystemId;
   model: ModelRef;
   phase: Phase;
   /** Seconds since the session started. */
@@ -297,9 +545,21 @@ export interface Session {
   apiKeySet: boolean;
   loading: LoadProgress | null;
   fault: Fault | null;
+  /** The live part is ONE of llm / image / generic (the others are null), by kind. */
   llm: LlmLive | null;
   image: ImageLive | null;
+  generic: GenericLive | null;
+  /** The preset it was launched from. */
+  preset?: string;
+  /** What actually ran ("differs from the running session" when hash ≠ System.command.hash). */
+  command?: CommandView;
+  /** The GPU it runs on. */
+  gpu?: string;
+  /** VRAM committed by the session's processes. */
+  vramGiB?: number;
 }
+
+// ---------------------------------------------------------------------------------------- machine
 
 export type VramLayerId = 'weights' | 'kv' | 'buffers' | 'draft' | 'projector' | 'other';
 
@@ -310,14 +570,21 @@ export interface VramLayer {
   gib: number;
 }
 
-/** The inference GPU's memory: the "cliff". */
+/** A GPU's memory: the "cliff". */
 export interface GpuMemory {
+  /** "VEN:DEV" (e.g. "1002:7550"), "VEN:DEV#n" or "cpu". */
+  id: string;
   /** "RX 9070 XT" */
+  name: string;
+  /** Same as name (kept for 0.2 skins). */
   device: string;
   /** Usable dedicated memory: the cliff edge. */
   totalGiB: number;
   usedGiB: number;
-  /** Composition of usedGiB, bottom layer first. Sums to usedGiB (within rounding). */
+  /**
+   * Composition of usedGiB, bottom layer first. vm.vram: [other, ...the selected session's layers];
+   * vm.gpus[*]: [other] only.
+   */
   layers: VramLayer[];
   /** Allocations demoted to shared system memory: material that went over the edge. */
   spillMiB: number;
@@ -325,19 +592,14 @@ export interface GpuMemory {
   history: number[];
   /** Optional per-layer history (same cadence and length as history), for skins that draw it over time. */
   layerHistory?: Partial<Record<VramLayerId, number[]>>;
-  /**
-   * VRAM held by things other than KLIF's session (driver, other processes). Part of usedGiB as the
-   * 'other' layer while a session runs; used for the idle fit preview: spare = total - baseline - expected.
-   */
+  /** VRAM held by things other than KLIF's sessions (driver, other processes): spare = total - baseline - expected. */
   baselineGiB: number;
   /** Headroom below which the UI may warn (configured, not measured). */
   warnBelowGiB: number;
   /**
-   * The inference GPU powered down while a model is loaded (e.g. AMD ULPS / device state D3): the
-   * session's allocations still exist but are paged out to system RAM, and the next request pays a
-   * wake-up delay while they are restored. While dormant, `layers` show the session's ALLOCATIONS
-   * (so they may sum to more than `usedGiB`, which stays the resident amount); skins draw them as
-   * paged out (ghosted), never as if they were resident.
+   * The GPU powered down while a model is loaded (e.g. AMD ULPS / device state D3): the sessions' allocations
+   * still exist but are paged out to system RAM, and the next request pays a wake-up delay. While dormant,
+   * `layers` show the ALLOCATIONS (they may sum to more than `usedGiB`); skins draw them as paged out (ghosted).
    */
   dormant?: {
     /** Session allocations not resident in VRAM right now. */
@@ -349,7 +611,8 @@ export interface GpuMemory {
   } | null;
 }
 
-export interface SystemStats {
+/** This machine (or a node): RAM and CPU. */
+export interface MachineStats {
   ramUsedGiB: number;
   ramTotalGiB: number;
   /** "DDR5", if known. */
@@ -365,7 +628,7 @@ export interface HostInfo {
   /** True when the native title bar is hidden and the skin must draw window controls. */
   frameless: boolean;
   maximized: boolean;
-  /** "0.2.0" */
+  /** "0.3.0" */
   appVersion: string;
   /**
    * Panel mode = the read-only mini layout on the small status screen (e.g. a 3.5" 960x640 monitor).
@@ -381,37 +644,137 @@ export interface HostInfo {
   };
 }
 
+// -------------------------------------------------------------------------------------------- nodes
+
+export type NodeState = 'connecting' | 'online' | 'offline' | 'unauthorized' | 'incompatible';
+
+/** A remote KLIF node (`[nodes.<id>]`) as seen from here. */
+export interface NodeView {
+  id: string;
+  name: string;
+  address: string;
+  state: NodeState;
+  /** The node's KLIF version. */
+  version?: string;
+  latencyMs?: number;
+  /** Rights it grants us besides view: "launch", "edit". */
+  allow: string[];
+  gpus: GpuMemory[];
+  machine?: MachineStats;
+  /** Its presets (masked), node = this node's id. */
+  presets: PresetInfo[];
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------------------- view model
+
 export interface ViewModel {
   /** Seconds since epoch at the moment the snapshot was taken. */
   now: number;
-  slots: Slot[];
-  /** The slot the launcher has selected (the running one while a session exists). */
-  selected: SlotId;
+  /** Local Systems in file order, then ghost sessions, then remote Systems by node. Empty = onboarding. */
+  systems: System[];
+  /** The selected tab (null: no Systems). */
+  selected: SystemId | null;
+  // Conveniences so skins keep working, all derived from the SELECTED System:
+  /** The selected System's session. */
   session: Session | null;
-  vram: GpuMemory;
-  system: SystemStats;
-  /** The previous session (idle launcher summary), if any. */
+  /** The selected System's previous session. */
   lastSession: LastSession | null;
-  host: HostInfo;
-  /** Last console lines, ANSI-stripped, newest last, up to 200. */
+  /** The selected System's console: last lines, ANSI-stripped, newest last, up to 200. */
   console: string[];
+  /** The selected System's GPU, else [gpu] inference. */
+  vram: GpuMemory;
+  /** Every local GPU KLIF measures. */
+  gpus: GpuMemory[];
+  machine: MachineStats;
+  host: HostInfo;
+  /** Local presets (remote ones: nodes[n].presets). */
+  presets: PresetInfo[];
+  recommendations: RecommendationInfo[];
+  downloads: DownloadInfo[];
+  config: ConfigInfo;
+  nodes: NodeView[];
 }
 
-/** Everything a skin can ask the shell to do. Skins never talk to the core directly. */
+// ------------------------------------------------------------------------------------------- actions
+
+/** The right a network peer needs for an action or protocol method. */
+export type Right = 'view' | 'launch' | 'edit' | 'local-only';
+
+/**
+ * The engine actions, exactly as serialized (serde shape of klif_common::vm::Action). `system` absent = the
+ * selected System. Actions on "<node>/<id>" Systems (or with `node`) are forwarded to that node.
+ */
+export type EngineAction =
+  | { type: 'select'; system: SystemId }
+  | { type: 'launch'; system?: SystemId; stopOthers?: boolean }
+  | { type: 'stop'; system?: SystemId }
+  | { type: 'stopAll' }
+  | { type: 'restart'; system?: SystemId }
+  | { type: 'dismiss'; system?: SystemId }
+  | { type: 'usePreset'; system: SystemId; preset: string }
+  | { type: 'setParam'; system: SystemId; name: string; value: string }
+  | {
+      type: 'savePreset';
+      id: string;
+      preset: PresetSpec;
+      selectFor?: SystemId;
+      secretsFrom?: string;
+      baseHash?: string;
+      node?: string;
+    }
+  | { type: 'deletePreset'; id: string; node?: string }
+  | { type: 'addSystem'; id?: string; label?: string; kind: SystemKind; class?: LlmClass; preset?: string; node?: string }
+  | { type: 'removeSystem'; system: SystemId }
+  | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean }
+  | { type: 'downloadRecommendation'; id: string; node?: string }
+  | { type: 'cancelDownload'; id: string; node?: string }
+  | { type: 'adoptRecommendation'; id: string; system?: SystemId };
+
+/**
+ * Everything a skin can ask the shell to do. Skins never talk to the core directly. Engine actions return a
+ * Promise that rejects with the engine's sentence (shown inline / as a toast); shell actions are fire-and-forget.
+ */
+/**
+ * How the UI reports one engine action. By default a refusal is ALSO shown as a toast (every surface gets it
+ * once); `quiet` skips that toast for a caller that shows the sentence itself (Tune, inline). Never sent to the
+ * engine.
+ */
+export interface CallOpts {
+  quiet?: boolean;
+}
+
 export interface Actions {
-  select(slot: SlotId): void;
-  launch(slot?: SlotId): void;
-  stop(): void;
-  restart(): void;
-  openEndpoint(): void;
-  copyEndpoint(): void;
+  // ---- engine actions ----
+  select(system: SystemId, call?: CallOpts): Promise<void>;
+  /** With conflicts the control reads "Stop <labels> & launch" and passes stopOthers: true. */
+  launch(system?: SystemId, opts?: { stopOthers?: boolean } & CallOpts): Promise<void>;
+  stop(system?: SystemId, call?: CallOpts): Promise<void>;
+  stopAll(call?: CallOpts): Promise<void>;
+  restart(system?: SystemId, call?: CallOpts): Promise<void>;
+  /** Leave a fault and return the System to offline. */
+  dismiss(system?: SystemId, call?: CallOpts): Promise<void>;
+  usePreset(system: SystemId, preset: string, call?: CallOpts): Promise<void>;
+  setParam(system: SystemId, name: string, value: string, call?: CallOpts): Promise<void>;
+  savePreset(
+    id: string,
+    preset: PresetSpec,
+    opts?: { selectFor?: SystemId; secretsFrom?: string; baseHash?: string; node?: string } & CallOpts,
+  ): Promise<void>;
+  deletePreset(id: string, node?: string, call?: CallOpts): Promise<void>;
+  addSystem(spec: { id?: string; label?: string; kind: SystemKind; class?: LlmClass; preset?: string; node?: string }, call?: CallOpts): Promise<void>;
+  removeSystem(system: SystemId, call?: CallOpts): Promise<void>;
+  updateSystem(system: SystemId, patch: { label?: string; moveTo?: number; exclusive?: boolean }, call?: CallOpts): Promise<void>;
+  downloadRecommendation(id: string, node?: string, call?: CallOpts): Promise<void>;
+  cancelDownload(id: string, node?: string, call?: CallOpts): Promise<void>;
+  adoptRecommendation(id: string, system?: SystemId, call?: CallOpts): Promise<void>;
+  // ---- shell actions ----
+  openEndpoint(system?: SystemId): void;
+  copyEndpoint(system?: SystemId): void;
   copyApiKey(): void;
   toggleConsole(open?: boolean): void;
-  openTune(slot?: SlotId): void;
-  /** Leave a fault (or finished) session and return to the idle launcher. */
-  dismiss(): void;
-  /** Change a slot's launch recipe (Tune drawer). A running session keeps its recipe until restart. */
-  setRecipe(slot: SlotId, patch: Partial<Recipe>): void;
+  /** Open the Tune drawer on a System, or in add mode ("Add System"). */
+  openTune(system?: SystemId, opts?: { add?: boolean }): void;
   /** Window chrome; only meaningful when vm.host.frameless. Skins mark their header with
    *  data-tauri-drag-region so the window can be dragged by it. */
   minimize(): void;
@@ -422,4 +785,20 @@ export interface Actions {
    * window controls; the mini layout shows a small "back" control only on hover/tap.
    */
   togglePanel(): void;
+}
+
+/**
+ * Config-level calls for the Tune drawer (`player.config`). Native: klif_preset_get, klif_command_preview,
+ * klif_set_api_key, klif_open_config, klif_open_logs. Mock: computed by the mock catalog. Errors reject with a
+ * sentence.
+ */
+export interface ConfigApi {
+  /** One preset in full (secrets masked); `node` = a remote node's preset. */
+  presetGet(id: string, node?: string): Promise<PresetDetail | null>;
+  /** The command an unsaved preset spec would run for `system` (debounced preview in Tune). */
+  commandPreview(spec: PresetSpec, system?: SystemId): Promise<CommandView>;
+  /** Set (string) or clear (null) the API key natively; the key is never echoed back. */
+  setApiKey(key: string | null): Promise<void>;
+  openConfig(): Promise<void>;
+  openLogs(): Promise<void>;
 }

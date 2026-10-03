@@ -26,8 +26,8 @@ const DIT_LAYERS = 28;
 
 export function shapeOf(vm: ViewModel): Shape {
   const s = vm.session;
-  const slot = vm.slots.find((x) => x.id === (s?.slot ?? vm.selected));
-  const kind = slot?.kind ?? (s?.image ? 'image' : 'llm');
+  const slot = vm.systems.find((x) => x.id === vm.selected);
+  const kind = slot?.kind ?? 'llm';
   const arch = s?.model.arch ?? slot?.model.arch ?? null;
   const layers = arch && arch.layers >= 2 ? Math.min(256, Math.round(arch.layers)) : 0;
   if (kind === 'image') return { kind: 'dit', layers: layers || DIT_LAYERS, experts: 0, active: 0, shared: 0, known: layers > 0, arch };

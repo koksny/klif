@@ -1,38 +1,22 @@
-//! Shared contract for the KLIF native core: the view model (mirror of the UI's types.ts),
-//! configuration, and small shared types.
+//! Shared contract for the KLIF native core: the view model (mirror of the UI's types.ts), configuration
+//! (`klif.toml`), the secret rules, command-line rendering and the supervisor's launch input.
+//!
+//! - `config`: klif.toml 0.3 (lookup, presets, params, tiers), `load()` never fails.
+//! - `vm`: the view model and `Action` (serde camelCase, mirrored in app/ui/src/lib/model/types.ts).
+//! - `secret`: `Secret`, `is_secret_env`, `SECRET_ARG_FLAGS`, `mask_args`, `MASK`.
+//! - `cmdline`: `render(exe, args)`, the exact command line shown AND run.
+//! - `launch`: `LaunchSpec` / `EnvVal`, what the supervisor starts.
 
+pub mod cmdline;
 pub mod config;
+pub mod launch;
+pub mod secret;
 pub mod vm;
 
-use std::fmt;
+pub use secret::Secret;
 
-/// A secret string (API key). Never printed: Debug and Display are redacted.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
-
-impl Secret {
-    pub fn new(s: impl Into<String>) -> Option<Secret> {
-        let s = s.into();
-        let t = s.trim();
-        if t.is_empty() { None } else { Some(Secret(t.to_string())) }
-    }
-    /// The only way to read the value. Use it to build a child's environment block, nothing else.
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Secret(***)")
-    }
-}
-
-impl fmt::Display for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("***")
-    }
-}
+/// The KLIF version (workspace version), e.g. "0.3.0".
+pub const KLIF_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Seconds since the Unix epoch as f64 (the view model's time unit).
 pub fn now_s() -> f64 {

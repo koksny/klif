@@ -12,7 +12,8 @@
   //   fault     : the fault panel over the status block, the fault marked on the cliff and the timeline
   //   dormant   : (live, vm.vram.dormant set) the GPU is asleep or waking: amber tags, the last figure faded,
   //               the allocations drawn paged out on the cliff
-  import type { Actions, Slot, ViewModel } from '../../lib/model/types';
+  import type { Actions, ViewModel } from '../../lib/model/types';
+  import { idleState, selectedSystem } from '../../lib/model/systems';
   import { fmtGiB, fmtInt, fmtPct, fmtSeconds } from '../../lib/model/format';
   import Header from './Header.svelte';
   import Tabs from './Tabs.svelte';
@@ -25,21 +26,20 @@
   import Timeline from './Timeline.svelte';
   import Jobs from './Jobs.svelte';
   import Controls from './Controls.svelte';
-  import { availText, clamp, fmtAgo, fmtDur, gpuSleep, lastSessionLine, loadSpanS, recipeLine } from './geom';
+  import { clamp, fmtAgo, fmtDur, gpuSleep, lastSessionLine, loadSpanS, recipeLine } from './geom';
 
   let { vm, actions, k }: { vm: ViewModel; actions: Actions; k: number } = $props();
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const sessionSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const selectedSlot = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  // The running slot's kind, or (idle) the selected slot's: the empty hero and rows still say what they measure.
-  const kind = $derived(sessionSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (selectedSlot?.kind ?? 'llm')));
+  const sel = $derived(selectedSystem(vm) ?? undefined);
+  // The selected System's kind (vm.session is always its session): the empty hero and rows still say what they measure.
+  const kind = $derived(sel?.kind ?? 'llm');
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
 
-  type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'stopping' | 'fault' | 'other';
+  type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'live-gen' | 'stopping' | 'fault' | 'other';
   const view = $derived<View>(
     !s
       ? 'idle'
@@ -53,29 +53,29 @@
               ? 'live-llm'
               : kind === 'image' && img
                 ? 'live-img'
-                : 'other',
+                : kind !== 'llm' && kind !== 'image' && gen
+                  ? 'live-gen'
+                  : 'other',
   );
-  const busy = $derived(view === 'loading' || view === 'stopping');
-  const ctlView = $derived(view === 'live-llm' || view === 'live-img' || view === 'other' ? 'live' : view);
+  const ctlView = $derived(view === 'live-llm' || view === 'live-img' || view === 'live-gen' || view === 'other' ? 'live' : view);
 
   /** GPU dormant (vm.vram.dormant): asleep, or waking while its VRAM is restored from system RAM. */
   const gpu = $derived(
-    phase === 'live' ? gpuSleep(vm.vram, (!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating')) : null,
+    phase === 'live' ? gpuSleep(vm.vram, (!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating') || (gen?.requestsInFlight ?? 0) > 0) : null,
   );
 
   // The model line and the rows follow the running session, or (idle) the selected tier's configured values.
-  const focusModel = $derived(s?.model ?? selectedSlot?.model);
-  const focusRecipe = $derived((sessionSlot ?? selectedSlot)?.recipe);
+  const focusModel = $derived(s?.model ?? sel?.model);
   const recipe = $derived(focusModel ? recipeLine(focusModel) : []);
-  const port = $derived(s?.endpoint.port ?? focusRecipe?.port);
-  const selReady = $derived(selectedSlot?.availability === 'ready');
-  // The hero's word when nothing runs: the selected tier's state.
-  const idleWord = $derived(selReady ? 'NOT RUNNING' : availText(selectedSlot?.availability ?? 'unsupported').toUpperCase());
+  const port = $derived(s?.endpoint.port ?? sel?.command?.port);
+  const idle = $derived(idleState(sel));
+  // The hero's word when nothing runs: the selected System's state.
+  const idleWord = $derived(idle.text.toUpperCase());
 
   // LLM rows.
   const prefillActive = $derived(!!llm?.prefill && llm.activity === 'prefill');
   const specPending = $derived(!!llm && llm.activity === 'prefill' && llm.generatedTokens === 0);
-  const ctxTotal = $derived(llm?.context.totalTokens || focusModel?.ctxTokens || focusRecipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || focusModel?.ctxTokens || 0);
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? llm.context.usedTokens / llm.context.totalTokens : 0);
   /** Radar sweep: 2 degrees per second per decode tok/s (1/180 turn); during prefill 1/16 of its rate. */
   const sweep = $derived.by(() => {
@@ -96,24 +96,27 @@
     const st = steps.find((x) => x.id === 'weights');
     if (!st || st.state === 'pending') return 0;
     if (st.state === 'done') return 1;
-    const total = sessionSlot?.expectedVram?.find((l) => l.id === 'weights')?.gib ?? 0;
+    const total = sel?.expectedVram?.find((l) => l.id === 'weights')?.gib ?? 0;
     const now = vm.vram.layers.find((l) => l.id === 'weights')?.gib ?? 0;
     return total > 0 ? clamp(now / total, 0, 1) : null;
   });
+
+  const genBusy = $derived(view === 'live-gen' && (gen?.requestsInFlight ?? 0) > 0);
 
   // The dial at the left of the rows: context fill (LLM), sampling progress (image), startup (loading).
   const dial = $derived.by(() => {
     if (view === 'loading') return { frac: loadFrac, rate: 0.32, cap: 'LOAD', amber: true };
     if (kind === 'image') return { frac: imgFrac, rate: imgGen ? 0.25 : 0, cap: 'STEP', amber: false };
+    if (kind !== 'llm') return { frac: 0, rate: genBusy ? 0.25 : 0, cap: 'REQ', amber: false };
     return { frac: view === 'live-llm' || view === 'stopping' ? ctxFrac : 0, rate: sweep, cap: 'CTX', amber: false };
   });
 
   // Fault.
-  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img));
+  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img || !!gen));
   /** Was a request in flight when the LLM server died? (activity as last reported) */
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
 
-  // Timeline / recent jobs: the running slot's kind, or (idle) the selected tier's. Empty frames while idle.
+  // Timeline / recent jobs: the selected System's kind. Empty frames while idle.
   const jobsView = $derived(kind === 'image');
   const requests = $derived(llm ? llm.requests.slice(view === 'fault' ? -6 : -8) : []);
   const jobs = $derived(img ? img.recent.slice(view === 'fault' ? -10 : -12) : []);
@@ -121,6 +124,7 @@
     const n = requests.length;
     if (view === 'idle') return 'not running';
     if (view === 'loading') return 'no requests yet';
+    if (kind !== 'llm' && view !== 'fault') return 'no per-request log for this kind';
     if (view === 'fault') {
       if (!faultHadWork) return 'no requests: failed during startup';
       const head = n === 0 ? 'no finished requests' : `last ${n}`;
@@ -145,17 +149,9 @@
 <div class="full v-{view}">
   <Header session={s} host={vm.host} {actions} {k} {gpu} />
 
-  <Tabs
-    slots={vm.slots}
-    selected={vm.selected}
-    running={s?.slot ?? null}
-    {actions}
-    locked={busy}
-    fault={view === 'fault'}
-    canLaunch={!s || view === 'fault'}
-  />
+  <Tabs {vm} {actions} />
 
-  <!-- model line: the running model, or the selected tier's -->
+  <!-- model line: the running model, or the selected System's -->
   <div class="panel recipe" class:dim={view === 'idle'} title={recipe.join(' · ')}>
     {#each recipe as part, i (i)}
       {#if i > 0}<span class="sep" aria-hidden="true">·</span>{/if}<span class="part">{part}</span>
@@ -165,13 +161,15 @@
   <!-- status block: hero + detail rows; its box never moves, a fault covers it whole -->
   <div class="block">
     {#if view === 'fault' && s}
-      <FaultPanel session={s} slot={sessionSlot} vram={vm.vram} {k} />
+      <FaultPanel session={s} system={sel} vram={vm.vram} {k} />
     {:else}
       <div class="hbox">
         {#if view === 'live-llm'}
           <Hero mode="llm" {kind} {llm} vram={vm.vram} {gpu} />
         {:else if view === 'live-img'}
           <Hero mode="image" {kind} {img} vram={vm.vram} {gpu} />
+        {:else if view === 'live-gen'}
+          <Hero mode="generic" {kind} generic={gen} vram={vm.vram} />
         {:else if view === 'loading'}
           <Hero mode="loading" {kind} loading={s?.loading ?? null} vram={vm.vram} />
         {:else if view === 'stopping'}
@@ -179,7 +177,7 @@
         {:else if view === 'other'}
           <Hero mode="wait" {kind} vram={vm.vram} word="WAITING FOR DATA" />
         {:else}
-          <Hero mode="wait" {kind} vram={vm.vram} word={idleWord} amber={!selReady} />
+          <Hero mode="wait" {kind} vram={vm.vram} word={idleWord} amber={idle.warn} />
         {/if}
       </div>
 
@@ -203,6 +201,17 @@
             <div class="v">{#if focusModel?.imageSize}<b>{focusModel.imageSize}</b>{:else}<span class="mut">—</span>{/if}</div>
             <div class="k">Mode</div>
             <div class="v">{#if focusModel?.mode}<b>{focusModel.mode}</b>{:else}<span class="mut">—</span>{/if}</div>
+          </div>
+        {:else if kind !== 'llm'}
+          <div class="cells grid">
+            <div class="k">In flight</div>
+            <div class="v">{#if gen}<b>{fmtInt(gen.requestsInFlight ?? 0)}</b>{:else}<span class="mut">—</span>{/if}</div>
+            <div class="k">Last activity</div>
+            <div class="v">{#if gen?.lastActivityS !== undefined}<b>{fmtSeconds(gen.lastActivityS)}</b> ago{:else}<span class="mut">—</span>{/if}</div>
+            <div class="k">Model</div>
+            <div class="v">{#if focusModel?.name}<b>{focusModel.name}</b>{focusModel.quant ? ` · ${focusModel.quant}` : ''}{:else}<span class="mut">—</span>{/if}</div>
+            <div class="k">Reports</div>
+            <div class="v">{gen?.modelId ?? '—'}</div>
           </div>
         {:else}
           <div class="cells grid ctx">
@@ -241,7 +250,7 @@
     <div class="vhead">
       <span class="lbl">VRAM cliff</span>
       {#if view === 'idle'}
-        <span class="lbl sub">Fit preview · {selectedSlot?.label ?? ''}</span>
+        <span class="lbl sub">Fit preview · {sel?.label ?? ''}</span>
         <span class="vv">{vm.vram.device} · <b>{fmtGiB(vm.vram.usedGiB)}</b> GiB in use</span>
       {:else}
         <span class="vv" class:spill={vm.vram.spillMiB > 0}>{vm.vram.device} · <b>{fmtGiB(vm.vram.usedGiB)}</b> / {fmtGiB(vm.vram.totalGiB)} GiB{gpu ? ' resident' : ''}</span>
@@ -254,7 +263,7 @@
     </div>
     <div class="cliffbox">
       {#if view === 'idle'}
-        <FitCliff vram={vm.vram} slot={selectedSlot} {k} />
+        <FitCliff vram={vm.vram} system={sel} {k} />
       {:else}
         <VramCliff vram={vm.vram} {k} spanS={span} markAgoS={markAgo} {gpu} />
       {/if}
@@ -265,14 +274,14 @@
   <section class="panel sys">
     <span class="seg">
       <span class="lbl">RAM</span>
-      <span class="val">{vm.system.ramUsedGiB.toFixed(1)} / {vm.system.ramTotalGiB.toFixed(1)} GiB{#if vm.system.ramType}<span class="mut">{` · ${vm.system.ramType}`}</span>{/if}</span>
-      <span class="meter" aria-hidden="true"><span style="transform:scaleX({(vm.system.ramTotalGiB > 0 ? clamp(vm.system.ramUsedGiB / vm.system.ramTotalGiB, 0, 1) : 0).toFixed(4)})"></span></span>
+      <span class="val">{vm.machine.ramUsedGiB.toFixed(1)} / {vm.machine.ramTotalGiB.toFixed(1)} GiB{#if vm.machine.ramType}<span class="mut">{` · ${vm.machine.ramType}`}</span>{/if}</span>
+      <span class="meter" aria-hidden="true"><span style="transform:scaleX({(vm.machine.ramTotalGiB > 0 ? clamp(vm.machine.ramUsedGiB / vm.machine.ramTotalGiB, 0, 1) : 0).toFixed(4)})"></span></span>
     </span>
     <span class="vrule" aria-hidden="true"></span>
     <span class="seg">
       <span class="lbl">CPU</span>
-      <span class="val">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
-      <span class="meter" aria-hidden="true"><span style="transform:scaleX({clamp(vm.system.cpuPct / 100, 0, 1).toFixed(4)})"></span></span>
+      <span class="val">{vm.machine.cpuName} · {Math.round(vm.machine.cpuPct)}%</span>
+      <span class="meter" aria-hidden="true"><span style="transform:scaleX({clamp(vm.machine.cpuPct / 100, 0, 1).toFixed(4)})"></span></span>
     </span>
   </section>
 
@@ -283,13 +292,13 @@
       <span class="cap">{jobsView ? jobsCaption : tlCaption}</span>
       {#if last}
         <span class="lastcap" title={last.model.name}
-          >last session: {lastSessionLine(last, vm.slots)} · <span class:bad={last.ended === 'fault'}
+          >last session: {lastSessionLine(last, vm.systems)} · <span class:bad={last.ended === 'fault'}
             >{last.ended === 'fault' ? 'ended in a fault' : 'stopped'} {fmtAgo(last.endedAgoS)}</span
           ></span
         >
       {/if}
       <span class="legend">
-        {#if jobsView}<i class="sw c"></i>plain<i class="sw a"></i>edit{:else}<i class="sw a"></i>prefill<i class="sw c"></i>decode{/if}
+        {#if jobsView}<i class="sw c"></i>plain<i class="sw a"></i>edit{:else if kind === 'llm'}<i class="sw a"></i>prefill<i class="sw c"></i>decode{/if}
         {#if view === 'fault' && faultHadWork}<i class="sw f"></i>fault{/if}
       </span>
     </div>
@@ -308,7 +317,7 @@
 
   <!-- controls (fixed places) + console line -->
   <section class="panel ctlp">
-    <Controls view={ctlView} session={s} selected={selectedSlot} running={sessionSlot} {actions} {port} />
+    <Controls {vm} view={ctlView} session={s} selected={sel} {actions} {port} />
   </section>
   <button class="panel cons" onclick={() => actions.toggleConsole(true)} title="Open the console">
     <span class="caret mono">&gt;</span>

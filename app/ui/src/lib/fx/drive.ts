@@ -55,9 +55,12 @@ export class Drive {
     const preTo = llm?.activity === 'prefill' && llm.prefill ? 0.4 + 0.6 * (llm.prefill.tokens > 0 ? llm.prefill.doneTokens / llm.prefill.tokens : 0) : 0;
     this.pre = approach(this.pre, preTo, 4, dt);
 
-    const decoding = llm?.activity === 'decode' && !dormant;
+    // Kinds without telemetry of their own (speech, transcription, video): a request in flight drives the tokens.
+    const genBusy = (s?.generic?.requestsInFlight ?? 0) > 0 && !dormant;
+    const decoding = (llm?.activity === 'decode' && !dormant) || genBusy;
+    const tpsNow = llm ? llm.decodeTps : 6;
     this.dec = approach(this.dec, decoding ? 1 : 0, 3, dt);
-    this.tps = approach(this.tps, decoding ? llm!.decodeTps : 0, decoding ? 2 : 0.8, dt);
+    this.tps = approach(this.tps, decoding ? tpsNow : 0, decoding ? 2 : 0.8, dt);
 
     const ctxTo = llm && llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0;
     this.ctx = approach(this.ctx, ctxTo, 1.5, dt);
@@ -82,7 +85,7 @@ export class Drive {
     this.wave += dt * (1.2 + Math.min(this.tps, 120) / 60);
 
     if (decoding) {
-      this.tokPhase += dt * Math.min(10, Math.max(0.5, llm!.decodeTps));
+      this.tokPhase += dt * Math.min(10, Math.max(0.5, tpsNow));
       if (this.tokPhase >= 1) {
         this.tokPhase -= Math.floor(this.tokPhase);
         this.pulse = 1;

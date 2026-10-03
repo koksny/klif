@@ -6,6 +6,7 @@
   import { skinMeta } from '../../skins/registry';
   import type { Actions, ViewModel } from '../model/types';
   import { ui } from '../state/ui.svelte';
+  import Onboarding from './Onboarding.svelte';
   import { applyTokens } from './tokens';
 
   interface Props {
@@ -48,12 +49,17 @@
 </script>
 
 <div class="host" data-skin={layers[0]?.id}>
-  {#each layers as l (l.key)}
-    {@const Skin = l.mod.default}
-    <div class="layer" in:fade={{ duration: l.first ? 0 : FADE_MS }} out:fade={{ duration: FADE_MS }}>
-      <Skin {vm} {actions} {size} />
-    </div>
-  {/each}
+  {#if vm.systems.length === 0}
+    <!-- A fresh install: no Systems to show, so the skin has nothing to draw. -->
+    <Onboarding {vm} {actions} {size} />
+  {:else}
+    {#each layers as l (l.key)}
+      {@const Skin = l.mod.default}
+      <div class="layer" in:fade={{ duration: l.first ? 0 : FADE_MS }} out:fade={{ duration: FADE_MS }}>
+        <Skin {vm} {actions} {size} />
+      </div>
+    {/each}
+  {/if}
 </div>
 
 <style>

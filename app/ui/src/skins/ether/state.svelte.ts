@@ -62,7 +62,7 @@ export function useSleep(get: () => ViewModel): { readonly info: Sleep | null; r
   });
   const inFlight = $derived.by(() => {
     const s = get().session;
-    return !!s && ((!!s.llm && s.llm.activity !== 'idle') || (!!s.image && s.image.activity === 'generating'));
+    return !!s && ((!!s.llm && s.llm.activity !== 'idle') || (!!s.image && s.image.activity === 'generating') || (s.generic?.requestsInFlight ?? 0) > 0);
   });
   let up = $state(false);
   let prev = get().vram.usedGiB;

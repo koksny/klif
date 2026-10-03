@@ -3,7 +3,7 @@
   // window; the UI is frosted glass over it. FIXED SKELETON, scaled by --u (1 design px at 1024x1152): the same
   // regions at the same places in every phase, only their contents change:
   //   header      glass bar: KLIF · RINGS, status pill, uptime / version, PANEL, window controls (frameless)
-  //   tier tabs   a segmented glass control, four equal pills (aria-disabled while a session exists)
+  //   system tabs a segmented glass control, one pill per System (scrolls sideways; + adds a System)
   //   model line
   //   stage       the sphere + three ring gauges at 38% of the width; the hero card and two small cards right
   //   strip       four glass cells (LLM: prefill, decode, context, speculative; CGI: last image, images, size, mode)
@@ -11,8 +11,12 @@
   //   controls    endpoint + API key chips; the primary pill (one width: Launch / Cancel / Stop / Restart after a
   //               fault); Restart (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log)
   //   console     the last log line
-  import type { Actions, RequestRecord, Slot, ViewModel } from '../../lib/model/types';
-  import { fmtClock, fmtInt, fmtSeconds, tierShort } from '../../lib/model/format';
+  import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
+  import { fmtClock, fmtInt, fmtSeconds } from '../../lib/model/format';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, isPendingLaunch, launchCtl, selectedSystem, shortLabel as tierShort } from '../../lib/model/systems';
+  import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import Specimen from './Specimen.svelte';
   import WinCtl from './WinCtl.svelte';
   import { extentOf } from './gauges';
@@ -28,18 +32,21 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const sessionSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const sel = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  const kind = $derived(sessionSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (sel?.kind ?? 'llm')));
+  const sel = $derived(selectedSystem(vm) ?? undefined);
+  const tabs = $derived(tabsFor(vm));
+  const kind = $derived(sel?.kind ?? 'llm');
   const model = $derived(s?.model ?? sel?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const loading = $derived(phase === 'starting' || phase === 'loading');
   const busy = $derived(loading || phase === 'stopping');
   const faulted = $derived(phase === 'fault');
   const online = $derived(phase === 'live');
-  const selReady = $derived(sel?.availability === 'ready');
+  /** The launch control: with conflicts it reads "Stop S1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, sel, { short: true }));
+  const mine = $derived(!!sel && sel.controllable && !sel.external);
+  const heldWhy = $derived(sel?.external ? 'External server: it runs where it was started.' : !sel?.controllable ? 'This node does not allow launching.' : '');
   const frameless = $derived(!!vm.host?.frameless);
   const panel = $derived(vm.host?.panel?.available ? vm.host.panel : null);
   const panelTip = $derived(`Panel mode: show on the small screen${panel?.target ? ` (${panel.target})` : ''}`);
@@ -61,6 +68,12 @@
         ['model', shapeText(model, 'image')],
       ];
     }
+    if (kind !== 'llm') {
+      return [
+        ['in flight', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+        ['backend', shapeText(model, kind)],
+      ];
+    }
     const total = llm?.context.totalTokens || model?.ctxTokens || 0;
     return [
       ['context', llm ? `${fmtInt(llm.context.usedTokens)} / ${fmtInt(total)}` : total ? `— / ${fmtInt(total)}` : '—'],
@@ -78,6 +91,14 @@
         ['images', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
         ['size', model?.imageSize ?? '—'],
         ['mode', model?.mode ?? '—'],
+      ];
+    }
+    if (kind !== 'llm') {
+      return [
+        ['requests', gen?.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—'],
+        ['in flight', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+        ['model', model?.name ?? '—'],
+        ['reports', gen?.modelId ?? '—'],
       ];
     }
     const pf = llm?.prefill;
@@ -98,10 +119,11 @@
   const jobs = $derived(img ? img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
   const maxJob = $derived(Math.max(1, ...jobs.map((j) => j.seconds)));
-  const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating')));
+  const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating') || (gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return 'not running';
     if (loading) return kind === 'image' ? 'no jobs yet' : 'no requests yet';
+    if (kind !== 'llm' && kind !== 'image') return faulted ? 'failed' : 'no per-request log for this kind';
     const n = kind === 'image' ? jobs.length : requests.length;
     const what = kind === 'image' ? 'jobs' : 'requests';
     if (faulted) {
@@ -175,32 +197,31 @@
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
   </header>
 
-  <!-- Tier tabs: select while nothing runs (double-click launches); aria-disabled while a session exists -->
-  <div class="tiers glass" role="tablist" aria-label="Tier">
-    {#each vm.slots as t (t.id)}
+  <!-- System tabs: click selects (never stops anything), double-click launches a System that is ready and has
+       nothing in its way. They scroll sideways; + adds a System. -->
+  <div class="tiers glass" role="tablist" aria-label="Systems" use:scrollStrip={vm.selected}>
+    {#each tabs as t (t.id)}
+      {@const ts = t.system}
       {@const selected = t.id === vm.selected}
-      {@const na = t.availability !== 'ready'}
-      {@const running = !!s && s.slot === t.id && !faulted}
+      {@const na = ts.availability !== 'ready' && ts.status !== 'not-set'}
       <button
         class="tier"
         class:sel={selected}
         class:na
-        class:fault={faulted && s?.slot === t.id}
+        class:fault={ts.status === 'fault'}
         role="tab"
         aria-selected={selected}
-        aria-disabled={!!s}
-        title={s ? `${t.label}: ${s.slot === t.id ? `${phase}` : `locked while ${s.model.name} is ${phase}`}` : na ? `${t.label}: ${t.reason ?? availabilityText(t.availability)}` : `${t.label}: ${t.model.name}`}
-        onclick={() => {
-          if (!vm.session) actions.select(t.id);
-        }}
+        title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${ts.model.name || 'no preset'} (${ts.status}${ts.reason ? `: ${ts.reason}` : ''})`}
+        onclick={() => actions.select(t.id)}
         ondblclick={() => {
-          if (!vm.session && !na) actions.launch(t.id);
+          if (canLaunch(ts) && ts.conflicts.length === 0) void actions.launch(ts.id).catch(() => {});
         }}
       >
-        <span class="tl">{t.label}{#if running}<i class="rn" class:warn={loading || !!dz}></i>{/if}</span>
-        <span class="tm" class:bad={na}>{na ? `${t.model.name} · ${availabilityText(t.availability)}` : `${t.model.name} · ${t.model.quant}`}</span>
+        <span class="tl"><TabLabel tab={t} /></span>
+        <span class="tm" class:bad={na}>{ts.status === 'not-set' ? 'no preset' : ts.status === 'unreachable' ? `${t.nodeName ?? 'node'} unreachable` : na ? `${ts.model.name} · ${availabilityText(ts.availability)}` : `${ts.model.name} · ${ts.model.quant}`}</span>
       </button>
     {/each}
+    <button class="tier add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>+</button>
   </div>
 
   <div class="mline" class:dim={!s}><span class="mn">{model?.name ?? ''}</span><span class="mr">{modelRest(model, kind)}</span></div>
@@ -255,34 +276,40 @@
   </section>
 
   <footer class="ctrl glass">
-    <button class="chip" onclick={() => actions.copyEndpoint()} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
-      <span class="ck2">PORT</span>:{s?.endpoint.port ?? sel?.recipe?.port ?? '—'}{#if !online}<em>offline</em>{/if}
+    <button class="chip" onclick={() => actions.copyEndpoint(sel?.id)} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
+      <span class="ck2">PORT</span>:{s?.endpoint.port ?? sel?.command?.port ?? '—'}{#if !online}<em>offline</em>{/if}
     </button>
     <button class="chip" onclick={() => actions.copyApiKey()} disabled={!online || !s?.apiKeySet} title={s?.apiKeySet ? 'Copy API key' : 'No API key set'}>
       <span class="ck2">KEY</span>{#if s?.apiKeySet}•••••••<em>copy</em>{:else}<em>none</em>{/if}
     </button>
     <span class="grow"></span>
-    {#if !s}
-      <button class="act go" onclick={() => actions.launch(vm.selected)} disabled={!selReady} title={selReady ? `Launch ${sel?.label ?? ''}` : `${sel?.label ?? ''}: ${sel?.reason ?? availabilityText(sel?.availability ?? 'unsupported')}`}>
-        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2l6 3.8-6 3.8z" /></svg>Launch {tierShort(sel?.label ?? '')}
+    {#if sel?.external}
+      <button class="act ext" disabled title={EXTERNAL_TITLE}>{EXTERNAL_NOTE}</button>
+    {:else if !s && isPendingLaunch(sel)}
+      <button class="act stop" onclick={() => actions.stop(sel?.id)} disabled={!canStop(sel)} title={sel?.reason ?? 'Cancel the launch'}>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1" /></svg>Cancel {tierShort(sel?.label ?? '')}
+      </button>
+    {:else if !s}
+      <button class="act go" onclick={() => doLaunch(actions, sel, ctl)} disabled={!ctl.enabled} title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${sel?.reason ?? ''}` : `Launch ${sel?.label ?? ''}`) : `${sel?.label ?? ''}: ${ctl.blocked}`}>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2l6 3.8-6 3.8z" /></svg>{ctl.stopOthers ? ctl.text : `Launch ${tierShort(sel?.label ?? '')}`}
       </button>
     {:else if faulted}
-      <button class="act hot" onclick={() => actions.restart()} title="Launch {sessionSlot?.label ?? ''} again">
-        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.6 4.2A4 4 0 1 0 10 7" /><path d="M10 1.8v2.6H7.4" /></svg>Restart {tierShort(sessionSlot?.label ?? '')}
+      <button class="act hot" onclick={() => actions.restart(sel?.id)} disabled={!mine} title="Launch {sel?.label ?? ''} again">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.6 4.2A4 4 0 1 0 10 7" /><path d="M10 1.8v2.6H7.4" /></svg>Restart {tierShort(sel?.label ?? '')}
       </button>
     {:else}
-      <button class="act stop" onclick={() => actions.stop()} disabled={phase === 'stopping'} title={loading ? 'Cancel the launch' : phase === 'stopping' ? 'Stopping' : 'Stop the server'}>
+      <button class="act stop" onclick={() => actions.stop(sel?.id)} disabled={phase === 'stopping' || !canStop(sel)} title={heldWhy || (loading ? 'Cancel the launch' : phase === 'stopping' ? 'Stopping' : 'Stop the server')}>
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1" /></svg>{loading ? 'Cancel' : phase === 'stopping' ? 'Stopping' : 'Stop'}
-        {tierShort(sessionSlot?.label ?? '')}
+        {tierShort(sel?.label ?? '')}
       </button>
     {/if}
     {#if faulted}
-      <button class="btn w1" onclick={() => actions.dismiss?.()} title="Back to the launcher">Dismiss</button>
+      <button class="btn w1" onclick={() => actions.dismiss(sel?.id)} disabled={!mine} title="Back to the launcher">Dismiss</button>
     {:else}
-      <button class="btn w1" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">Restart</button>
+      <button class="btn w1" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>Restart</button>
     {/if}
-    <button class="btn" onclick={() => actions.openTune(vm.selected)} title={s && s.slot === vm.selected && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}>Tune</button>
-    <button class="btn w2" onclick={() => actions.openEndpoint()} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'Web UI' : 'Endpoint'}</button>
+    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
+    <button class="btn w2" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'Web UI' : 'Endpoint'}</button>
     <button class="btn w2" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'Full log' : 'Console'}</button>
   </footer>
   <button class="cline" class:hot={faulted} onclick={() => actions.toggleConsole(true)} title="Open the console"><span class="pr">›</span><span class="lt">{lastLine}</span></button>
@@ -496,15 +523,32 @@
     margin-left: calc(var(--u) * 2);
   }
 
-  /* tier tabs: one glass control, four equal pills */
+  /* System tabs: one glass control, equal pills that scroll sideways when there are many */
   .tiers {
     height: calc(var(--u) * 62);
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: calc(var(--u) * 5);
     padding: calc(var(--u) * 5);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tiers::-webkit-scrollbar {
+    display: none;
+  }
+  .tier.add {
+    flex: none !important;
+    position: sticky;
+    right: 0;
+    background: rgba(28, 30, 44, 0.92);
+    width: calc(var(--u) * 40);
+    align-items: center;
+    padding: 0;
+    color: var(--cyan);
+    font-size: calc(var(--u) * 20);
   }
   .tier {
+    flex: 1 0 calc(var(--u) * 150);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -518,32 +562,16 @@
       background-color 0.18s ease,
       border-color 0.18s ease;
   }
-  .tier:hover:not(.sel):not([aria-disabled='true']) {
+  .tier:hover:not(.sel) {
     background: rgba(255, 255, 255, 0.04);
-  }
-  .tier[aria-disabled='true'] {
-    cursor: default;
   }
   .tl {
     display: flex;
     align-items: center;
-    gap: calc(var(--u) * 8);
+    min-width: 0;
     font-size: var(--fs-s);
     color: var(--muted);
     white-space: nowrap;
-  }
-  .rn {
-    width: calc(var(--u) * 7);
-    height: calc(var(--u) * 7);
-    min-width: 6px;
-    min-height: 6px;
-    border-radius: 50%;
-    background: var(--mint);
-    box-shadow: 0 0 8px var(--mint);
-  }
-  .rn.warn {
-    background: var(--warn);
-    box-shadow: 0 0 8px var(--warn);
   }
   .tm {
     font-size: var(--fs-xs);
@@ -946,6 +974,12 @@
     border: 1px solid var(--edge);
     color: var(--muted);
     box-shadow: none;
+  }
+  .act.ext {
+    cursor: default;
+    background: transparent;
+    border: 1px solid var(--edge);
+    color: var(--muted);
   }
   .act.stop {
     border: 1.5px solid var(--cyan);

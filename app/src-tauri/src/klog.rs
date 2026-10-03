@@ -1,7 +1,10 @@
-//! The shell log: one file in the state directory (`klif-shell.log`), shared with the engine through the
+//! The shell log: one file in the logs folder (`klif-shell.log`, next to the session logs), shared with the engine through the
 //! `log` facade, mirrored to stderr (a release build has no console, so the file is the only record). Lines
 //! carry the process id (a blocked second instance logs too) and milliseconds since start. Level:
-//! `KLIF_LOG` (error|warn|info|debug|trace), default info.
+//! `KLIF_LOG` (error|warn|info|debug|trace (dependencies capped at debug; wire bytes are never logged)), default
+//! info. Trace applies to KLIF's own records only: a dependency's trace output can carry raw request bytes
+//! (ureq-proto dumps the request head, Authorization header included, before TLS), and this file is the one
+//! users attach to public issues.
 //!
 //! Size is bounded: at `MAX_BYTES` the file is renamed to `klif-shell.log.old` (replacing the previous one)
 //! and a fresh file is started, both at startup and while the app runs, so a shortcut-launched app that
@@ -75,9 +78,34 @@ impl Logger {
     }
 }
 
+/// The most verbose level a record from outside KLIF may have. KLIF's own targets (`klif::*` in the shell,
+/// `klif_core::*`, `klif_telemetry::*` and the other engine crates) follow `KLIF_LOG` up to trace.
+const DEPENDENCY_MAX: log::Level = log::Level::Debug;
+
+/// Dependencies whose trace output is wire bytes (headers, bodies, TLS records): capped at debug even if the
+/// prefix rule below ever changes.
+const WIRE_TARGETS: [&str; 4] = ["ureq_proto", "ureq", "native_tls", "rustls"];
+
+fn own_target(target: &str) -> bool {
+    target.starts_with("klif")
+}
+
+fn wire_target(target: &str) -> bool {
+    WIRE_TARGETS
+        .iter()
+        .any(|t| target == *t || target.strip_prefix(t).is_some_and(|rest| rest.starts_with("::")))
+}
+
 impl log::Log for Logger {
     fn enabled(&self, meta: &log::Metadata) -> bool {
-        meta.level() <= log::max_level()
+        if meta.level() > log::max_level() {
+            return false;
+        }
+        let target = meta.target();
+        if (!own_target(target) || wire_target(target)) && meta.level() > DEPENDENCY_MAX {
+            return false;
+        }
+        true
     }
 
     fn log(&self, record: &log::Record) {
@@ -140,4 +168,7 @@ pub fn init(path: Option<&Path>) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     log::info!("---- KLIF shell {} start (unix {unix}) ----", env!("CARGO_PKG_VERSION"));
+    if level == log::LevelFilter::Trace {
+        log::warn!("KLIF_LOG=trace: KLIF's own records at trace, dependencies capped at debug; check the log for request payloads before sharing it");
+    }
 }

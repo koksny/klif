@@ -1,11 +1,21 @@
-//! Win32 helpers for the supervisor: owned handles, process times, toolhelp trees, job queries,
-//! deepest-first tree kill and the TCP listener table. Follows the verified platform probe.
+//! Win32 helpers for the supervisor: owned handles, process times, job queries and the TCP listener table,
+//! plus the Windows `ProcessHost` implementation (jobs). No process enumeration, no tree kill: a session's
+//! processes are exactly its job's process list, and stopping a session is `TerminateJobObject`.
 
 use std::{
-    collections::{HashMap, HashSet},
     ffi::c_void,
     mem::size_of,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
+    time::{Duration, Instant},
 };
+
+use anyhow::{bail, Result};
+use klif_common::launch::LaunchSpec;
+
+use crate::{Owned, PortOwner, ProcState, ProcessHost, SessionRecord, Supervisor, STOP_EXIT_CODE};
 
 use windows::{
     core::{BOOL, HRESULT, HSTRING, PWSTR},
@@ -16,23 +26,29 @@ use windows::{
         },
         Networking::WinSock::{AF_INET, AF_INET6},
         System::{
-            Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-            },
             JobObjects::{
                 IsProcessInJob, JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, OpenJobObjectW,
                 QueryInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_PROCESS_ID_LIST,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
             },
             SystemServices::{JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE},
             Threading::{
                 GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
-                TerminateProcess, WaitForSingleObject, PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32,
-                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+                WaitForSingleObject, PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+                PROCESS_SYNCHRONIZE,
             },
         },
     },
 };
+
+/// How long `stop` waits in total (job emptied, processes exited, port released). A GPU server can take
+/// seconds to really die after TerminateJobObject: the driver frees many GiB, possibly after waking the
+/// card from D3 first.
+const STOP_DEADLINE: Duration = Duration::from_secs(20);
+
+/// `port_owner` runs for every System on every engine tick: one listener-table read serves a whole tick.
+const LISTENER_CACHE_TTL: Duration = Duration::from_millis(150);
 
 /// An owned kernel handle, closed on drop. Kernel handles may be used from any thread.
 pub(crate) struct Handle(HANDLE);
@@ -84,12 +100,6 @@ pub(crate) fn open_process(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Option<Ha
     unsafe { OpenProcess(access, false, pid) }.ok().map(Handle)
 }
 
-/// Creation time of `pid` (also works for an exited process that someone still holds open).
-pub(crate) fn creation_time(pid: u32) -> Option<u64> {
-    let h = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
-    handle_ctime(h.raw())
-}
-
 /// True while the process behind `h` (opened with SYNCHRONIZE) has not exited.
 pub(crate) fn is_running(h: HANDLE) -> bool {
     let r = unsafe { WaitForSingleObject(h, 0) };
@@ -113,172 +123,30 @@ pub(crate) fn open_verified(pid: u32, ctime: u64, extra: PROCESS_ACCESS_RIGHTS) 
     (handle_ctime(h.raw()) == Some(ctime)).then_some(h)
 }
 
-/// The process is alive and still the one identified by (pid, creation time).
-pub(crate) fn alive(pid: u32, ctime: u64) -> bool {
-    open_verified(pid, ctime, PROCESS_ACCESS_RIGHTS(0)).is_some_and(|h| is_running(h.raw()))
-}
-
-// ---------------------------------------------------------------- toolhelp
-
-#[derive(Debug, Clone)]
-pub(crate) struct Proc {
-    pub pid: u32,
-    pub ppid: u32,
-    pub exe: String,
-}
-
-fn wstr(buf: &[u16]) -> String {
-    let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..n])
-}
-
-pub(crate) fn snapshot() -> Vec<Proc> {
-    let Ok(snap) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
-        return Vec::new();
-    };
-    let snap = Handle(snap);
-    let mut e = PROCESSENTRY32W { dwSize: size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-    let mut out = Vec::new();
-    if unsafe { Process32FirstW(snap.raw(), &mut e) }.is_ok() {
-        loop {
-            out.push(Proc { pid: e.th32ProcessID, ppid: e.th32ParentProcessID, exe: wstr(&e.szExeFile) });
-            if unsafe { Process32NextW(snap.raw(), &mut e) }.is_err() {
-                break;
-            }
-        }
-    }
-    out
-}
-
-/// Descendants of `root` (created at `root_ct`) as (pid, creation time). A child must not be older
-/// than its parent: that filters stale parent links left behind by PID reuse.
-pub(crate) fn descendants(root: u32, root_ct: u64, procs: &[Proc]) -> Vec<(u32, Option<u64>)> {
-    let mut kids: HashMap<u32, Vec<u32>> = HashMap::new();
-    for p in procs {
-        if p.pid != p.ppid && p.pid > 4 {
-            kids.entry(p.ppid).or_default().push(p.pid);
-        }
-    }
-    let mut seen = HashSet::from([root]);
-    let mut out = Vec::new();
-    let mut stack = vec![(root, root_ct)];
-    while let Some((pid, ct)) = stack.pop() {
-        for &k in kids.get(&pid).map(|v| v.as_slice()).unwrap_or(&[]) {
-            let kct = creation_time(k);
-            if kct.unwrap_or(u64::MAX) < ct || !seen.insert(k) {
-                continue; // parent PID was reused: not really our child
-            }
-            out.push((k, kct));
-            if let Some(kct) = kct {
-                stack.push((k, kct));
-            }
-        }
-    }
-    out
-}
-
-/// The owned tree: every anchor whose PID still names the same process, plus its toolhelp
-/// descendants, as pid -> creation time. Anchors that have exited are kept (their children may live).
-pub(crate) fn owned_tree(anchors: &[(u32, u64)], procs: &[Proc]) -> Vec<(u32, Option<u64>)> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for &(root, root_ct) in anchors {
-        // Only walk from a root whose PID still names the same process object; a reused PID would
-        // otherwise hand us someone else's children.
-        if creation_time(root) != Some(root_ct) {
-            continue;
-        }
-        if seen.insert(root) {
-            out.push((root, Some(root_ct)));
-        }
-        for (pid, ct) in descendants(root, root_ct, procs) {
-            if seen.insert(pid) {
-                out.push((pid, ct));
-            }
-        }
-    }
-    out
-}
-
-/// Live PIDs of the owned tree (exited/zombie entries filtered out).
-pub(crate) fn live_tree_pids(anchors: &[(u32, u64)]) -> Vec<u32> {
-    let procs = snapshot();
-    owned_tree(anchors, &procs)
-        .into_iter()
-        .filter(|&(pid, ct)| match ct {
-            Some(ct) => alive(pid, ct),
-            // creation time unreadable (access denied): trust the parent link, report it
-            None => procs.iter().any(|p| p.pid == pid),
-        })
-        .map(|(pid, _)| pid)
-        .collect()
-}
-
-/// Terminate the owned tree deepest-first. Each PID is re-validated by creation time right before
-/// TerminateProcess. Returns the PIDs actually terminated.
-pub(crate) fn kill_tree(anchors: &[(u32, u64)]) -> Vec<u32> {
-    let procs = snapshot();
-    let tree = owned_tree(anchors, &procs);
-    let set: HashSet<u32> = tree.iter().map(|t| t.0).collect();
-    let parent: HashMap<u32, u32> = procs.iter().map(|p| (p.pid, p.ppid)).collect();
-    let depth = |pid: u32| {
-        let (mut d, mut cur) = (0usize, pid);
-        while let Some(&pp) = parent.get(&cur) {
-            if pp == cur || !set.contains(&pp) || d > 256 {
-                break;
-            }
-            d += 1;
-            cur = pp;
-        }
-        d
-    };
-    let mut list: Vec<(u32, usize, Option<u64>)> = tree.iter().map(|&(pid, ct)| (pid, depth(pid), ct)).collect();
-    list.sort_by(|a, b| b.1.cmp(&a.1));
-    let mut killed = Vec::new();
-    for (pid, _, ct) in list {
-        let Some(h) = open_process(pid, PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE)
-        else {
-            continue; // already gone (or not ours to open)
-        };
-        if handle_ctime(h.raw()) != ct || !is_running(h.raw()) {
-            continue; // PID reused, or already exited
-        }
-        if unsafe { TerminateProcess(h.raw(), 1) }.is_ok() {
-            killed.push(pid);
-            let _ = unsafe { WaitForSingleObject(h.raw(), 2000) };
-        }
-    }
-    killed
-}
-
-/// Executable file name of `pid`: QueryFullProcessImageNameW (microseconds), toolhelp as fallback.
-pub(crate) fn image_name(pid: u32) -> String {
+/// Executable file name of `pid` (QueryFullProcessImageNameW, microseconds). None when it cannot be opened.
+pub(crate) fn image_name(pid: u32) -> Option<String> {
     match pid {
-        0 => return "System Idle Process".into(),
-        4 => return "System".into(),
+        0 => return Some("System Idle Process".into()),
+        4 => return Some("System".into()),
         _ => {}
     }
-    if let Some(h) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
-        let mut buf = vec![0u16; 1024];
-        let mut len = buf.len() as u32;
-        if unsafe { QueryFullProcessImageNameW(h.raw(), PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len) }.is_ok() {
-            let full = String::from_utf16_lossy(&buf[..len as usize]);
-            if let Some(name) = full.rsplit(['\\', '/']).next().filter(|n| !n.is_empty()) {
-                return name.to_string();
-            }
-        }
-    }
-    snapshot().into_iter().find(|p| p.pid == pid).map(|p| p.exe).unwrap_or_else(|| "?".into())
+    let h = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+    let mut buf = vec![0u16; 1024];
+    let mut len = buf.len() as u32;
+    unsafe { QueryFullProcessImageNameW(h.raw(), PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len) }.ok()?;
+    let full = String::from_utf16_lossy(&buf[..len as usize]);
+    full.rsplit(['\\', '/']).next().filter(|n| !n.is_empty()).map(str::to_string)
 }
 
 // ---------------------------------------------------------------- jobs
 
+/// Reopen a session job by name (query + terminate rights only). None when no such job exists any more.
 pub(crate) fn open_job(name: &str) -> Option<Handle> {
     let n = HSTRING::from(name);
     unsafe { OpenJobObjectW(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, false, &n) }.ok().map(Handle)
 }
 
-/// PIDs currently in the job (the job list holds only processes that have not terminated).
+/// PIDs currently in the job (`JobObjectBasicProcessIdList`: only processes that have not terminated).
 pub(crate) fn job_pids(job: HANDLE) -> Vec<u32> {
     let mut cap = 64usize;
     loop {
@@ -294,15 +162,16 @@ pub(crate) fn job_pids(job: HANDLE) -> Vec<u32> {
             )
         };
         let l = unsafe { &*(buf.as_ptr() as *const JOBOBJECT_BASIC_PROCESS_ID_LIST) };
+        let grow = (l.NumberOfAssignedProcesses as usize + 16).max(cap * 2);
         match r {
+            // A process may join between the two counts: read again with room for everyone.
+            Ok(()) if l.NumberOfProcessIdsInList < l.NumberOfAssignedProcesses && cap < 1 << 16 => cap = grow,
             Ok(()) => {
                 let n = (l.NumberOfProcessIdsInList as usize).min(cap);
                 let ids = unsafe { std::slice::from_raw_parts(l.ProcessIdList.as_ptr(), n) };
-                return ids.iter().map(|&p| p as u32).collect();
+                return ids.iter().map(|&p| p as u32).filter(|&p| p != 0).collect();
             }
-            Err(e) if e.code() == HRESULT::from_win32(ERROR_MORE_DATA.0) && cap < 1 << 16 => {
-                cap = (cap * 2).max(l.NumberOfAssignedProcesses as usize + 16);
-            }
+            Err(e) if e.code() == HRESULT::from_win32(ERROR_MORE_DATA.0) && cap < 1 << 16 => cap = grow,
             Err(_) => return Vec::new(),
         }
     }
@@ -315,6 +184,19 @@ pub(crate) fn terminate_job(job: HANDLE, code: u32) -> bool {
 pub(crate) fn process_in_job(process: HANDLE, job: HANDLE) -> bool {
     let mut r = BOOL(0);
     unsafe { IsProcessInJob(process, Some(job), &mut r) }.is_ok() && r.as_bool()
+}
+
+/// The session job named in `record`, if it still exists AND is really this session's: it lists processes,
+/// and a live root (`root`, verified by creation time) is one of them.
+fn reopen_session_job(record: &SessionRecord, root: Option<&Handle>) -> Option<Handle> {
+    let job = record.job_name.as_deref().and_then(open_job)?;
+    if job_pids(job.raw()).is_empty() {
+        return None;
+    }
+    match root {
+        Some(r) if is_running(r.raw()) && !process_in_job(r.raw(), job.raw()) => None,
+        _ => Some(job),
+    }
 }
 
 /// The job KLIF itself runs in: None when not in a job, else the immediate job's LimitFlags
@@ -339,7 +221,7 @@ pub(crate) fn own_job_limit_flags() -> Option<Option<u32>> {
 
 // ---------------------------------------------------------------- TCP listeners
 
-/// (local port, owning PID) of every IPv4 and IPv6 TCP listener.
+/// (local port, owning PID) of every IPv4 and IPv6 TCP listener (GetExtendedTcpTable, owner-pid tables).
 pub(crate) fn tcp_listeners() -> Vec<(u16, u32)> {
     let mut out = Vec::new();
     for af in [AF_INET.0 as u32, AF_INET6.0 as u32] {
@@ -373,4 +255,230 @@ pub(crate) fn tcp_listeners() -> Vec<(u16, u32)> {
         }
     }
     out
+}
+
+/// (read at, generation, rows) of the last listener-table read.
+type ListenerCache = Option<(Instant, u64, Vec<(u16, u32)>)>;
+
+static LISTENER_CACHE: Mutex<ListenerCache> = Mutex::new(None);
+/// Bumped whenever ports were released or taken by KLIF itself (end of `stop`, after `launch`): a cached
+/// table from an older generation is never served, so "stop X, then launch Y on X's port" never sees X's
+/// listener again.
+static LISTENER_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn invalidate_listener_cache() {
+    LISTENER_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// `tcp_listeners()` at most `LISTENER_CACHE_TTL` old and from the current generation (for `port_owner`;
+/// `stop` always reads fresh).
+fn tcp_listeners_cached() -> Vec<(u16, u32)> {
+    let generation = LISTENER_GEN.load(Ordering::SeqCst);
+    {
+        let c = LISTENER_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, g, rows)) = c.as_ref() {
+            if *g == generation && at.elapsed() < LISTENER_CACHE_TTL {
+                return rows.clone();
+            }
+        }
+    }
+    let rows = tcp_listeners();
+    // Tagged with the generation seen BEFORE the read: a read that raced an invalidation is never reused.
+    *LISTENER_CACHE.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), generation, rows.clone()));
+    rows
+}
+
+// ---------------------------------------------------------------- own job
+
+/// See `crate::parent_job_warning`.
+pub(crate) fn parent_job_warning() -> Option<String> {
+    let flags = own_job_limit_flags()?; // None: not in a job at all
+    let Some(flags) = flags else {
+        return Some("KLIF runs inside a job whose limits cannot be read; servers may not survive KLIF exiting".into());
+    };
+    if flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.0 == 0 {
+        return None;
+    }
+    let breakaway = if flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK.0 | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK.0) != 0 {
+        "breakaway is allowed"
+    } else {
+        "breakaway is not allowed"
+    };
+    Some(format!(
+        "KLIF runs inside a job with KILL_ON_JOB_CLOSE (LimitFlags=0x{flags:X}, {breakaway}): servers it starts will be killed when that job closes"
+    ))
+}
+
+// ---------------------------------------------------------------- ProcessHost (Windows: jobs)
+
+fn filetime_to_unix_s(ft: u64) -> f64 {
+    /// FILETIME of the Unix epoch.
+    const UNIX_EPOCH_FILETIME: u64 = 116_444_736_000_000_000;
+    (ft as f64 - UNIX_EPOCH_FILETIME as f64) / 1e7
+}
+
+fn pid_list(pids: &[u32]) -> String {
+    pids.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+}
+
+impl ProcessHost for Supervisor {
+    fn launch(&self, spec: &LaunchSpec) -> Result<Owned> {
+        if spec.session_name.trim().is_empty() {
+            bail!("The launch has no session name.");
+        }
+        let job_name = crate::spawn::job_name_for(&spec.session_name);
+        let s = crate::spawn::spawn(spec, &job_name)?;
+        invalidate_listener_cache();
+        let record = SessionRecord {
+            session_name: spec.session_name.clone(),
+            job_name: Some(job_name),
+            root_pid: s.pid,
+            root_ctime: s.ctime,
+            started_at: filetime_to_unix_s(s.ctime),
+            out_log: spec.out_log.clone(),
+            err_log: spec.err_log.clone(),
+            port: spec.port,
+        };
+        Ok(Owned { record, job: Some(s.job), root: Some(s.process) })
+    }
+
+    /// The job is reopened by name (`OpenJobObjectW`) and the root is verified by PID + creation time. A job
+    /// that still lists processes is adopted even when the root itself has exited (its children still run);
+    /// a live root must be a member of it, otherwise the name is not ours. Without a usable job (job-less
+    /// record, or the name is gone) a live, verified root is adopted monitor-only: `stop` then answers with
+    /// a sentence instead of killing anything.
+    fn adopt(&self, record: &SessionRecord) -> Result<Owned> {
+        let root = open_verified(record.root_pid, record.root_ctime, PROCESS_ACCESS_RIGHTS(0)).filter(|h| is_running(h.raw()));
+        if let Some(job) = reopen_session_job(record, root.as_ref()) {
+            return Ok(Owned { record: record.clone(), job: Some(job), root });
+        }
+        match root {
+            Some(root) => Ok(Owned { record: record.clone(), job: None, root: Some(root) }),
+            None => bail!("Session {} is no longer running.", record.session_name),
+        }
+    }
+
+    fn state(&self, owned: &Owned) -> ProcState {
+        if let Some(root) = &owned.root {
+            if let Some(code) = exit_code(root.raw()) {
+                return ProcState::Exited { code };
+            }
+            if is_running(root.raw()) {
+                let mut pids = self.tree_pids(owned);
+                if !pids.contains(&owned.record.root_pid) {
+                    pids.insert(0, owned.record.root_pid);
+                }
+                return ProcState::Running { pids };
+            }
+        }
+        let pids = self.tree_pids(owned);
+        if pids.is_empty() {
+            ProcState::Gone
+        } else {
+            ProcState::Running { pids }
+        }
+    }
+
+    /// The job's process id list when the job is held, else just the live root. Root first when alive.
+    fn tree_pids(&self, owned: &Owned) -> Vec<u32> {
+        let mut pids = match &owned.job {
+            Some(job) => job_pids(job.raw()),
+            None => owned.root.as_ref().filter(|h| is_running(h.raw())).map(|_| vec![owned.record.root_pid]).unwrap_or_default(),
+        };
+        if let Some(i) = pids.iter().position(|&p| p == owned.record.root_pid) {
+            pids[..=i].rotate_right(1);
+        }
+        pids
+    }
+
+    /// TerminateJobObject, then bounded waits (`STOP_DEADLINE` in total): the job's list empties, every
+    /// process that was in it has really exited (handles opened before the kill pin their PIDs), and none
+    /// of them still listens on the session's port. Idempotent.
+    fn stop(&self, owned: &Owned) -> Result<()> {
+        let r = self.stop_job(owned);
+        invalidate_listener_cache();
+        r
+    }
+
+    fn port_owner(&self, port: u16, ours: Option<&Owned>) -> PortOwner {
+        let mut holders: Vec<u32> = tcp_listeners_cached().into_iter().filter(|l| l.0 == port).map(|l| l.1).collect();
+        holders.sort_unstable();
+        holders.dedup();
+        if holders.is_empty() {
+            return PortOwner::Free;
+        }
+        if let Some(owned) = ours {
+            let tree = self.tree_pids(owned);
+            if let Some(&pid) = holders.iter().find(|p| tree.contains(p)) {
+                return PortOwner::Ours { pid };
+            }
+        }
+        let pid = holders[0];
+        PortOwner::Foreign { pid, image: image_name(pid).unwrap_or_else(|| "?".into()) }
+    }
+}
+
+impl Supervisor {
+    /// See `ProcessHost::stop` (Windows).
+    fn stop_job(&self, owned: &Owned) -> Result<()> {
+        let deadline = Instant::now() + STOP_DEADLINE;
+        // A monitor-only adoption may find its job again (verified the same way as in `adopt`).
+        let reopened = match &owned.job {
+            Some(_) => None,
+            None => reopen_session_job(&owned.record, owned.root.as_ref()),
+        };
+        let Some(job) = owned.job.as_ref().or(reopened.as_ref()) else {
+            if owned.root.as_ref().is_some_and(|h| is_running(h.raw())) {
+                bail!(
+                    "Session {} has no job object, so KLIF cannot stop it safely; stop process {} yourself.",
+                    owned.record.session_name,
+                    owned.record.root_pid
+                );
+            }
+            return Ok(());
+        };
+        let doomed_pids = job_pids(job.raw());
+        let doomed: Vec<(u32, Handle)> =
+            doomed_pids.iter().filter_map(|&pid| open_process(pid, PROCESS_SYNCHRONIZE).map(|h| (pid, h))).collect();
+        if !doomed_pids.is_empty() && !terminate_job(job.raw(), STOP_EXIT_CODE) {
+            bail!("Session {} could not be stopped: the system refused to terminate its job.", owned.record.session_name);
+        }
+        while !job_pids(job.raw()).is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let wait = |h: &Handle| {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if is_running(h.raw()) {
+                unsafe {
+                    let _ = WaitForSingleObject(h.raw(), left.as_millis().min(u32::MAX as u128 - 1) as u32);
+                }
+            }
+        };
+        if let Some(root) = &owned.root {
+            wait(root);
+        }
+        // Wait until every process that was in the session has really exited...
+        doomed.iter().for_each(|(_, h)| wait(h));
+        // ...and the session's port is no longer held by any of them.
+        let port = owned.record.port;
+        while port != 0
+            && Instant::now() < deadline
+            && tcp_listeners().iter().any(|&(p, pid)| p == port && doomed_pids.contains(&pid))
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let mut left = job_pids(job.raw());
+        left.extend(doomed.iter().filter(|(_, h)| is_running(h.raw())).map(|(pid, _)| *pid));
+        left.sort_unstable();
+        left.dedup();
+        if !left.is_empty() {
+            bail!(
+                "Session {} did not stop within {} s; still running: pid {}.",
+                owned.record.session_name,
+                STOP_DEADLINE.as_secs(),
+                pid_list(&left)
+            );
+        }
+        Ok(())
+    }
 }

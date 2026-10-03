@@ -1,10 +1,10 @@
 <script lang="ts">
-  // Silicon, full window. One fixed skeleton in every phase, scaled by --u (1 design px): header, tier strip,
+  // Silicon, full window. One fixed skeleton in every phase, scaled by --u (1 design px): header, System strip,
   // status block (model line + hero + two detail rows, or the fault panel in the same box), the drawing
   // (absorbs the remaining height), system row, request timeline / recent jobs, controls. A phase change only
   // changes what the panels say, never where they are:
   //   idle      - the selected tier: dim hero and rows with its configured values, empty timeline, Launch
-  //   loading   - startup % in the hero, the six startup steps in the rows, other tiers locked
+  //   loading   - startup % in the hero, the six startup steps in the rows
   //   live-llm  - decode speed (or prefill progress while prefilling), prefill/decode/context/speculative rows
   //   live-img  - diffusion progress, last image / images / size / mode rows, recent jobs
   //   fault     - fault panel over the status block, emptied column, failed request marked
@@ -12,7 +12,11 @@
   //               the paged-out allocations as hatched dashed outlines, tiles dark, amber status
   // Controls keep their places: the primary button (Launch / Cancel / Stop / Restart after a fault), Restart,
   // Tune (always: on a running tier the drawer offers "Restart to apply"), Open endpoint / web UI, Console.
-  import type { Actions, Slot, ViewModel } from '../../lib/model/types';
+  import type { Actions, ViewModel } from '../../lib/model/types';
+  import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
+  import { strip } from '../../lib/shell/SystemTabs/scroll';
+  import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtFixed, fmtGiB, fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../lib/model/format';
   import DieCanvas from './DieCanvas.svelte';
   import VramColumn from './VramColumn.svelte';
@@ -32,17 +36,19 @@
 
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const sessionSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const selectedSlot = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  // The running slot's kind, or (idle) the selected slot's: the dark die still says what a tile means.
-  const kind = $derived(sessionSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (selectedSlot?.kind ?? 'llm')));
+  const sel = $derived(selectedSystem(vm));
+  const tabs = $derived(tabsFor(vm));
+  // The selected System's kind (vm.session is always its session): the dark die still says what a tile means.
+  const kind = $derived(sel?.kind ?? 'llm');
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const liveLlm = $derived(!!s && phase === 'live' && kind === 'llm' && !!llm);
   const liveImg = $derived(!!s && phase === 'live' && kind === 'image' && !!img);
+  const liveGen = $derived(!!s && phase === 'live' && kind !== 'llm' && kind !== 'image' && !!gen);
+  const genBusy = $derived(liveGen && (gen?.requestsInFlight ?? 0) > 0);
 
-  type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'stopping' | 'fault' | 'other';
+  type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'live-gen' | 'stopping' | 'fault' | 'other';
   const view = $derived<View>(
     !s
       ? 'idle'
@@ -56,7 +62,9 @@
               ? 'live-llm'
               : liveImg
                 ? 'live-img'
-                : 'other',
+                : liveGen
+                  ? 'live-gen'
+                  : 'other',
   );
   const busy = $derived(view === 'loading' || view === 'stopping');
   // GPU dormant (live session, vm.vram.dormant set): asleep between requests, or waking while the VRAM is restored.
@@ -64,7 +72,7 @@
   const dz = $derived(phase === 'live' ? sleep.info : null);
   const waking = $derived(!!dz && sleep.waking);
   const tone = $derived(
-    dz || view === 'loading' ? 'amber' : view === 'fault' ? 'fault' : view === 'live-llm' || view === 'live-img' || view === 'other' ? 'live' : 'off',
+    dz || view === 'loading' ? 'amber' : view === 'fault' ? 'fault' : view === 'live-llm' || view === 'live-img' || view === 'live-gen' || view === 'other' ? 'live' : 'off',
   );
   const frameless = $derived(!!vm.host?.frameless);
   // Panel mode (the read-only mini layout on the small screen): the button is always offered when a target exists.
@@ -73,10 +81,14 @@
   // Narrow window: the label gives way to the glyph so the header never wraps.
   const compactHdr = $derived(w < 700);
 
-  // The status block follows the running session, or (idle) the selected tier with its configured values.
-  const focusModel = $derived(s?.model ?? selectedSlot?.model);
-  const focusRecipe = $derived((sessionSlot ?? selectedSlot)?.recipe);
-  const endpointPort = $derived(s?.endpoint.port ?? focusRecipe?.port);
+  // The status block follows the session, or (idle) the selected System with its configured values.
+  const focusModel = $derived(s?.model ?? sel?.model);
+  const endpointPort = $derived(s?.endpoint.port ?? sel?.command?.port);
+  /** The launch control: with conflicts it reads "Stop System 1 & launch" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, sel));
+  /** We may stop / restart it (not an external server, not a node that only lets us look). */
+  const mine = $derived(!!sel && sel.controllable && !sel.external);
+  const heldWhy = $derived(sel?.external ? 'External server: it runs where it was started.' : !sel?.controllable ? 'This node does not allow launching.' : '');
   const online = $derived(phase === 'live');
 
   // LLM: during prefill the hero is the prefill progress, never a bright 0.0 tok/s.
@@ -84,7 +96,7 @@
   const tps = held(() => llm?.decodeTps ?? 0);
   const lastReq = $derived(llm && llm.requests.length ? llm.requests[llm.requests.length - 1] : null);
   const cacheFrac = $derived(lastReq && lastReq.promptTokens > 0 ? lastReq.cachedTokens / lastReq.promptTokens : null);
-  const ctxTotal = $derived(llm?.context.totalTokens || focusModel?.ctxTokens || focusRecipe?.ctxTokens || 0);
+  const ctxTotal = $derived(llm?.context.totalTokens || focusModel?.ctxTokens || 0);
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? llm.context.usedTokens / llm.context.totalTokens : 0);
   const preFrac = $derived(prefillActive && llm?.prefill && llm.prefill.tokens > 0 ? llm.prefill.doneTokens / llm.prefill.tokens : 0);
   const preSegs = $derived(Math.round(Math.min(1, Math.max(0, preFrac)) * 64));
@@ -103,10 +115,10 @@
     return ['1 tile =', '1 token'];
   });
 
-  // Idle fit preview: the selected tier's expected layers stacked on the baseline.
+  // Idle fit preview: the selected System's expected layers stacked on the baseline.
   const baseline = $derived(baselineOf(vm.vram));
   const previewBase = $derived(Math.max(baseline, vm.vram.usedGiB));
-  const preview = $derived(view === 'idle' && selectedSlot?.expectedVram?.length ? selectedSlot.expectedVram : null);
+  const preview = $derived(view === 'idle' && sel?.expectedVram?.length && !sel.external ? sel.expectedVram : null);
   const previewTop = $derived(preview ? previewBase + preview.reduce((a, l) => a + l.gib, 0) : 0);
 
   // Loading: the six startup steps fill the two detail rows (three each).
@@ -124,7 +136,7 @@
     if (fault.exitCode === undefined) return 'no exit code reported';
     return fault.exitCodeHex ? `exit code ${fault.exitCodeHex} (${fault.exitCode})` : `exit code ${fault.exitCode}`;
   });
-  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img));
+  const faultHadWork = $derived(view === 'fault' && (!!llm || !!img || !!gen));
 
   // LLM request timeline: last 8 (with a fault, the last slot marks the request that died). Empty when idle.
   const reqN = $derived(view === 'fault' && llm ? 7 : 8);
@@ -134,7 +146,7 @@
   const jobsView = $derived(kind === 'image');
   // Was a request in flight when the LLM server died? (activity as last reported)
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
-  const last = $derived(vm.lastSession ? lastSessionParts(vm.lastSession, vm.slots) : null);
+  const last = $derived(vm.lastSession ? lastSessionParts(vm.lastSession, vm.systems) : null);
   const lastText = $derived.by(() => {
     if (!vm.lastSession || !last) return '';
     const end = vm.lastSession.ended === 'fault' ? `ended in a fault ${fmtAgo(vm.lastSession.endedAgoS)}` : `stopped ${fmtAgo(vm.lastSession.endedAgoS)}`;
@@ -144,6 +156,7 @@
     const n = requests.length;
     if (view === 'idle') return ' · not running';
     if (view === 'loading') return ' · no requests yet';
+    if (kind !== 'llm' && view !== 'fault') return ' · no per-request log for this kind';
     if (view === 'fault') {
       if (!faultHadWork) return ' · no requests: failed during startup';
       const head = n === 0 ? 'no finished requests' : n < reqN ? `${n} so far` : `last ${n}`;
@@ -175,14 +188,14 @@
   // A request waiting for the restore: nothing has been prefilled yet.
   const waitingForGpu = $derived(!!dz && prefillActive && (llm?.prefill?.doneTokens ?? 0) === 0);
   const dwg = $derived(vm.vram.device.replace(/^RX\s*/i, '').trim().replace(/\s+/g, '-'));
-  // Drawing revision = the app's major.minor (host.appVersion "0.2.0" -> "0.2").
+  // Drawing revision = the app's major.minor (host.appVersion "0.3.0" -> "0.3").
   const rev = $derived((vm.host?.appVersion ?? '').split('.').slice(0, 2).join('.') || '—');
   const lastLine = $derived(vm.console.length ? vm.console[vm.console.length - 1] : '');
   const freeNow = $derived(vm.vram.totalGiB - vm.vram.usedGiB);
   const lowFree = $derived(!!s && freeNow < vm.vram.warnBelowGiB);
-  const selReady = $derived(selectedSlot?.availability === 'ready');
-  // The hero's overlay word when nothing runs: the selected tier's state.
-  const idleWord = $derived(selReady ? 'NOT RUNNING' : availabilityText(selectedSlot?.availability ?? 'unsupported').toUpperCase());
+  const idle = $derived(idleState(sel));
+  // The hero's overlay word when nothing runs: the selected System's state.
+  const idleWord = $derived(idle.text.toUpperCase());
 
   /** Lets a "a · b · c" line wrap only after a separator (spaces inside each part do not break). */
   function wrapAtDots(t: string): string {
@@ -204,6 +217,20 @@
       <div class="sp-l">
         <div class="lbl">DIFFUSION PROGRESS</div>
         <div class="hero dh dimh"><span class="unit pre">step</span><b>—</b></div>
+      </div>
+      <div class="sp-r dgr">
+        <div class="d-stats"><span class="wword" class:amb={amber}>{word}</span></div>
+        <div class="d-bar">
+          <span class="d-meter"><Meter value={0} tall /></span>
+          <b class="d-pct dimv">—</b>
+        </div>
+      </div>
+    </section>
+  {:else if kind !== 'llm'}
+    <section class="speed panel diff">
+      <div class="sp-l">
+        <div class="lbl">{KIND_LABEL[kind].toUpperCase()}</div>
+        <div class="hero dh dimh"><b>—</b><span class="unit">requests</span></div>
       </div>
       <div class="sp-r dgr">
         <div class="d-stats"><span class="wword" class:amb={amber}>{word}</span></div>
@@ -265,39 +292,43 @@
     {#if frameless}<WinCtl {actions} maximized={!!vm.host?.maximized} />{/if}
   </header>
 
-  <!-- Tier strip: the same in every phase. Select, double-click to launch; locked while a session starts or stops. -->
-  <div class="tabs" role="tablist" aria-label="Tier">
-    {#each vm.slots as slot (slot.id)}
-      {@const sel = slot.id === vm.selected}
-      {@const locked = busy && slot.id !== s?.slot}
-      {@const na = slot.availability !== 'ready'}
-      {@const running = !!s && s.slot === slot.id && view !== 'fault'}
-      <button
-        class="tab"
-        class:sel
-        class:fault={sel && view === 'fault' && s?.slot === slot.id}
-        class:locked
-        class:na
-        role="tab"
-        aria-selected={sel}
-        disabled={locked}
-        title={locked ? `${slot.label}: locked while ${s?.model.name ?? 'the session'} is ${phaseLabel.toLowerCase()}` : na ? `${slot.label}: ${slot.reason ?? availabilityText(slot.availability)}` : `${slot.label}: ${slot.model.name}`}
-        onclick={() => actions.select(slot.id)}
-        ondblclick={() => {
-          if ((!s || view === 'fault') && !na) actions.launch(slot.id);
-        }}
-      >
-        <span class="tl">
-          {#if locked}
-            <svg class="lock" viewBox="0 0 16 18" aria-hidden="true"><rect x="2" y="8" width="12" height="9" rx="1.5" /><path d="M5 8V5.5a3 3 0 0 1 6 0V8" /></svg>
-          {:else}
-            <i class="st" class:run={running} class:bad={na} class:pulse={running && view === 'loading'}></i>
-          {/if}
-          {slot.label}
-        </span>
-        <span class="tm" class:bad={na}>{wrapAtDots(na ? `${slot.model.name} · ${availabilityText(slot.availability)}` : modelShort(slot.model))}</span>
-      </button>
-    {/each}
+  <!-- System strip: one tab per System in vm.systems, the same in every phase. Select (never stops anything);
+       double-click launches a System that is ready and has nothing in its way. Scrolls sideways; + adds a System. -->
+  <div class="strip">
+    <div class="tabs" role="tablist" aria-label="Systems" use:strip={vm.selected}>
+      {#each tabs as t (t.id)}
+        {@const ts = t.system}
+        {@const on = t.id === vm.selected}
+        {@const na = ts.availability !== 'ready' && ts.status !== 'not-set'}
+        <button
+          class="tab"
+          class:sel={on}
+          class:fault={ts.status === 'fault'}
+          class:na
+          role="tab"
+          aria-selected={on}
+          title={`${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${ts.model.name || 'no preset'} (${ts.status}${ts.reason ? `: ${ts.reason}` : ''})`}
+          onclick={() => actions.select(t.id)}
+          ondblclick={() => {
+            if (ts.status === 'offline' && ts.availability === 'ready' && ts.controllable && !ts.external && ts.conflicts.length === 0) void actions.launch(ts.id).catch(() => {});
+          }}
+        >
+          <span class="tl"><TabLabel tab={t} /></span>
+          <span class="tm" class:bad={na}>{wrapAtDots(
+            ts.status === 'not-set'
+              ? 'no preset'
+              : ts.status === 'unreachable'
+                ? `${t.nodeName ?? 'node'} unreachable`
+                : na
+                  ? `${ts.model.name} · ${availabilityText(ts.availability)}`
+                  : modelShort(ts.model),
+          )}</span>
+        </button>
+      {/each}
+    </div>
+    <button class="tab add" type="button" title="Add a System" aria-label="Add a System" onclick={() => actions.openTune(undefined, { add: true })}>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" /></svg>
+    </button>
   </div>
 
   <!-- Status block: model line + hero + detail rows. Its box never moves; a fault covers it whole. -->
@@ -308,7 +339,7 @@
           <svg class="f-ico" viewBox="0 0 48 44" aria-hidden="true"><path d="M24 3.5 L45 40.5 H3 Z" /><path d="M24 16v12.5" /><circle cx="24" cy="34.2" r="1.6" class="fdot" /></svg>
           <div class="f-t">
             <div class="f-title" title={fault.title}>{fault.title}</div>
-            <div class="f-sub">{sessionSlot?.label ?? ''} · {s?.model.name ?? ''} · {exitText}</div>
+            <div class="f-sub">{sel?.label ?? ''} · {s?.model.name ?? ''} · {exitText}</div>
           </div>
           <div class="f-ago">{fmtAgo(fault.sinceS)}</div>
         </div>
@@ -389,6 +420,23 @@
             </div>
           </div>
         </section>
+      {:else if view === 'live-gen' && gen}
+        <section class="speed panel diff">
+          <div class="sp-l">
+            <div class="lbl">{KIND_LABEL[kind].toUpperCase()}{genBusy ? ' · WORKING' : ''}</div>
+            <div class="hero dh" class:dimh={!genBusy}><b>{gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '—'}</b><span class="unit">requests</span></div>
+          </div>
+          <div class="sp-r dgr">
+            <div class="d-stats">
+              {#if genBusy}<span><b>{gen.requestsInFlight}</b> in flight</span>{:else}<span class="muted">waiting for the next request</span>{/if}
+              {#if gen.lastActivityS !== undefined}<span class="muted sm">last activity {fmtDur(gen.lastActivityS)} ago</span>{/if}
+            </div>
+            <div class="d-bar">
+              <span class="d-meter"><Meter value={genBusy ? 1 : 0} tall /></span>
+              <b class="d-pct" class:dimv={!genBusy}>{genBusy ? 'busy' : '—'}</b>
+            </div>
+          </div>
+        </section>
       {:else if view === 'loading' && s}
         <section class="speed panel diff boot">
           <div class="sp-l">
@@ -411,7 +459,7 @@
       {:else if view === 'other'}
         {@render waitHero('WAITING FOR DATA', false)}
       {:else}
-        {@render waitHero(idleWord, !selReady)}
+        {@render waitHero(idleWord, idle.warn)}
       {/if}
 
       <!-- Detail rows -->
@@ -443,6 +491,21 @@
             <div class="v">{#if focusModel?.imageSize}<b>{focusModel.imageSize}</b>{:else}<span class="muted">—</span>{/if}</div>
             <div class="k">MODE</div>
             <div class="v">{#if focusModel?.mode}<b>{focusModel.mode}</b>{:else}<span class="muted">—</span>{/if}</div>
+          </div>
+        </section>
+      {:else if kind !== 'llm'}
+        <section class="rows panel" class:dim={!gen}>
+          <div class="row r-img">
+            <div class="k">IN FLIGHT</div>
+            <div class="v">{#if gen}<b>{fmtInt(gen.requestsInFlight ?? 0)}</b>{:else}<span class="muted">—</span>{/if}</div>
+            <div class="k">LAST ACTIVITY</div>
+            <div class="v">{#if gen?.lastActivityS !== undefined}<b>{fmtDur(gen.lastActivityS)}</b> ago{:else}<span class="muted">—</span>{/if}</div>
+          </div>
+          <div class="row r-img">
+            <div class="k">MODEL</div>
+            <div class="v">{#if focusModel?.name}<b>{focusModel.name}</b>{focusModel.quant ? ` · ${focusModel.quant}` : ''}{:else}<span class="muted">—</span>{/if}</div>
+            <div class="k">REPORTS</div>
+            <div class="v">{gen?.modelId ?? '—'}</div>
           </div>
         </section>
       {:else}
@@ -517,8 +580,8 @@
         <VramColumn
           vram={vm.vram}
           {u}
-          ramTotalGiB={vm.system.ramTotalGiB}
-          ramType={vm.system.ramType}
+          ramTotalGiB={vm.machine.ramTotalGiB}
+          ramType={vm.machine.ramType}
           {preview}
           previewBaseGiB={previewBase}
           {faultGiB}
@@ -533,13 +596,13 @@
   <section class="sys panel">
     <div class="cell">
       <span class="k2">RAM</span>
-      <span class="v2">{fmtFixed(vm.system.ramUsedGiB, 1)} / {fmtFixed(vm.system.ramTotalGiB, 1)} GiB</span>
-      <span class="m2"><Meter value={vm.system.ramTotalGiB > 0 ? vm.system.ramUsedGiB / vm.system.ramTotalGiB : 0} /></span>
+      <span class="v2">{fmtFixed(vm.machine.ramUsedGiB, 1)} / {fmtFixed(vm.machine.ramTotalGiB, 1)} GiB</span>
+      <span class="m2"><Meter value={vm.machine.ramTotalGiB > 0 ? vm.machine.ramUsedGiB / vm.machine.ramTotalGiB : 0} /></span>
     </div>
     <div class="cell">
       <span class="k2">CPU</span>
-      <span class="v2">{vm.system.cpuName} · {Math.round(vm.system.cpuPct)}%</span>
-      <span class="m2"><Meter value={vm.system.cpuPct / 100} /></span>
+      <span class="v2">{vm.machine.cpuName} · {Math.round(vm.machine.cpuPct)}%</span>
+      <span class="m2"><Meter value={vm.machine.cpuPct / 100} /></span>
     </div>
     <div class="cell tb-cell">
       <span class="titleblock">KLIF · DWG {dwg} · {titleWord} · REV {rev}</span>
@@ -573,7 +636,7 @@
       {#if jobsView}
         <span><i class="sw dec"></i>PLAIN</span>
         <span><i class="sw edit"></i>EDIT</span>
-      {:else}
+      {:else if kind === 'llm'}
         <span><i class="sw pre"></i>PREFILL</span>
         <span><i class="sw dec"></i>DECODE</span>
       {/if}
@@ -584,7 +647,7 @@
   <!-- Controls (fixed places) + console line -->
   <section class="ctrl panel">
     <div class="btnrow">
-      <button class="chip" onclick={() => actions.copyEndpoint()} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
+      <button class="chip" onclick={() => actions.copyEndpoint(sel?.id)} disabled={!online} title={online && s ? `Copy http://${s.endpoint.host}:${s.endpoint.port}` : 'Endpoint offline'}>
         <svg viewBox="0 0 24 24" aria-hidden="true"
           ><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" /><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" /></svg
         >
@@ -602,36 +665,43 @@
       </button>
       <span class="grow"></span>
 
-      <!-- Primary: Launch / Cancel / Stop / Restart after a fault, always in this place -->
-      {#if view === 'idle'}
-        <button class="btn act primary" onclick={() => actions.launch(vm.selected)} disabled={!selReady} title={selReady ? `Launch ${selectedSlot?.label}` : `${selectedSlot?.label}: ${selectedSlot?.reason ?? availabilityText(selectedSlot?.availability ?? 'unsupported')}`}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none" /></svg><span class="al">Launch <b>{selectedSlot?.label ?? ''}</b></span>
+      <!-- Primary: Launch / Cancel / Stop / Restart after a fault, always in this place; a quiet note for an
+           external server (KLIF never starts or stops it); Cancel for a launch waiting for others to stop -->
+      {#if sel?.external}
+        <button class="btn act ext" disabled title={EXTERNAL_TITLE}><span class="al">{EXTERNAL_NOTE}</span></button>
+      {:else if view === 'idle' && isPendingLaunch(sel)}
+        <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={!canStop(sel)} title={sel?.reason ?? 'Cancel the launch'}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" fill="currentColor" stroke="none" /></svg><span class="al">Cancel <b>{sel?.label ?? ''}</b></span>
+        </button>
+      {:else if view === 'idle'}
+        <button class="btn act primary" onclick={() => doLaunch(actions, sel, ctl)} disabled={!ctl.enabled} title={ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${sel?.reason ?? ''}` : `Launch ${sel?.label}`) : `${sel?.label}: ${ctl.blocked}`}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none" /></svg><span class="al">{#if ctl.stopOthers}{ctl.text}{:else}Launch <b>{sel?.label ?? ''}</b>{/if}</span>
         </button>
       {:else if view === 'fault'}
-        <button class="btn act danger" onclick={() => actions.restart()}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></svg><span class="al">Restart <b>{sessionSlot?.label ?? ''}</b></span>
+        <button class="btn act danger" onclick={() => actions.restart(sel?.id)} disabled={!mine}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></svg><span class="al">Restart <b>{sel?.label ?? ''}</b></span>
         </button>
       {:else}
-        <button class="btn act stop" onclick={() => actions.stop()} disabled={view === 'stopping'}>
+        <button class="btn act stop" onclick={() => actions.stop(sel?.id)} disabled={view === 'stopping' || !canStop(sel)} title={heldWhy}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" fill="currentColor" stroke="none" /></svg><span class="al"
-            >{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{sessionSlot?.label ?? ''}</b></span
+            >{view === 'loading' ? 'Cancel' : view === 'stopping' ? 'Stopping' : 'Stop'} <b>{sel?.label ?? ''}</b></span
           >
         </button>
       {/if}
 
       {#if view === 'fault'}
-        <button class="btn" onclick={() => actions.dismiss?.()} title="Back to the launcher">
+        <button class="btn" onclick={() => actions.dismiss(sel?.id)} disabled={!mine} title="Back to the launcher">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5" /><path d="M11 6l-6 6 6 6" /></svg>Dismiss
         </button>
       {:else}
-        <button class="btn" onclick={() => actions.restart()} disabled={!s || busy} title="Stop and launch again with the current settings">
+        <button class="btn" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" /><path d="M20 4v5h-5" /></svg>Restart
         </button>
       {/if}
-      <button class="btn tune" onclick={() => actions.openTune(vm.selected)} title={s && s.slot === vm.selected && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this tier launches'}>
+      <button class="btn tune" onclick={() => actions.openTune(sel?.id)} title={s && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /><circle cx="15" cy="6" r="2.2" class="knob" /><circle cx="8" cy="12" r="2.2" class="knob" /><circle cx="14" cy="18" r="2.2" class="knob" /></svg>Tune
       </button>
-      <button class="btn" onclick={() => actions.openEndpoint()} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
+      <button class="btn" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
         <svg viewBox="0 0 24 24" aria-hidden="true"
           ><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg
         >{kind === 'image' ? 'Web UI' : 'Endpoint'}
@@ -899,12 +969,42 @@
     display: none;
   }
 
-  /* Tier strip */
-  .tabs {
+  /* System strip */
+  .strip {
     height: calc(var(--u) * 50);
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
     gap: var(--gap);
+    min-width: 0;
+  }
+  .tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: var(--gap);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tabs .tab {
+    flex: 1 0 calc(var(--u) * 150);
+  }
+  .tab.add {
+    flex: none;
+    width: calc(var(--u) * 42);
+    align-items: center;
+    padding: 0;
+    color: var(--cyan);
+  }
+  .tab.add svg {
+    width: calc(var(--u) * 13);
+    height: calc(var(--u) * 13);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
   }
   .tab {
     border: 1px solid #33475a;
@@ -918,16 +1018,13 @@
     padding: 0 calc(var(--u) * 12);
     text-align: left;
   }
-  .tab:hover:not(.sel):not(:disabled) {
+  .tab:hover:not(.sel) {
     border-color: #557086;
-  }
-  .tab:disabled {
-    opacity: 1;
   }
   .tl {
     display: flex;
     align-items: center;
-    gap: calc(var(--u) * 7);
+    min-width: 0;
     font-size: var(--fs-l);
     font-weight: 600;
     font-stretch: 87.5%;
@@ -947,27 +1044,6 @@
   .tm.bad {
     color: var(--amber);
   }
-  /* Tier state: mint = ready, amber ring = cannot launch, cyan = this tier runs. */
-  .st {
-    width: calc(var(--u) * 7);
-    height: calc(var(--u) * 7);
-    min-width: 6px;
-    min-height: 6px;
-    border-radius: 50%;
-    background: var(--mint);
-    flex: none;
-  }
-  .st.bad {
-    background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--amber);
-  }
-  .st.run {
-    background: var(--cyan);
-    box-shadow: 0 0 0 calc(var(--u) * 2.5) rgba(90, 182, 235, 0.25);
-  }
-  .st.pulse {
-    animation: si-pulse 1s ease-in-out infinite;
-  }
   .tab.sel {
     border-color: var(--cyan);
     background: linear-gradient(180deg, #11263a, #0f1d29);
@@ -979,34 +1055,13 @@
   .tab.sel .tm {
     color: #b8d3e4;
   }
-  .tab.sel .st.run {
-    background: var(--hot);
-  }
   .tab.fault {
     border-color: var(--red);
     background: linear-gradient(180deg, #2a1410, #1a100e);
     box-shadow: none;
   }
-  .tab.fault .st {
-    background: var(--red);
-  }
-  .tab.na .tl,
-  .tab.locked .tl {
+  .tab.na .tl {
     color: var(--muted);
-  }
-  .tab.locked {
-    border-color: #2a3945;
-  }
-  .tab.locked .tm {
-    color: #5f7280;
-  }
-  .lock {
-    width: calc(var(--u) * 10);
-    height: calc(var(--u) * 12);
-    flex: none;
-    fill: none;
-    stroke: #8296a5;
-    stroke-width: 1.5;
   }
 
   /* Status block: one fixed box in every phase */
@@ -1361,7 +1416,6 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .dot.pulse,
-    .st.pulse,
     .active .si::after {
       animation: none;
     }
@@ -1796,6 +1850,14 @@
     background: #1a2731;
     border-color: #2f4150;
     color: #8296a5;
+  }
+  .btn.ext,
+  .btn.ext:disabled {
+    justify-content: center;
+    opacity: 1;
+    background: transparent;
+    border-color: var(--line);
+    color: var(--muted);
   }
   .btn.stop {
     border-color: var(--red);

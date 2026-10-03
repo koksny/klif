@@ -6,7 +6,7 @@
 //! the smallest `arrival - ts` seen (or fixed by the caller for an adopted session read from start).
 
 use crate::text::{file_name, redact, round_to, MIB};
-use klif_common::vm::{LoadStepId, ModelArch, RequestRecord, StepState, Totals, VramLayer, VramLayerId};
+use klif_common::vm::{ModelArch, RequestRecord, StepState, Totals, VramLayer, VramLayerId};
 use regex::Regex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -286,79 +286,7 @@ pub enum Activity {
     Decode,
 }
 
-/// Load step bookkeeping shared with the sd parser.
-#[derive(Debug, Clone)]
-pub struct Steps {
-    pub state: [StepState; 6],
-    pub detail: [Option<String>; 6],
-}
-
-pub const STEP_IDS: [LoadStepId; 6] =
-    [LoadStepId::Process, LoadStepId::Device, LoadStepId::Weights, LoadStepId::Kv, LoadStepId::Warmup, LoadStepId::Ready];
-/// Weight of each step in the overall load fraction.
-const STEP_WEIGHT: [f64; 6] = [0.05, 0.05, 0.55, 0.15, 0.15, 0.05];
-
-impl Default for Steps {
-    fn default() -> Self {
-        let mut s = Steps { state: [StepState::Pending; 6], detail: Default::default() };
-        s.state[0] = StepState::Active;
-        s
-    }
-}
-
-impl Steps {
-    /// Mark `idx` active and everything before it done (steps only move forward).
-    pub fn reach(&mut self, idx: usize) {
-        for i in 0..idx {
-            if self.state[i] != StepState::Failed {
-                self.state[i] = StepState::Done;
-            }
-        }
-        if self.state[idx] == StepState::Pending {
-            self.state[idx] = StepState::Active;
-        }
-    }
-    pub fn finish(&mut self, idx: usize) {
-        self.reach(idx);
-        self.state[idx] = StepState::Done;
-    }
-    pub fn fail_active(&mut self) {
-        let idx = self.state.iter().rposition(|s| *s == StepState::Active).or_else(|| {
-            self.state.iter().position(|s| *s == StepState::Pending)
-        });
-        if let Some(i) = idx {
-            self.state[i] = StepState::Failed;
-        }
-    }
-    pub fn fraction(&self) -> f64 {
-        let f: f64 = self
-            .state
-            .iter()
-            .zip(STEP_WEIGHT)
-            .map(|(s, w)| match s {
-                StepState::Done => w,
-                StepState::Active => w * 0.5,
-                _ => 0.0,
-            })
-            .sum();
-        f.clamp(0.0, 1.0)
-    }
-}
-
-pub fn step_label(id: LoadStepId, image: bool) -> &'static str {
-    match id {
-        LoadStepId::Process => "Start process",
-        LoadStepId::Device => "Find device",
-        LoadStepId::Weights => {
-            if image { "Load diffusion weights" } else { "Load weights" }
-        }
-        LoadStepId::Kv => {
-            if image { "Load text encoder and VAE" } else { "Allocate KV cache" }
-        }
-        LoadStepId::Warmup => "Warm up",
-        LoadStepId::Ready => "Ready",
-    }
-}
+pub use crate::steps::{step_label, Steps, STEP_IDS};
 
 /// Raw shape facts as the log names them (first model only).
 #[derive(Debug, Default)]
@@ -386,6 +314,8 @@ pub struct LlamaParser {
     // devices / composition
     devices: Vec<(String, String, u64, u64)>,
     pub primary_dev: Option<String>,
+    /// The primary device's description as the server names it (L11), e.g. "AMD Radeon RX 9070 XT".
+    pub primary_desc: Option<String>,
     pub primary_free_mib: Option<u64>,
     pub file_size_gib: Option<f64>,
     shape: Shape,
@@ -442,6 +372,7 @@ impl LlamaParser {
             any_line: false,
             devices: Vec::new(),
             primary_dev: None,
+            primary_desc: None,
             primary_free_mib: None,
             file_size_gib: None,
             shape: Shape::default(),
@@ -555,7 +486,7 @@ impl LlamaParser {
             self.push_error(l);
             let site = self.nce_site.clone().unwrap_or_else(|| "the starter script".into());
             let exe = self.nce_exe.clone().unwrap_or_else(|| "a native command".into());
-            self.set_fatal(format!("The starter script stopped on a PowerShell NativeCommandError from {exe} at {site}"));
+            self.set_fatal(format!("The starter script stopped on a NativeCommandError from {exe} at {site}"));
         }
     }
 
@@ -600,6 +531,7 @@ impl LlamaParser {
             }
         } else if let Some(c) = L11.captures(msg) {
             self.primary_dev = Some(c[1].to_string());
+            self.primary_desc = Some(c[2].trim().to_string());
             self.primary_free_mib = Some(cap_u64(&c, 4));
             self.steps.detail[1] = Some(format!("{} · {:.1} GiB free", &c[1], cap_u64(&c, 4) as f64 / 1024.0));
             self.steps.finish(1);
@@ -778,7 +710,14 @@ impl LlamaParser {
         match &self.primary_dev {
             Some(p) => p == dev,
             // lv3/older builds without L11: the first GPU device seen in a buffer line.
-            None => dev.starts_with("ROCm") || dev.starts_with("Vulkan") || dev.starts_with("CUDA"),
+            None => {
+                dev.starts_with("ROCm")
+                    || dev.starts_with("Vulkan")
+                    || dev.starts_with("CUDA")
+                    || dev.starts_with("Metal")
+                    || dev.starts_with("MTL")
+                    || dev.starts_with("SYCL")
+            }
         }
     }
 
@@ -989,6 +928,20 @@ impl LlamaParser {
             r.cached = Some(c);
         }
         self.last = Some(r);
+    }
+
+    /// The GPU devices the server reported: the primary device (L11) if known, else every non-CPU device of
+    /// the `common_params_print_info` list (L10). Descriptions as printed, e.g. "AMD Radeon RX 9070 XT".
+    pub fn gpu_devices(&self) -> Vec<String> {
+        if let Some(d) = &self.primary_desc {
+            return vec![d.clone()];
+        }
+        self.devices.iter().map(|(_, desc, _, _)| desc.trim().to_string()).filter(|d| !d.is_empty()).collect()
+    }
+
+    /// The server's build as it reports it ("b6500"), from the `common_params_print_info` banner.
+    pub fn build_label(&self) -> Option<String> {
+        self.build.as_ref().map(|b| format!("b{b}"))
     }
 
     /// Activity from the log alone.

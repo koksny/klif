@@ -3,7 +3,7 @@
 //   middle = context fill (LLM) or the current job's step / steps (CGI)
 //   inner  = live activity: load, prefill, decode speed (tok/s of 120), CGI sampling speed (it/s of 1), waking
 // This module only turns a snapshot into targets and words; Specimen eases them on the frame clock.
-import type { Slot, SlotKind, ViewModel } from '../../lib/model/types';
+import type { System, SystemKind, ViewModel } from '../../lib/model/types';
 import { fmtTps } from '../../lib/model/format';
 import type { Sleep } from './sleep.svelte';
 import { fitOf } from './text';
@@ -57,12 +57,13 @@ export interface Targets {
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
 const g1 = (x: number) => x.toFixed(1);
 
-export function targetsOf(vm: ViewModel, o: { kind: SlotKind; sel: Slot | undefined; dz: Sleep | null; waking: boolean }): Targets {
+export function targetsOf(vm: ViewModel, o: { kind: SystemKind; sel: System | undefined; dz: Sleep | null; waking: boolean }): Targets {
   const s = vm.session;
   const v = vm.vram;
   const total = Math.max(0.01, v.totalGiB);
   const llm = s?.llm ?? null;
   const img = s?.image ?? null;
+  const gen = s?.generic ?? null;
   const loading = s?.phase === 'starting' || s?.phase === 'loading';
 
   // outer: VRAM
@@ -92,6 +93,10 @@ export function targetsOf(vm: ViewModel, o: { kind: SlotKind; sel: Slot | undefi
     const on = !!img && img.activity === 'generating' && img.steps > 0;
     mid = on ? img!.step / img!.steps : 0;
     midL = { pre: 'STEP', val: on ? `${img!.step} / ${img!.steps}` : '—', post: '' };
+  } else if (o.kind !== 'llm') {
+    const n = gen?.requestsInFlight ?? 0;
+    mid = n > 0 ? 1 : 0;
+    midL = { pre: 'REQ', val: gen ? String(n) : '—', post: '' };
   } else {
     const t = llm?.context.totalTokens ?? 0;
     mid = llm && t > 0 ? llm.context.usedTokens / t : 0;
@@ -119,7 +124,11 @@ export function targetsOf(vm: ViewModel, o: { kind: SlotKind; sel: Slot | undefi
   } else if (s?.phase === 'live' && img?.activity === 'generating' && img.sPerIt > 0) {
     inner = 1 / img.sPerIt / ITS_FULL;
     innL = { pre: '', val: img.sPerIt.toFixed(2), post: 'S/IT' };
-  } else innL = { pre: o.kind === 'image' ? 'S/IT' : 'TOK/S', val: '—', post: '' };
+  } else if (s?.phase === 'live' && gen) {
+    const on = (gen.requestsInFlight ?? 0) > 0;
+    inner = on ? 1 : 0;
+    innL = { pre: '', val: on ? 'BUSY' : 'IDLE', post: '' };
+  } else innL = { pre: o.kind === 'image' ? 'S/IT' : o.kind === 'llm' ? 'TOK/S' : 'REQ', val: '—', post: '' };
 
   return {
     vram: clamp01(vram),

@@ -1,17 +1,18 @@
 // Per-model simulation profiles: which real timelines drive a model, how long it takes to boot, and what
 // it costs the rest of the machine. Chosen by model FAMILY (the tiers are swappable), not by slot id.
-import type { ModelRef, SlotId } from '../model/types';
+import type { ModelRef, SystemKind } from '../model/types';
 import type { BootDurations } from './boot';
-import { cardFor } from './catalog';
 import { HIGH, KREA, LOW, MEDIUM, type BigPrefill, type ReqTuple } from './fixtures';
 import type { ImageSimConfig } from './imageSim';
 import type { LlmSimConfig } from './llmSim';
 import { clamp, type Rng } from './rng';
 
-export type Family = 'qwen27' | 'flashnext' | 'gemma' | 'krea';
+export type Family = 'qwen27' | 'flashnext' | 'gemma' | 'krea' | 'generic';
 
-export function familyOf(model: ModelRef): Family {
+export function familyOf(model: ModelRef, kind: SystemKind = 'llm'): Family {
+  if (kind !== 'llm' && kind !== 'image') return 'generic';
   const n = model.name.toLowerCase();
+  if (kind === 'image') return 'krea';
   if (n.includes('krea')) return 'krea';
   if (n.includes('flash')) return 'flashnext';
   if (n.includes('gemma')) return 'gemma';
@@ -58,8 +59,8 @@ function gemmaSessions(speedScale: number, ctxTotal: number): ReqTuple[][] {
 }
 
 export function llmConfig(model: ModelRef, opts: { big?: boolean } = {}): LlmSimConfig {
-  const fam = familyOf(model);
-  const ctxTotal = model.ctxTokens ?? cardFor(model)?.defaultCtx ?? 16384;
+  const fam = familyOf(model, 'llm');
+  const ctxTotal = model.ctxTokens ?? 16384;
   const spec = specLabel(model.specMode);
   switch (fam) {
     case 'flashnext':
@@ -119,8 +120,8 @@ export function imageConfig(crashOnJob?: number): ImageSimConfig {
 const pickFrom = (rng: Rng, a: number[], fallback: number) => (a.length ? rng.pick(a) : fallback);
 
 /** Boot step durations. weights/kv come from real log timestamps; process/device/warmup are estimates. */
-export function bootDurations(model: ModelRef, rng: Rng): BootDurations {
-  const fam = familyOf(model);
+export function bootDurations(model: ModelRef, rng: Rng, kind: SystemKind = 'llm'): BootDurations {
+  const fam = familyOf(model, kind);
   const processS = rng.range(0.9, 1.5);
   const deviceS = rng.range(1.2, 2.0);
   const warmupS = rng.range(0.5, 1.1);
@@ -134,6 +135,9 @@ export function bootDurations(model: ModelRef, rng: Rng): BootDurations {
     case 'krea':
       // No timestamps in the image-server log: estimates (weights live in RAM, text encoder + VAE follow).
       return { processS, deviceS, weightsS: rng.range(7, 10), kvS: rng.range(2, 3.4), warmupS };
+    case 'generic':
+      // Speech / transcription / video servers: estimates, scaled by the weights size.
+      return { processS, deviceS, weightsS: clamp((model.weightsGiB ?? 1) * 0.9 + 1, 1.5, 12), kvS: rng.range(0.6, 1.4), warmupS };
     default:
       return { processS, deviceS, weightsS: pickFrom(rng, MEDIUM.load.weightsS, 6.7), kvS: pickFrom(rng, MEDIUM.load.auxS, 3), warmupS };
   }
@@ -145,8 +149,10 @@ export function deviceDetail(model: ModelRef): string {
 }
 
 /** Resident system RAM a running model adds on top of the idle desktop (GiB). */
-export function ramFootprintGiB(model: ModelRef): number {
-  switch (familyOf(model)) {
+export function ramFootprintGiB(model: ModelRef, kind: SystemKind = 'llm'): number {
+  switch (familyOf(model, kind)) {
+    case 'generic':
+      return Math.min(6, 0.6 + (model.weightsGiB ?? 1) * 0.5);
     case 'krea':
       return 11.7; // from the image-server log: all parameters resident in RAM
     case 'flashnext':
@@ -156,8 +162,4 @@ export function ramFootprintGiB(model: ModelRef): number {
     default:
       return model.vision ? 7.2 : 5.4;
   }
-}
-
-export function defaultPort(slot: SlotId): number {
-  return slot === 'krea' ? 1234 : 7030;
 }

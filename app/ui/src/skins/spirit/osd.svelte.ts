@@ -1,9 +1,10 @@
 // Spirit: everything the camera OSD says, derived once from the view model and shared by the full window and
 // the mini panel (they differ in layout only). Never an invented value: every string is a ViewModel field.
-import type { Slot, ViewModel } from '../../lib/model/types';
+import type { SystemId, ViewModel } from '../../lib/model/types';
+import { canStop, EXTERNAL_NOTE, EXTERNAL_TITLE, idleState, isPendingLaunch, KIND_LABEL, launchCtl, selectedSystem } from '../../lib/model/systems';
 import { fmtCtx, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
 import { held, useSleep } from './state.svelte';
-import { availabilityText, fitOf, fmtAgo, fmtDur, fmtEta, gib1, lastSessionText, phaseWord, shapeText, short, sizeText, stepLine } from './text';
+import { fitOf, fmtAgo, fmtDur, fmtEta, gib1, lastSessionText, phaseWord, shapeText, short, sizeText, stepLine } from './text';
 
 export type Tone = '' | 'dim' | 'warn' | 'red';
 
@@ -51,7 +52,7 @@ export interface Battery {
 }
 
 export interface Act {
-  kind: 'go' | 'stop' | 'hot';
+  kind: 'go' | 'stop' | 'hot' | 'ext';
   glyph: IcKind;
   red: boolean;
   text: string;
@@ -60,23 +61,29 @@ export interface Act {
   run: () => void;
 }
 
-export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void, stop: () => void, restart: () => void) {
+export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthers: boolean) => void, stop: (system: SystemId) => void, restart: (system: SystemId) => void) {
   const vm = $derived(get());
   const s = $derived(vm.session);
   const phase = $derived(s?.phase ?? 'idle');
-  const slotOf = (id: string): Slot | undefined => vm.slots.find((x) => x.id === id);
-  const runSlot = $derived(s ? slotOf(s.slot) : undefined);
-  const selSlot = $derived(slotOf(vm.selected) ?? vm.slots[0]);
-  const slot = $derived(runSlot ?? selSlot);
-  const kind = $derived(runSlot?.kind ?? (s?.image ? 'image' : s?.llm ? 'llm' : (selSlot?.kind ?? 'llm')));
+  // vm.session is always the selected System's session.
+  const selSlot = $derived(selectedSystem(vm) ?? undefined);
+  const runSlot = $derived(s ? selSlot : undefined);
+  const slot = $derived(selSlot);
+  const kind = $derived(selSlot?.kind ?? 'llm');
   const model = $derived(s?.model ?? selSlot?.model);
   const llm = $derived(s?.llm ?? null);
   const img = $derived(s?.image ?? null);
+  const gen = $derived(s?.generic ?? null);
   const loading = $derived(phase === 'starting' || phase === 'loading');
   const busy = $derived(loading || phase === 'stopping');
   const faulted = $derived(phase === 'fault');
   const online = $derived(phase === 'live');
-  const selReady = $derived(selSlot?.availability === 'ready');
+  const why = $derived(idleState(selSlot));
+  /** The selected System has no reason against launching (a broken preset, an unreachable node...). */
+  const selReady = $derived(!why.warn && selSlot?.status !== 'not-set');
+  /** The launch control: with conflicts it reads "STOP S1 & LAUNCH" and sends stopOthers. */
+  const ctl = $derived(launchCtl(vm, selSlot, { short: true }));
+  const mine = $derived(!!selSlot && selSlot.controllable && !selSlot.external);
 
   const sleep = useSleep(get);
   const dz = $derived(online ? sleep.info : null);
@@ -86,6 +93,7 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
   const prefilling = $derived(online && !!llm?.prefill && llm.activity === 'prefill');
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0);
   const generating = $derived(!!img && img.activity === 'generating' && img.steps > 0);
+  const working = $derived((gen?.requestsInFlight ?? 0) > 0);
   const fault = $derived(faulted ? (s?.fault ?? null) : null);
   const exitText = $derived.by(() => {
     if (!fault) return '';
@@ -106,12 +114,12 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
   // ---- hero readout (top right, under the timecode) ----------------------------------------------------------
   const hero = $derived.by<Hero>(() => {
     // no reading: the camera's dashes, in the shape of the figure that would stand there
-    const base: Hero = { label: '', labelTone: '', value: kind === 'image' ? '--/--' : '--.-', unit: '', sub: '', subTone: '', tone: '' };
+    const base: Hero = { label: '', labelTone: '', value: kind === 'image' ? '--/--' : kind === 'llm' ? '--.-' : '--', unit: '', sub: '', subTone: '', tone: '' };
     if (!s) {
-      const unit = kind === 'image' ? 'STEPS' : 'TOK/S';
+      const unit = kind === 'image' ? 'STEPS' : kind === 'llm' ? 'TOK/S' : 'REQUESTS';
       if (!selReady)
-        return { ...base, label: 'STANDBY', unit, sub: `${short(selSlot?.label ?? '')} · ${(selSlot?.reason ?? availabilityText(selSlot?.availability ?? 'unsupported')).toUpperCase()}`, subTone: 'warn', tone: 'dim' };
-      return { ...base, label: 'STANDBY', unit, sub: vm.lastSession ? lastSessionText(vm.lastSession, vm.slots) : 'NOTHING RUNNING · PICK A TIER AND LAUNCH', tone: 'dim' };
+        return { ...base, label: 'STANDBY', unit, sub: `${short(selSlot?.label ?? '')} · ${(selSlot?.reason ?? why.text).toUpperCase()}`, subTone: why.warn ? 'warn' : '', tone: 'dim' };
+      return { ...base, label: 'STANDBY', unit, sub: vm.lastSession ? lastSessionText(vm.lastSession, vm.systems) : 'NOTHING RUNNING · PICK A SYSTEM AND LAUNCH', tone: 'dim' };
     }
     if (faulted) return { ...base, label: `FAULT${fault ? ` · ${fmtAgo(fault.sinceS)}` : ''}`, labelTone: 'red', value: 'ERR', sub: (fault?.title ?? 'The server stopped').toUpperCase(), subTone: 'red', tone: 'red' };
     if (phase === 'stopping') return { ...base, label: 'STOPPING', value: '--', sub: `RELEASING ${fmtGiB(vm.vram.usedGiB)} GIB`, tone: 'dim' };
@@ -150,6 +158,15 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
       const on = llm.activity === 'decode';
       return { ...base, label: on ? 'DECODE' : 'DECODE · IDLE', value: fmtTps(tps.current), unit: 'TOK/S', sub: `${fmtInt(llm.generatedTokens)} TOK GENERATED`, tone: on ? '' : 'dim' };
     }
+    if (gen)
+      return {
+        ...base,
+        label: `${KIND_LABEL[kind].toUpperCase()}${working ? ' · WORKING' : ''}`,
+        value: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '--',
+        unit: 'REQUESTS',
+        sub: working ? `${gen.requestsInFlight} IN FLIGHT` : gen.lastActivityS !== undefined ? `LAST ACTIVITY ${fmtDur(gen.lastActivityS)} AGO` : 'WAITING FOR THE NEXT REQUEST',
+        tone: working ? '' : 'dim',
+      };
     if (img) {
       if (generating)
         return {
@@ -171,6 +188,9 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
       if (generating && img) return [{ k: 'STEP', v: `${img.step}/${img.steps}` }, { v: img.sPerIt.toFixed(2), u: 'S/IT' }, { v: `${img.width}×${img.height}` }, who];
       return [{ k: 'STEP', v: '--/--' }, { v: '--.--', u: 'S/IT' }, { v: sizeText(model?.imageSize) ?? '--' }, who];
     }
+    if (kind !== 'llm') {
+      return [{ k: 'REQ', v: gen?.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '--' }, { k: 'FLIGHT', v: gen ? fmtInt(gen.requestsInFlight ?? 0) : '--' }, { v: (model?.backend || model?.engine || '--').toUpperCase() }, who];
+    }
     // prefill: its own speed once it has one, else how far the prompt is (never a 0 tok/s); asleep: the last speed
     const pf = llm?.prefill;
     const first: Setting =
@@ -188,6 +208,7 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
   const meter = $derived.by<Meter>(() => {
     if (loading) return { frac: s?.loading?.fraction ?? 0, label: 'LOAD', tone: '' };
     if (kind === 'image') return { frac: generating && img ? img.step / img.steps : 0, label: 'STEP', tone: faulted ? 'red' : generating ? '' : 'dim' };
+    if (kind !== 'llm') return { frac: working ? 1 : 0, label: 'REQ', tone: faulted ? 'red' : working ? '' : 'dim' };
     if (!llm) return { frac: 0, label: 'CTX', tone: faulted ? 'red' : 'dim' };
     return { frac: ctxFrac, label: 'CTX', tone: faulted ? 'red' : dz ? 'dim' : ctxFrac >= 0.95 ? 'red' : ctxFrac >= 0.9 ? 'warn' : '' };
   });
@@ -215,15 +236,31 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
 
   // ---- the primary act: Launch / Cancel / Stop / Restart (one fixed place) -------------------------------------
   const act = $derived.by<Act>(() => {
-    if (!s) {
-      const why = `${selSlot?.label ?? ''}: ${selSlot?.reason ?? availabilityText(selSlot?.availability ?? 'unsupported')}`;
-      return { kind: 'go', glyph: 'play', red: false, text: `LAUNCH ${short(selSlot?.label ?? '')}`, title: selReady ? `Launch ${selSlot?.label ?? ''}` : why, disabled: !selReady, run: () => launch(vm.selected) };
+    // An external server: a quiet note, never Launch / Stop (KLIF only watches it).
+    if (selSlot?.external) return { kind: 'ext', glyph: '', red: false, text: EXTERNAL_NOTE.toUpperCase(), title: EXTERNAL_TITLE, disabled: true, run: () => {} };
+    // A launch that waits for other Systems to stop (starting, no session yet): Cancel.
+    if (!s && isPendingLaunch(selSlot)) {
+      const id = selSlot?.id ?? '';
+      return { kind: 'stop', glyph: 'ring', red: false, text: `CANCEL ${short(selSlot?.label ?? '')}`, title: selSlot?.reason ?? 'Cancel the launch', disabled: !canStop(selSlot), run: () => stop(id) };
     }
-    const tier = short(runSlot?.label ?? '');
-    if (faulted) return { kind: 'hot', glyph: 'restart', red: false, text: `RESTART ${tier}`, title: `Launch ${runSlot?.label ?? ''} again`, disabled: false, run: restart };
+    if (!s) {
+      return {
+        kind: 'go',
+        glyph: 'play',
+        red: false,
+        text: ctl.stopOthers ? ctl.text.toUpperCase() : `LAUNCH ${short(selSlot?.label ?? '')}`,
+        title: ctl.enabled ? (ctl.stopOthers ? `${ctl.text}: ${selSlot?.reason ?? ''}` : `Launch ${selSlot?.label ?? ''}`) : `${selSlot?.label ?? ''}: ${ctl.blocked}`,
+        disabled: !ctl.enabled,
+        run: () => launch(vm.selected ?? selSlot?.id ?? '', ctl.stopOthers),
+      };
+    }
+    const tier = short(selSlot?.label ?? '');
+    const id = selSlot?.id ?? '';
+    if (faulted) return { kind: 'hot', glyph: 'restart', red: false, text: `RESTART ${tier}`, title: `Launch ${selSlot?.label ?? ''} again`, disabled: !mine, run: () => restart(id) };
     if (phase === 'stopping') return { kind: 'stop', glyph: 'square', red: false, text: 'STOPPING', title: 'Stopping', disabled: true, run: () => {} };
-    if (loading) return { kind: 'stop', glyph: 'ring', red: false, text: `CANCEL ${tier}`, title: 'Cancel the launch', disabled: false, run: stop };
-    return { kind: 'stop', glyph: 'dot', red: true, text: `STOP ${tier}`, title: 'Stop the server', disabled: false, run: stop };
+    const external = selSlot?.external ? 'External server: it runs where it was started.' : '';
+    if (loading) return { kind: 'stop', glyph: 'ring', red: false, text: `CANCEL ${tier}`, title: 'Cancel the launch', disabled: !canStop(selSlot), run: () => stop(id) };
+    return { kind: 'stop', glyph: 'dot', red: true, text: `STOP ${tier}`, title: external || 'Stop the server', disabled: !canStop(selSlot), run: () => stop(id) };
   });
 
   const status = $derived.by<{ text: string; tone: Tone | 'live' }>(() => {
@@ -288,6 +325,15 @@ export function useOsd(get: () => ViewModel, launch: (slot: Slot['id']) => void,
     },
     get selReady() {
       return selReady;
+    },
+    get ctl() {
+      return ctl;
+    },
+    get mine() {
+      return mine;
+    },
+    get gen() {
+      return gen;
     },
     get dz() {
       return dz;

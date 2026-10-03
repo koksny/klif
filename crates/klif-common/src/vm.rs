@@ -1,79 +1,381 @@
-//! The KLIF view model, mirrored 1:1 from `app/ui/src/lib/model/types.ts` (the source of truth).
+//! The KLIF view model, mirrored 1:1 in `app/ui/src/lib/model/types.ts`.
 //! Serialized with camelCase field names; optional fields are omitted when `None`.
-//! If you change anything here, change types.ts in the same commit (and vice versa).
+//! If you change anything here, change types.ts in the same change (and vice versa).
+//!
+//! 0.3: KLIF manages N user-defined Systems (`[systems.<id>]`, tabs in file order) running concurrently, each
+//! with its own session, plus Systems on remote nodes (`"<node>/<id>"`) and external servers. A System runs a
+//! PRESET (`[presets.<id>]`, see `crate::config::PresetCfg`); `CommandView` shows its command exactly.
+//! Renames vs 0.2: Slot -> System, SlotId -> SystemId (string), SlotKind -> SystemKind, SystemStats -> MachineStats,
+//! vm.slots -> vm.systems, vm.system -> vm.machine. The 0.2 Recipe / Card / Precision types and Backend enum are gone.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SlotId {
-    High,
-    Medium,
-    Low,
-    Krea,
-}
+use crate::config::{NodeRight, OnConflict, PresetCfg};
 
-impl SlotId {
-    /// Display order: System 1 (fast, cheap, always on), System 2 (slower, deeper), System 3 (every resource), CGI.
-    pub const ALL: [SlotId; 4] = [SlotId::Low, SlotId::Medium, SlotId::High, SlotId::Krea];
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SlotId::High => "high",
-            SlotId::Medium => "medium",
-            SlotId::Low => "low",
-            SlotId::Krea => "krea",
+// ----------------------------------------------------------------------------------------- systems
+
+/// A System's id: a local id from `[systems.<id>]` (`s1`, `cgi`, `tts`...) or, for a System on a remote node,
+/// `"<node>/<id>"`. Serialized as a plain string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct SystemId(pub String);
+
+impl SystemId {
+    pub fn new(id: impl Into<String>) -> SystemId {
+        SystemId(id.into())
+    }
+
+    /// `"<node>/<id>"`.
+    pub fn remote(node: &str, local: &str) -> SystemId {
+        SystemId(format!("{node}/{local}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The node part of a remote id (None for a local System).
+    pub fn node(&self) -> Option<&str> {
+        self.0.split_once('/').map(|(n, _)| n)
+    }
+
+    /// The id on its own node (`"s1"` for both `"s1"` and `"render-box/s1"`).
+    pub fn local(&self) -> &str {
+        self.0.split_once('/').map(|(_, l)| l).unwrap_or(&self.0)
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.0.contains('/')
+    }
+
+    /// A local System / node id: `[a-z0-9][a-z0-9_-]{0,31}` (no "/"). Err = one sentence.
+    pub fn validate_local(id: &str) -> Result<(), String> {
+        let b = id.as_bytes();
+        let ok_first = b.first().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+        let ok_rest = b.iter().all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-');
+        if ok_first && ok_rest && b.len() <= 32 {
+            Ok(())
+        } else {
+            Err(format!("Id \"{id}\" is not allowed: use 1-32 characters a-z, 0-9, '-' or '_', starting with a letter or digit."))
         }
     }
-    pub fn label(self) -> &'static str {
-        match self {
-            SlotId::High => "SYSTEM 3",
-            SlotId::Medium => "SYSTEM 2",
-            SlotId::Low => "SYSTEM 1",
-            SlotId::Krea => "SYSTEM CGI",
-        }
-    }
-    pub fn kind(self) -> SlotKind {
-        if self == SlotId::Krea { SlotKind::Image } else { SlotKind::Llm }
+}
+
+impl fmt::Display for SystemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+impl From<&str> for SystemId {
+    fn from(s: &str) -> SystemId {
+        SystemId(s.to_string())
+    }
+}
+
+impl From<String> for SystemId {
+    fn from(s: String) -> SystemId {
+        SystemId(s)
+    }
+}
+
+impl std::borrow::Borrow<str> for SystemId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for SystemId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for SystemId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for SystemId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+/// What a System serves. TS: 'llm'|'image'|'tts'|'stt'|'video'.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SlotKind {
+pub enum SystemKind {
+    #[default]
     Llm,
     Image,
+    /// Text to speech.
+    Tts,
+    /// Speech to text (audio in).
+    Stt,
+    Video,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+impl SystemKind {
+    pub const ALL: [SystemKind; 5] = [SystemKind::Llm, SystemKind::Image, SystemKind::Tts, SystemKind::Stt, SystemKind::Video];
+
+    /// The serde / klif.toml value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SystemKind::Llm => "llm",
+            SystemKind::Image => "image",
+            SystemKind::Tts => "tts",
+            SystemKind::Stt => "stt",
+            SystemKind::Video => "video",
+        }
+    }
+
+    /// Display name: "LLM", "Image", "Speech (TTS)", "Transcription (STT)", "Video".
+    pub fn label(self) -> &'static str {
+        match self {
+            SystemKind::Llm => "LLM",
+            SystemKind::Image => "Image",
+            SystemKind::Tts => "Speech (TTS)",
+            SystemKind::Stt => "Transcription (STT)",
+            SystemKind::Video => "Video",
+        }
+    }
+
+    /// Parse the klif.toml / CLI value (case-insensitive).
+    pub fn parse(s: &str) -> Option<SystemKind> {
+        SystemKind::ALL.into_iter().find(|k| k.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+impl fmt::Display for SystemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// LLM System class (recommendation grouping, default labels). TS: 'fast'|'deep'|'max'.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmClass {
+    /// System 1: fast, cheap, always on.
+    Fast,
+    /// System 2: slower, deeper.
+    Deep,
+    /// System 3: every resource.
+    Max,
+}
+
+impl LlmClass {
+    pub const ALL: [LlmClass; 3] = [LlmClass::Fast, LlmClass::Deep, LlmClass::Max];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LlmClass::Fast => "fast",
+            LlmClass::Deep => "deep",
+            LlmClass::Max => "max",
+        }
+    }
+
+    /// The default System label of the class: "System 1" / "System 2" / "System 3".
+    pub fn default_label(self) -> &'static str {
+        match self {
+            LlmClass::Fast => "System 1",
+            LlmClass::Deep => "System 2",
+            LlmClass::Max => "System 3",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<LlmClass> {
+        LlmClass::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// A System's tab status. TS: 'not-set'|'invalid'|'offline'|'starting'|'online'|'busy'|'stopping'|'fault'|'unreachable'.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SystemStatus {
+    /// No preset selected.
+    NotSet,
+    /// Preset / kind errors, exe or model missing, port held by a foreign process (`reason` says which).
+    Invalid,
+    /// Ready, not running (external: not answering).
+    Offline,
+    /// Boot / loading.
+    Starting,
+    /// Live and idle.
+    Online,
+    /// Live and working (prefill / decode / steps / requests).
+    Busy,
+    Stopping,
+    Fault,
+    #[default]
+    /// Its remote node is down, unauthorized or incompatible.
+    Unreachable,
+}
+
+impl SystemStatus {
+    /// The kebab-case wire value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SystemStatus::NotSet => "not-set",
+            SystemStatus::Invalid => "invalid",
+            SystemStatus::Offline => "offline",
+            SystemStatus::Starting => "starting",
+            SystemStatus::Online => "online",
+            SystemStatus::Busy => "busy",
+            SystemStatus::Stopping => "stopping",
+            SystemStatus::Fault => "fault",
+            SystemStatus::Unreachable => "unreachable",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------- adapters
+
+/// The server family a preset launches; selects telemetry, defaults and managed env (SPEC section 6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AdapterId {
+    #[default]
+    #[serde(rename = "llama.cpp")]
+    LlamaCpp,
+    #[serde(rename = "sd.cpp")]
+    SdCpp,
+    #[serde(rename = "vllm")]
+    Vllm,
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// Any other server (TTS/STT/video servers, ComfyUI...): kind required, port or health required.
+    #[serde(rename = "generic")]
+    Generic,
+}
+
+impl AdapterId {
+    pub const ALL: [AdapterId; 5] = [AdapterId::LlamaCpp, AdapterId::SdCpp, AdapterId::Vllm, AdapterId::OpenAi, AdapterId::Generic];
+
+    /// The serde / klif.toml value, also the display label: "llama.cpp", "sd.cpp", "vllm", "openai", "generic".
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdapterId::LlamaCpp => "llama.cpp",
+            AdapterId::SdCpp => "sd.cpp",
+            AdapterId::Vllm => "vllm",
+            AdapterId::OpenAi => "openai",
+            AdapterId::Generic => "generic",
+        }
+    }
+
+    /// Parse the klif.toml / CLI value (case-insensitive; also "llamacpp", "sdcpp", "openai-compatible").
+    pub fn parse(s: &str) -> Option<AdapterId> {
+        Some(match s.trim().to_ascii_lowercase().as_str() {
+            "llama.cpp" | "llamacpp" | "llama-cpp" => AdapterId::LlamaCpp,
+            "sd.cpp" | "sdcpp" | "sd-cpp" => AdapterId::SdCpp,
+            "vllm" => AdapterId::Vllm,
+            "openai" | "openai-compatible" => AdapterId::OpenAi,
+            "generic" => AdapterId::Generic,
+            _ => return None,
+        })
+    }
+
+    /// Port used when neither the preset nor its args name one (generic: none; that is an error unless the
+    /// preset gives `health`).
+    pub fn default_port(self) -> Option<u16> {
+        match self {
+            AdapterId::LlamaCpp => Some(7030),
+            AdapterId::SdCpp => Some(1234),
+            AdapterId::Vllm => Some(8000),
+            AdapterId::OpenAi => Some(8080),
+            AdapterId::Generic => None,
+        }
+    }
+
+    /// Kind when the preset does not say: image for sd.cpp, llm for llama.cpp/vllm/openai, none for generic
+    /// (required there).
+    pub fn default_kind(self) -> Option<SystemKind> {
+        match self {
+            AdapterId::SdCpp => Some(SystemKind::Image),
+            AdapterId::LlamaCpp | AdapterId::Vllm | AdapterId::OpenAi => Some(SystemKind::Llm),
+            AdapterId::Generic => None,
+        }
+    }
+
+    /// The environment variable the server reads its API key from (KLIF injects the key there).
+    pub fn api_key_env(self) -> Option<&'static str> {
+        match self {
+            AdapterId::LlamaCpp => Some("LLAMA_API_KEY"),
+            AdapterId::Vllm => Some("VLLM_API_KEY"),
+            AdapterId::SdCpp | AdapterId::OpenAi | AdapterId::Generic => None,
+        }
+    }
+}
+
+impl fmt::Display for AdapterId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// How KLIF decides the server is ready. TS: `{type:'auto'} | {type:'http', path} | {type:'tcp'}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum HealthCheck {
+    /// The adapter's default chain (llama.cpp/vllm `/health`, sd.cpp TCP, openai `/health` → `/v1/models` → TCP).
+    #[default]
+    Auto,
+    /// GET `path`: 200 = ready, any other answer = loading.
+    Http { path: String },
+    /// A TCP listener on the port = ready.
+    Tcp,
+}
+
+impl HealthCheck {
+    /// From a preset's `health` value: absent/empty = Auto, "tcp" = Tcp, "/path" = Http. Anything else is an error
+    /// sentence (the catalog turns it into an error Issue on the `health` field).
+    pub fn from_preset(value: Option<&str>) -> Result<HealthCheck, String> {
+        match value.map(str::trim) {
+            None | Some("") => Ok(HealthCheck::Auto),
+            Some(v) if v.eq_ignore_ascii_case("tcp") => Ok(HealthCheck::Tcp),
+            Some(v) if v.eq_ignore_ascii_case("auto") => Ok(HealthCheck::Auto),
+            Some(v) if v.starts_with('/') => Ok(HealthCheck::Http { path: v.to_string() }),
+            Some(v) => Err(format!("health must be \"/path\" (HTTP) or \"tcp\", not \"{v}\"")),
+        }
+    }
+}
+
+/// Availability of a preset's (or a System's) launch. TS: 'ready'|'unsupported'|'invalid'|'exe-missing'|'model-missing'|'busy'.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Availability {
     Ready,
+    #[default]
+    /// No preset selected for the System (or it names a preset that does not exist).
     Unsupported,
-    ScriptMissing,
+    /// The preset has error issues (bad placeholder, port conflict, kind mismatch, unreadable entry...).
+    Invalid,
+    /// The program could not be found.
+    ExeMissing,
     ModelMissing,
-    BuildRequired,
+    /// The tier's port is held by a process KLIF does not own.
     Busy,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Backend {
-    #[default]
-    #[serde(rename = "HIP")]
-    Hip,
-    #[serde(rename = "Vulkan")]
-    Vulkan,
-    #[serde(rename = "CPU")]
-    Cpu,
-}
+// ------------------------------------------------------------------------------------------- model
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct ModelRef {
+    /// "Qwen 3.8 27B"
     pub name: String,
+    /// "IQ3_S" ("" unknown)
     pub quant: String,
+    /// Adapter label: "llama.cpp", "sd.cpp", "vllm", "openai".
     pub engine: String,
-    pub backend: Backend,
+    /// Display text: "HIP", "Vulkan", "CUDA", "Metal", "CPU" or free text; "" when unknown.
+    #[serde(default)]
+    pub backend: String,
+    /// "RX 9070 XT"
     pub device: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_tokens: Option<u32>,
@@ -96,6 +398,7 @@ pub struct ModelRef {
 /// The model's shape from the server log (llama.cpp `print_info`), mirrored in app/ui types.ts.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct ModelArch {
     pub layers: u32,
     pub experts: u32,
@@ -113,159 +416,405 @@ pub struct ModelArch {
     pub params: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// ----------------------------------------------------------------------------------- command view
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueLevel {
+    Error,
+    #[default]
+    Warn,
+}
+
+/// One validation finding. Errors block Launch (Availability::Invalid); warnings never do.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Slot {
-    pub id: SlotId,
+#[serde(default)]
+pub struct Issue {
+    pub level: IssueLevel,
+    /// The preset / config field it is about ("command", "args", "env.HIP_PATH", "port", "presets.my-id", "file").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// One plain sentence.
+    pub text: String,
+}
+
+impl Issue {
+    pub fn error(field: Option<&str>, text: impl Into<String>) -> Issue {
+        Issue { level: IssueLevel::Error, field: field.map(str::to_string), text: text.into() }
+    }
+    pub fn warn(field: Option<&str>, text: impl Into<String>) -> Issue {
+        Issue { level: IssueLevel::Warn, field: field.map(str::to_string), text: text.into() }
+    }
+    pub fn is_error(&self) -> bool {
+        self.level == IssueLevel::Error
+    }
+}
+
+/// One environment row of a command, as shown (never the value of a secret).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct EnvView {
+    pub name: String,
+    /// None for a secret (shown as ••••).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    pub secret: bool,
+    /// Set by KLIF (telemetry / API key), not by the preset.
+    pub managed: bool,
+    /// An inherited variable the preset removes (`env_remove`, or always-removed key vars).
+    pub removed: bool,
+    /// A managed variable the preset's own env overrides.
+    pub overridden: bool,
+}
+
+/// Exactly what a preset launches, resolved for a System, with secrets masked. `display` is the exact command
+/// line (`klif_common::cmdline::render` of `program` + `args`), `{env:X}` shown as `%X%`. For an external preset
+/// (`endpoint`) there is no command: `external` holds the endpoint URL and `program`/`args` are empty.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct CommandView {
+    /// Resolved program path (or the command as written when it cannot be resolved).
+    pub program: String,
+    /// Final argument tokens; values after secret flags are masked.
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub env: Vec<EnvView>,
+    pub port: u16,
+    pub host: String,
+    pub health: HealthCheck,
+    pub adapter: AdapterId,
+    pub display: String,
+    pub issues: Vec<Issue>,
+    /// `klif_catalog::Catalog::preset_hash` of what runs (program/args/env/cwd; not display metadata).
+    pub hash: String,
+    /// The endpoint URL of an external preset (KLIF never starts or stops it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<String>,
+}
+
+/// One param choice as offered by the UI.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ParamOption {
+    pub value: String,
     pub label: String,
-    pub kind: SlotKind,
+}
+
+/// A preset param (`[presets.X.params.NAME]`) with the System's current selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ParamView {
+    pub name: String,
+    pub label: String,
+    /// The selected choice's value (the System's `params.NAME`, else the param's default).
+    pub value: String,
+    pub choices: Vec<ParamOption>,
+}
+
+// ------------------------------------------------------------------------------- bench / presets
+
+/// The latest benchmark of a preset (from `<data_dir>\bench\<preset-id>.json`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct BenchSummary {
+    /// Epoch seconds of the run.
+    pub at: f64,
+    pub runs: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill_tps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decode_tps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds_per_image: Option<f64>,
+    #[serde(rename = "peakVramGiB", skip_serializing_if = "Option::is_none")]
+    pub peak_vram_gib: Option<f64>,
+    #[serde(rename = "spillMiB", skip_serializing_if = "Option::is_none")]
+    pub spill_mib: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_build: Option<String>,
+    pub klif_version: String,
+    /// Recorded for a different preset hash (the command changed since).
+    pub stale: bool,
+}
+
+/// A preset as listed (Tune picker, `klif-cli presets list`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct PresetInfo {
+    pub id: String,
+    pub name: String,
+    pub adapter: AdapterId,
+    pub kind: SystemKind,
     pub model: ModelRef,
     pub availability: Availability,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The recommendation it was made from.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_vram: Option<Vec<VramLayer>>,
+    pub recommended: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub recipe: Option<Recipe>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<RecipeOptions>,
+    pub bench: Option<BenchSummary>,
+    /// The GPU it runs on: "VEN:DEV" or "cpu" (preset `gpu`, else `[gpu] inference`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<String>,
+    /// An external server (`endpoint`): watched, never started or stopped.
+    #[serde(default)]
+    pub external: bool,
+    /// The node the preset lives on (None = this machine). `vm.presets` are local; remote ones are in
+    /// `vm.nodes[n].presets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    /// `Catalog::spec_hash` of the stored spec (= `PresetDetail.spec_hash`): a clean editor draft reloads when it
+    /// changes. Empty for an entry that does not parse, and from a node that does not report it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub spec_hash: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// One preset in full, for the Tune editor (`klif_preset_get`). `spec` env values that are secret are MASK.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Recipe {
-    pub card_id: String,
-    pub backend: Backend,
-    pub hardware: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ctx_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kv_type: Option<String>,
-    #[serde(rename = "promptCacheMiB", skip_serializing_if = "Option::is_none")]
-    pub prompt_cache_mib: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vision: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    /// Krea speed/quality level (image slot, fast Krea starter only). See types.ts Recipe.precision.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub precision: Option<Precision>,
-    /// Krea identity-edit mode (image slot, fast Krea starter only). See types.ts Recipe.edit.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub edit: Option<bool>,
+pub struct PresetDetail {
+    pub id: String,
+    pub spec: PresetCfg,
+    pub command: CommandView,
+    pub info: PresetInfo,
+    /// Hash of the stored spec as served here (every field, masked; `klif_catalog::Catalog::spec_hash`). Send it
+    /// back as `SavePreset.base_hash`: the write is refused when the preset changed on disk meanwhile (any field,
+    /// not only what runs). Empty from a node that does not report it.
+    #[serde(default)]
+    pub spec_hash: String,
 }
 
-/// types.ts `Precision`: the three Krea speed/quality levels.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// --------------------------------------------------------------------- recommendations / downloads
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Precision {
+pub enum RecFileRole {
+    Model,
+    Mmproj,
     #[default]
-    Low,
-    Medium,
-    High,
+    Other,
 }
 
-impl Precision {
-    pub const ALL: [Precision; 3] = [Precision::Low, Precision::Medium, Precision::High];
-    /// "Low" / "Medium" / "High": the display label and the fast starter's `-Precision` value.
-    pub fn label(self) -> &'static str {
-        match self {
-            Precision::Low => "Low",
-            Precision::Medium => "Medium",
-            Precision::High => "High",
-        }
-    }
-}
-
-/// `Partial<Recipe>` from the UI: every field optional.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RecipePatch {
-    pub card_id: Option<String>,
-    pub backend: Option<Backend>,
-    pub hardware: Option<String>,
-    pub ctx_tokens: Option<u32>,
-    pub image_size: Option<String>,
-    pub kv_type: Option<String>,
-    #[serde(rename = "promptCacheMiB")]
-    pub prompt_cache_mib: Option<u32>,
-    pub port: Option<u16>,
-    pub vision: Option<bool>,
-    pub mode: Option<String>,
-    pub precision: Option<Precision>,
-    pub edit: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecipeChoice<T> {
-    pub value: T,
-    pub label: String,
-    pub availability: Availability,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CardChoice {
-    pub value: String,
-    pub label: String,
-    pub availability: Availability,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+#[serde(default)]
+pub struct RecFile {
+    /// Path of the file in the Hugging Face repo.
     pub name: String,
-    pub quant: String,
-}
-
-/// types.ts `RecipeChoice<Precision> & { hint: string }`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrecisionChoice {
-    pub value: Precision,
-    pub label: String,
-    pub availability: Availability,
+    pub role: RecFileRole,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    /// One short line, e.g. "fastest · ~19 s edit 1024×768".
-    pub hint: String,
+    pub size_bytes: Option<u64>,
 }
 
+/// Measured on one machine (a starting point, not a promise).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RecipeOptions {
-    pub cards: Vec<CardChoice>,
-    pub backends: Vec<RecipeChoice<Backend>>,
-    pub hardware: Vec<RecipeChoice<String>>,
+#[serde(default)]
+pub struct Measured {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contexts: Option<Vec<RecipeChoice<u32>>>,
+    pub decode_tps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_sizes: Option<Vec<RecipeChoice<String>>>,
+    pub prefill_tps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub kv_types: Option<Vec<String>>,
-    #[serde(rename = "promptCacheMiB", skip_serializing_if = "Option::is_none")]
-    pub prompt_cache_mib: Option<Vec<u32>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ports: Option<Vec<u16>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vision: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub modes: Option<Vec<String>>,
-    /// Krea precision levels (fast Krea starter only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub precisions: Option<Vec<PrecisionChoice>>,
-    /// True when the current card takes the Edit toggle (fast Krea starter only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub edit_toggle: Option<bool>,
+    pub seconds_per_image: Option<f64>,
+    /// "RX 9070 XT 16 GB, Ryzen 9 9950X3D"
+    pub hardware: String,
+    /// "llama.cpp b6500 HIP"
+    pub backend: String,
+    /// "2026-10-01"
+    pub date: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A model recommendation for a kind (and LLM class) of System (data, with a disclaimer; downloads only on
+/// explicit request).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct RecommendationInfo {
+    pub id: String,
+    pub kind: SystemKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<LlmClass>,
+    pub name: String,
+    pub adapter: AdapterId,
+    pub hf_repo: String,
+    /// Commit sha.
+    pub revision: String,
+    pub files: Vec<RecFile>,
+    pub quant: String,
+    pub license: String,
+    pub hardware_class: String,
+    #[serde(rename = "minVramGiB", skip_serializing_if = "Option::is_none")]
+    pub min_vram_gib: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured: Option<Measured>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Files present in the models dir (or already referenced by a preset).
+    pub installed: bool,
+    /// Preset id already using these files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadState {
+    Running,
+    Verifying,
+    Done,
+    #[default]
+    Failed,
+    Cancelled,
+}
+
+/// One file of a recommendation being downloaded (one entry per (id, file)).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct DownloadInfo {
+    /// Recommendation id.
+    pub id: String,
+    /// File path in the repo.
+    pub file: String,
+    pub done_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    pub state: DownloadState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------------------- config
+
+/// Where the API key comes from and whether one is set (never the key).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ApiKeyInfo {
+    /// "file" | "env:NAME" | "none"
+    pub source: String,
+    pub set: bool,
+}
+
+/// Facts about the configuration the engine runs with.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ConfigInfo {
+    /// The klif.toml in use (None: defaults, no file yet).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub state_dir: String,
+    pub data_dir: String,
+    pub issues: Vec<Issue>,
+    pub api_key: ApiKeyInfo,
+    /// `[paths] models_dir` (None: downloads are refused until it is set).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models_dir: Option<String>,
+    /// `[launch] on_conflict`: what Launch does when other Systems must stop first.
+    #[serde(default)]
+    pub on_conflict: OnConflict,
+}
+
+// ----------------------------------------------------------------------------------------- systems view
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VramSource {
+    /// The composition of the last live session of this exact preset hash.
+    Measured,
+    #[default]
+    /// Weights only, from the model (+ mmproj) file sizes.
+    FileSize,
+}
+
+/// One System (a tab): its configuration, what it would run, and its live state.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct System {
+    pub id: SystemId,
+    pub label: String,
+    pub kind: SystemKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<LlmClass>,
+    /// The remote node it lives on (None = this machine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    pub status: SystemStatus,
+    /// One plain sentence for not-set / invalid / fault / unreachable (and conflicts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The launch availability of the active preset.
+    pub availability: Availability,
+    pub model: ModelRef,
+    /// The active preset id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// The active preset's params with the System's selection (empty when it has none).
+    #[serde(default)]
+    pub params: Vec<ParamView>,
+    /// What Launch would run now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bench: Option<BenchSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_vram: Option<Vec<VramLayer>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_vram_source: Option<VramSource>,
+    /// The first GPU it runs on ("VEN:DEV", "VEN:DEV#n" or "cpu"): the fit display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<String>,
+    /// Every GPU it runs on (preset `gpu` may list several); conflicts / reservations apply to all of them.
+    #[serde(default)]
+    pub gpus: Vec<String>,
+    /// Its preset is an external server (watched only).
+    #[serde(default)]
+    pub external: bool,
+    /// Needs the whole GPU (`exclusive = true`).
+    #[serde(default)]
+    pub exclusive: bool,
+    /// False for remote Systems whose node does not grant "edit" (and for ghost sessions).
+    #[serde(default)]
+    pub editable: bool,
+    /// May be launched / stopped from here: local Systems true; remote ones when the node grants "launch".
+    #[serde(default)]
+    pub controllable: bool,
+    /// Running Systems that must stop before this one can launch (port, exclusive GPU, VRAM).
+    #[serde(default)]
+    pub conflicts: Vec<SystemId>,
+    /// The base URL clients use (LLM: ".../v1").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Session>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_session: Option<LastSession>,
+    /// 0..1: how hard it works right now (decode / prefill / steps / requests), for the tab pulse.
+    #[serde(default)]
+    pub activity: f64,
+}
+
+// ----------------------------------------------------------------------------------------- session
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {
+    #[default]
     Starting,
     Loading,
     Live,
@@ -273,9 +822,10 @@ pub enum Phase {
     Fault,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LoadStepId {
+    #[default]
     Process,
     Device,
     Weights,
@@ -284,17 +834,19 @@ pub enum LoadStepId {
     Ready,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepState {
     Done,
     Active,
+    #[default]
     Pending,
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct LoadStep {
     pub id: LoadStepId,
     pub label: String,
@@ -303,16 +855,18 @@ pub struct LoadStep {
     pub detail: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct LoadProgress {
     pub steps: Vec<LoadStep>,
     pub fraction: f64,
     pub elapsed_s: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Fault {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,17 +879,19 @@ pub struct Fault {
     pub steps: Option<Vec<LoadStep>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ended {
+    #[default]
     Stopped,
     Fault,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct LastSession {
-    pub slot: SlotId,
+    pub system: SystemId,
     pub model: ModelRef,
     pub uptime_s: f64,
     pub ended_ago_s: f64,
@@ -352,8 +908,9 @@ pub struct LastSession {
     pub seconds_per_image: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct RequestRecord {
     pub id: u64,
     pub at: f64,
@@ -364,16 +921,18 @@ pub struct RequestRecord {
     pub decode_s: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmActivity {
+    #[default]
     Idle,
     Prefill,
     Decode,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Prefill {
     pub tokens: u64,
     pub done_tokens: u64,
@@ -384,15 +943,17 @@ pub struct Prefill {
     pub eta_s: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct ContextFill {
     pub used_tokens: u64,
     pub total_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Spec {
     pub acceptance_pct: f64,
     pub mode: String,
@@ -402,14 +963,16 @@ pub struct Spec {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Totals {
     pub requests: u64,
     pub prompt_tokens: u64,
     pub generated_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct LlmLive {
     pub activity: LlmActivity,
     pub decode_tps: f64,
@@ -422,8 +985,9 @@ pub struct LlmLive {
     pub totals: Totals,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct ImageJob {
     pub at: f64,
     pub seconds: f64,
@@ -432,15 +996,17 @@ pub struct ImageJob {
     pub edit: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageActivity {
+    #[default]
     Idle,
     Generating,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct ImageLive {
     pub activity: ImageActivity,
     pub step: u32,
@@ -454,17 +1020,19 @@ pub struct ImageLive {
     pub images_this_session: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Endpoint {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Session {
-    pub slot: SlotId,
+    pub system: SystemId,
     pub model: ModelRef,
     pub phase: Phase,
     pub uptime_s: f64,
@@ -472,11 +1040,44 @@ pub struct Session {
     pub api_key_set: bool,
     pub loading: Option<LoadProgress>,
     pub fault: Option<Fault>,
+    /// The live part is ONE of `llm` / `image` / `generic` (the others are null): llm for kind llm (llama.cpp,
+    /// vllm), image for kind image (sd.cpp), generic for tts / stt / video and adapters without a parser.
     pub llm: Option<LlmLive>,
     pub image: Option<ImageLive>,
+    #[serde(default)]
+    pub generic: Option<GenericLive>,
+    /// The preset the session was launched from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// What actually ran (compare `hash` with the System's `command.hash`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandView>,
+    /// The GPU it runs on: "VEN:DEV" or "cpu".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<String>,
+    /// VRAM committed by the session's processes (PDH Total Committed over its pids).
+    #[serde(rename = "vramGiB", default, skip_serializing_if = "Option::is_none")]
+    pub vram_gib: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// What KLIF can tell about a server without a dedicated parser (tts / stt / video, generic, openai).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct GenericLive {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_in_flight: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_total: Option<u64>,
+    /// Seconds since the last log line / request activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_s: Option<f64>,
+    /// The model id the server reports (/v1/models).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VramLayerId {
     Weights,
@@ -484,20 +1085,30 @@ pub enum VramLayerId {
     Buffers,
     Draft,
     Projector,
+    #[default]
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct VramLayer {
     pub id: VramLayerId,
     pub label: String,
     pub gib: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct GpuMemory {
+    /// "VEN:DEV" (e.g. "1002:7550"), "VEN:DEV#n" (n-th identical adapter in DXGI order) or "cpu".
+    #[serde(default)]
+    pub id: String,
+    /// Display name, e.g. "RX 9070 XT" (`[gpu] inference_name` for the inference card).
+    #[serde(default)]
+    pub name: String,
+    /// Same as `name` (kept so 0.2 skins keep working).
     pub device: String,
     #[serde(rename = "totalGiB")]
     pub total_gib: f64,
@@ -513,16 +1124,17 @@ pub struct GpuMemory {
     pub baseline_gib: f64,
     #[serde(rename = "warnBelowGiB")]
     pub warn_below_gib: f64,
-    /// The inference GPU powered down (or paged the session out) while a model is loaded. While set,
-    /// `layers` are the session's ALLOCATIONS (they may sum to more than `used_gib`, which stays the
+    /// The GPU powered down (or paged the sessions out) while a model is loaded. While set,
+    /// `layers` are the sessions' ALLOCATIONS (they may sum to more than `used_gib`, which stays the
     /// resident amount). See types.ts GpuMemory.dormant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dormant: Option<Dormant>,
 }
 
 /// types.ts GpuMemory.dormant. Explicit renames for the "GiB" fields (camelCase would give "Gib").
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct Dormant {
     #[serde(rename = "pagedOutGiB")]
     pub paged_out_gib: f64,
@@ -531,9 +1143,10 @@ pub struct Dormant {
     pub power_state: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SystemStats {
+#[serde(default)]
+pub struct MachineStats {
     #[serde(rename = "ramUsedGiB")]
     pub ram_used_gib: f64,
     #[serde(rename = "ramTotalGiB")]
@@ -544,15 +1157,17 @@ pub struct SystemStats {
     pub cpu_pct: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostKind {
+    #[default]
     Browser,
     Tauri,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct HostInfo {
     pub kind: HostKind,
     pub frameless: bool,
@@ -565,6 +1180,7 @@ pub struct HostInfo {
 /// Panel mode: the read-only mini layout on the small status screen (see types.ts HostInfo.panel).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct PanelInfo {
     pub available: bool,
     pub active: bool,
@@ -572,29 +1188,490 @@ pub struct PanelInfo {
     pub target: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ViewModel {
-    pub now: f64,
-    pub slots: Vec<Slot>,
-    pub selected: SlotId,
-    pub session: Option<Session>,
-    pub vram: GpuMemory,
-    pub system: SystemStats,
-    pub last_session: Option<LastSession>,
-    pub host: HostInfo,
-    pub console: Vec<String>,
+
+// ------------------------------------------------------------------------------------------- nodes
+
+/// A remote node's connection state. TS: 'connecting'|'online'|'offline'|'unauthorized'|'incompatible'.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeState {
+    /// First contact not finished yet.
+    Connecting,
+    Online,
+    #[default]
+    Offline,
+    Unauthorized,
+    Incompatible,
 }
 
-/// Actions the engine executes. Shell-only actions (open/copy endpoint, copy key, console, tune,
-/// window chrome) are handled by the host and never reach the engine.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+/// One `[nodes.<id>]` entry as seen from here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct NodeView {
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    pub state: NodeState,
+    /// The node's KLIF version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<f64>,
+    /// Rights the node grants us besides view: "launch", "edit".
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub gpus: Vec<GpuMemory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<MachineStats>,
+    /// The node's presets (masked), `node` set to this node's id.
+    #[serde(default)]
+    pub presets: Vec<PresetInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// -------------------------------------------------------------------------------------- view model
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ViewModel {
+    pub now: f64,
+    /// Local Systems in file order, then ghost sessions, then remote Systems by node.
+    pub systems: Vec<System>,
+    /// The selected tab (None: no Systems).
+    pub selected: Option<SystemId>,
+    // Conveniences so skins keep working, all derived from the SELECTED System:
+    /// The selected System's session.
+    pub session: Option<Session>,
+    /// The selected System's last session.
+    pub last_session: Option<LastSession>,
+    /// The selected System's console: last lines, ANSI-stripped, newest last, up to 200.
+    pub console: Vec<String>,
+    /// The selected System's GPU, else `[gpu] inference`: `[other, ...the selected session's layers]`.
+    pub vram: GpuMemory,
+    /// Every local GPU KLIF measures (each System's GPUs + `[gpu] inference`), `layers = [other]`.
+    #[serde(default)]
+    pub gpus: Vec<GpuMemory>,
+    pub machine: MachineStats,
+    pub host: HostInfo,
+    /// Every LOCAL preset (including unreadable ones, as Invalid). Remote presets: `nodes[n].presets`.
+    #[serde(default)]
+    pub presets: Vec<PresetInfo>,
+    #[serde(default)]
+    pub recommendations: Vec<RecommendationInfo>,
+    #[serde(default)]
+    pub downloads: Vec<DownloadInfo>,
+    #[serde(default)]
+    pub config: ConfigInfo,
+    #[serde(default)]
+    pub nodes: Vec<NodeView>,
+}
+
+// ----------------------------------------------------------------------------------------- actions
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// The right an action (or protocol method) needs (SPEC 16.11, default-deny). TS: 'view'|'launch'|'edit'|'local-only'.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Right {
+    /// hello, snapshot, status, preset, plan: every authenticated peer.
+    View,
+    /// Launch, Stop, StopAll, Restart, Dismiss, UsePreset, SetParam.
+    Launch,
+    /// SavePreset, DeletePreset, AddSystem, RemoveSystem, UpdateSystem, downloads, AdoptRecommendation,
+    /// command_preview: arbitrary command execution on that machine. Implies Launch.
+    Edit,
+    /// Never over the network: Select, diag.
+    LocalOnly,
+}
+
+impl Right {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Right::View => "view",
+            Right::Launch => "launch",
+            Right::Edit => "edit",
+            Right::LocalOnly => "local-only",
+        }
+    }
+
+    /// Whether a network peer holding `allow` (`[node] allow`) may use this right (edit implies launch).
+    pub fn granted(self, allow: &[NodeRight]) -> bool {
+        match self {
+            Right::View => true,
+            Right::Launch => allow.contains(&NodeRight::Launch) || allow.contains(&NodeRight::Edit),
+            Right::Edit => allow.contains(&NodeRight::Edit),
+            Right::LocalOnly => false,
+        }
+    }
+
+    /// The right a protocol method needs (`act` is decided by its Action: [`Action::required_right`]); unknown
+    /// methods are LocalOnly (default-deny).
+    pub fn for_method(method: &str) -> Right {
+        match method {
+            "hello" | "snapshot" | "status" | "preset" | "plan" => Right::View,
+            "command_preview" => Right::Edit,
+            _ => Right::LocalOnly,
+        }
+    }
+}
+
+/// Actions the engine executes. Shell-only actions (open/copy endpoint, copy key, console, tune, window chrome,
+/// API key, open klif.toml / logs) are handled by the host and never reach the engine. `system` absent = the
+/// selected System.
+///
+/// Routing (SPEC 16.1): an action goes to `node` when present, else to the node of its `"<node>/<id>"` System ids,
+/// else stays local; both present and different -> refused ([`Action::route`]). The forwarder strips `"<node>/"`
+/// from every System id ([`Action::map_system_ids`]) and clears `node`.
+///
+/// Wire shape (TS `EngineAction`): `{type:'select',system}` `{type:'launch',system?,stopOthers?}`
+/// `{type:'stop',system?}` `{type:'stopAll'}` `{type:'restart',system?}` `{type:'dismiss',system?}`
+/// `{type:'usePreset',system,preset}` `{type:'setParam',system,name,value}`
+/// `{type:'savePreset',id,preset,selectFor?,secretsFrom?,baseHash?,node?}` `{type:'deletePreset',id,node?}`
+/// `{type:'addSystem',id?,label?,kind,class?,preset?,node?}` `{type:'removeSystem',system}`
+/// `{type:'updateSystem',system,label?,moveTo?,exclusive?}` `{type:'downloadRecommendation',id,node?}`
+/// `{type:'cancelDownload',id,node?}` `{type:'adoptRecommendation',id,system?}`.
+///
+/// `Debug` masks the SavePreset env (through `PresetCfg`'s Debug); hosts log only [`Action::summary`].
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Action {
-    Select { slot: SlotId },
-    Launch { slot: Option<SlotId> },
-    Stop,
-    Restart,
-    Dismiss,
-    SetRecipe { slot: SlotId, patch: RecipePatch },
+    /// Select a tab (never stops anything). Local only.
+    Select {
+        system: SystemId,
+    },
+    /// Launch a System. With conflicts: `stop_others` (or `[launch] on_conflict = "stop"`, never for a busy
+    /// holder) stops them first, else the launch is refused with a sentence naming them.
+    Launch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<SystemId>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        stop_others: bool,
+    },
+    Stop {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<SystemId>,
+    },
+    /// Stop every local running System.
+    StopAll,
+    Restart {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<SystemId>,
+    },
+    /// Leave a fault and return the System to offline.
+    Dismiss {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<SystemId>,
+    },
+    /// Make `preset` the System's active preset (writes `[systems.X] preset`). Refused on a kind mismatch.
+    UsePreset {
+        system: SystemId,
+        preset: String,
+    },
+    /// Select a param choice for the System (writes `[systems.X] params.NAME`). Applies on the next launch.
+    SetParam {
+        system: SystemId,
+        name: String,
+        value: String,
+    },
+    /// Create or replace `[presets.<id>]`. MASK values are resolved against the stored preset `secrets_from`
+    /// (default: `id`); `base_hash` (= `PresetDetail.spec_hash` of the preset as loaded) refuses the write if the
+    /// stored spec changed meanwhile.
+    SavePreset {
+        id: String,
+        preset: PresetCfg,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        select_for: Option<SystemId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secrets_from: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_hash: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    /// Refused while the preset is active on a System or running.
+    DeletePreset {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    /// Add `[systems.<id>]` (id absent = the next free default id, label absent = the default label).
+    AddSystem {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        kind: SystemKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        class: Option<LlmClass>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    /// Refused while it runs.
+    RemoveSystem {
+        system: SystemId,
+    },
+    /// Rename, move to a tab index (0-based among the local Systems), set exclusive.
+    UpdateSystem {
+        system: SystemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        move_to: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exclusive: Option<bool>,
+    },
+    DownloadRecommendation {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    CancelDownload {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    /// Turn a recommendation into a preset (and make it the System's active preset when `system` is given).
+    AdoptRecommendation {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<SystemId>,
+    },
+}
+
+impl Action {
+    /// The wire `type`: "select", "launch", ..., "adoptRecommendation".
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Action::Select { .. } => "select",
+            Action::Launch { .. } => "launch",
+            Action::Stop { .. } => "stop",
+            Action::StopAll => "stopAll",
+            Action::Restart { .. } => "restart",
+            Action::Dismiss { .. } => "dismiss",
+            Action::UsePreset { .. } => "usePreset",
+            Action::SetParam { .. } => "setParam",
+            Action::SavePreset { .. } => "savePreset",
+            Action::DeletePreset { .. } => "deletePreset",
+            Action::AddSystem { .. } => "addSystem",
+            Action::RemoveSystem { .. } => "removeSystem",
+            Action::UpdateSystem { .. } => "updateSystem",
+            Action::DownloadRecommendation { .. } => "downloadRecommendation",
+            Action::CancelDownload { .. } => "cancelDownload",
+            Action::AdoptRecommendation { .. } => "adoptRecommendation",
+        }
+    }
+
+    /// The System the action targets, as written (None = the selected System, or no System involved).
+    pub fn system(&self) -> Option<&SystemId> {
+        match self {
+            Action::Select { system }
+            | Action::UsePreset { system, .. }
+            | Action::SetParam { system, .. }
+            | Action::RemoveSystem { system }
+            | Action::UpdateSystem { system, .. } => Some(system),
+            Action::Launch { system, .. }
+            | Action::Stop { system }
+            | Action::Restart { system }
+            | Action::Dismiss { system }
+            | Action::AdoptRecommendation { system, .. } => system.as_ref(),
+            Action::SavePreset { select_for, .. } => select_for.as_ref(),
+            Action::StopAll
+            | Action::DeletePreset { .. }
+            | Action::AddSystem { .. }
+            | Action::DownloadRecommendation { .. }
+            | Action::CancelDownload { .. } => None,
+        }
+    }
+
+    /// Every System id field the action carries (0 or 1 today).
+    pub fn system_ids(&self) -> Vec<&SystemId> {
+        self.system().into_iter().collect()
+    }
+
+    /// The action with `f` applied to every System id field (the forwarder strips `"<node>/"` with it).
+    pub fn map_system_ids(self, mut f: impl FnMut(SystemId) -> SystemId) -> Action {
+        let mut a = self;
+        match &mut a {
+            Action::Select { system }
+            | Action::UsePreset { system, .. }
+            | Action::SetParam { system, .. }
+            | Action::RemoveSystem { system }
+            | Action::UpdateSystem { system, .. } => *system = f(std::mem::take(system)),
+            Action::Launch { system, .. }
+            | Action::Stop { system }
+            | Action::Restart { system }
+            | Action::Dismiss { system }
+            | Action::AdoptRecommendation { system, .. }
+            | Action::SavePreset { select_for: system, .. } => *system = system.take().map(&mut f),
+            Action::StopAll
+            | Action::DeletePreset { .. }
+            | Action::AddSystem { .. }
+            | Action::DownloadRecommendation { .. }
+            | Action::CancelDownload { .. } => {}
+        }
+        a
+    }
+
+    /// The explicit `node` field (SavePreset, DeletePreset, AddSystem, DownloadRecommendation, CancelDownload),
+    /// else the node of the first `"<node>/<id>"` System id; None = local.
+    pub fn node(&self) -> Option<&str> {
+        self.explicit_node().or_else(|| self.system_ids().into_iter().find_map(|id| id.node()))
+    }
+
+    fn explicit_node(&self) -> Option<&str> {
+        match self {
+            Action::SavePreset { node, .. }
+            | Action::DeletePreset { node, .. }
+            | Action::AddSystem { node, .. }
+            | Action::DownloadRecommendation { node, .. }
+            | Action::CancelDownload { node, .. } => node.as_deref().map(str::trim).filter(|n| !n.is_empty()),
+            _ => None,
+        }
+    }
+
+    /// Where the action goes: Ok(None) = local, Ok(Some(node)). Err (a sentence) when the explicit `node` and a
+    /// System id's node differ, or the System ids name different nodes / mix local and remote.
+    pub fn route(&self) -> Result<Option<&str>, String> {
+        let ids = self.system_ids();
+        let mut nodes = ids.iter().map(|id| id.node());
+        let first = nodes.next().flatten();
+        if ids.iter().any(|id| id.node() != first) {
+            return Err("The action names Systems on different machines.".into());
+        }
+        match (self.explicit_node(), first) {
+            (Some(a), Some(b)) if a != b => Err(format!("The action names node \"{a}\" but its System is on \"{b}\".")),
+            (Some(n), _) | (None, Some(n)) => Ok(Some(n)),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// The same action for the node it is forwarded to: System ids without `"<node>/"`, `node` cleared.
+    pub fn for_forwarding(self) -> Action {
+        let mut a = self.map_system_ids(|id| SystemId::new(id.local()));
+        match &mut a {
+            Action::SavePreset { node, .. }
+            | Action::DeletePreset { node, .. }
+            | Action::AddSystem { node, .. }
+            | Action::DownloadRecommendation { node, .. }
+            | Action::CancelDownload { node, .. } => *node = None,
+            _ => {}
+        }
+        a
+    }
+
+    /// The right a network peer needs for this action (SPEC 16.11).
+    pub fn required_right(&self) -> Right {
+        match self {
+            Action::Select { .. } => Right::LocalOnly,
+            Action::Launch { .. }
+            | Action::Stop { .. }
+            | Action::StopAll
+            | Action::Restart { .. }
+            | Action::Dismiss { .. }
+            | Action::UsePreset { .. }
+            | Action::SetParam { .. } => Right::Launch,
+            Action::SavePreset { .. }
+            | Action::DeletePreset { .. }
+            | Action::AddSystem { .. }
+            | Action::RemoveSystem { .. }
+            | Action::UpdateSystem { .. }
+            | Action::DownloadRecommendation { .. }
+            | Action::CancelDownload { .. }
+            | Action::AdoptRecommendation { .. } => Right::Edit,
+        }
+    }
+
+    /// What a host may log: the type plus System / id / node, never a preset body. E.g. "savePreset id=gemma-26b".
+    pub fn summary(&self) -> String {
+        let mut out = self.kind().to_string();
+        match self {
+            Action::SavePreset { id, .. }
+            | Action::DeletePreset { id, .. }
+            | Action::DownloadRecommendation { id, .. }
+            | Action::CancelDownload { id, .. }
+            | Action::AdoptRecommendation { id, .. } => out.push_str(&format!(" id={id}")),
+            Action::AddSystem { id, kind, .. } => {
+                out.push_str(&format!(" kind={kind}"));
+                if let Some(id) = id {
+                    out.push_str(&format!(" id={id}"));
+                }
+            }
+            _ => {}
+        }
+        if let Some(s) = self.system() {
+            out.push_str(&format!(" system={s}"));
+        }
+        if let Some(n) = self.explicit_node() {
+            out.push_str(&format!(" node={n}"));
+        }
+        if let Action::Launch { stop_others: true, .. } = self {
+            out.push_str(" stopOthers");
+        }
+        out
+    }
+}
+
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Select { system } => f.debug_struct("Select").field("system", system).finish(),
+            Action::Launch { system, stop_others } => {
+                f.debug_struct("Launch").field("system", system).field("stop_others", stop_others).finish()
+            }
+            Action::Stop { system } => f.debug_struct("Stop").field("system", system).finish(),
+            Action::StopAll => f.write_str("StopAll"),
+            Action::Restart { system } => f.debug_struct("Restart").field("system", system).finish(),
+            Action::Dismiss { system } => f.debug_struct("Dismiss").field("system", system).finish(),
+            Action::UsePreset { system, preset } => {
+                f.debug_struct("UsePreset").field("system", system).field("preset", preset).finish()
+            }
+            Action::SetParam { system, name, value } => {
+                f.debug_struct("SetParam").field("system", system).field("name", name).field("value", value).finish()
+            }
+            // PresetCfg's Debug masks every env value and every secret arg value.
+            Action::SavePreset { id, preset, select_for, secrets_from, base_hash, node } => f
+                .debug_struct("SavePreset")
+                .field("id", id)
+                .field("preset", preset)
+                .field("select_for", select_for)
+                .field("secrets_from", secrets_from)
+                .field("base_hash", base_hash)
+                .field("node", node)
+                .finish(),
+            Action::DeletePreset { id, node } => f.debug_struct("DeletePreset").field("id", id).field("node", node).finish(),
+            Action::AddSystem { id, label, kind, class, preset, node } => f
+                .debug_struct("AddSystem")
+                .field("id", id)
+                .field("label", label)
+                .field("kind", kind)
+                .field("class", class)
+                .field("preset", preset)
+                .field("node", node)
+                .finish(),
+            Action::RemoveSystem { system } => f.debug_struct("RemoveSystem").field("system", system).finish(),
+            Action::UpdateSystem { system, label, move_to, exclusive } => f
+                .debug_struct("UpdateSystem")
+                .field("system", system)
+                .field("label", label)
+                .field("move_to", move_to)
+                .field("exclusive", exclusive)
+                .finish(),
+            Action::DownloadRecommendation { id, node } => {
+                f.debug_struct("DownloadRecommendation").field("id", id).field("node", node).finish()
+            }
+            Action::CancelDownload { id, node } => f.debug_struct("CancelDownload").field("id", id).field("node", node).finish(),
+            Action::AdoptRecommendation { id, system } => {
+                f.debug_struct("AdoptRecommendation").field("id", id).field("system", system).finish()
+            }
+        }
+    }
 }

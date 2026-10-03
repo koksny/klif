@@ -1,20 +1,19 @@
 //! IPC commands of the native transport (app/ui/src/lib/transport/tauri.ts). Errors are user-facing
-//! sentences (the UI shows them as toasts). The API key is copied natively and never sent to the page.
+//! sentences (the UI shows them as toasts). The API key is copied natively and never sent to the page; a key
+//! the user types arrives once, goes straight to the core and is never echoed or logged.
 
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use klif_common::vm::{Action, SlotKind, ViewModel};
+use klif_common::config::PresetCfg;
+use klif_common::vm::{Action, CommandView, PresetDetail, SystemId, SystemKind, SystemStatus, ViewModel};
+use klif_common::Secret;
 use tauri::{AppHandle, Runtime, State};
-use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-use crate::clipboard;
 use crate::engine::EngineHandle;
-use crate::panel;
-use crate::shell::{main_window, Shell};
+use crate::shell::{EngineStatus, Shell};
+use crate::{clipboard, endpoint, opener, panel};
 
 type ShellState<'a> = State<'a, Arc<Shell>>;
 
@@ -40,12 +39,20 @@ fn engine(shell: &ShellState<'_>) -> Result<EngineHandle, String> {
     shell.engine()
 }
 
-/// The first view model (waits for the core to finish starting).
+/// The first view model (waits for the core to finish starting; while another process holds the engine it
+/// keeps waiting, because the shell keeps retrying).
 #[tauri::command]
 pub async fn klif_snapshot(shell: ShellState<'_>) -> Result<ViewModel, String> {
     let s = shell.inner().clone();
     let e = blocking(move || s.wait_engine(Duration::from_secs(120))).await?;
     Ok(e.snapshot())
+}
+
+/// Where the core start stands: "starting", "waiting" (another process holds the engine; the message says
+/// which, and the shell retries every 2 s), "ready" or "failed". For the UI's Connecting screen.
+#[tauri::command]
+pub fn klif_engine_status(shell: ShellState<'_>) -> EngineStatus {
+    shell.engine_status()
 }
 
 /// One entry of the UI's skin registry, for the tray's Skin submenu.
@@ -62,66 +69,159 @@ pub async fn klif_skins(app: AppHandle<tauri::Wry>, skins: Vec<SkinEntry>) -> Re
     on_main(&app, move |app| crate::tray::set_skins(app, &list).map_err(|e| format!("The tray menu could not be updated: {e}"))).await
 }
 
+/// Run an action. Only its summary is logged (type, System, id), never a preset body.
 #[tauri::command]
 pub async fn klif_act(shell: ShellState<'_>, action: Action) -> Result<(), String> {
     let e = engine(&shell)?;
-    log::info!("act {action:?}");
-    let r = blocking(move || e.act(action).map_err(|err| err.to_string())).await;
+    log::info!("act {}", action.summary());
+    let r = blocking(move || e.act(action).map_err(|err| format!("{err:#}"))).await;
     if let Err(msg) = &r {
         log::info!("act refused: {msg}");
     }
     r
 }
 
-fn endpoint(shell: &ShellState<'_>) -> Result<(EngineHandle, String), String> {
-    let e = engine(shell)?;
-    let url = e.endpoint_url().ok_or_else(|| "No session is running.".to_string())?;
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(format!("Not a web address: {url}"));
-    }
-    Ok((e, url))
-}
-
-/// Open the session endpoint in the default browser.
+/// One preset in full for the editor (secrets masked); `node` = a preset of a remote node. `null` = no such preset;
+/// a node that cannot answer rejects with its sentence (Tune shows it instead of "not in klif.toml").
 #[tauri::command]
-pub async fn klif_open_endpoint<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>) -> Result<(), String> {
-    let (_, url) = endpoint(&shell)?;
-    log::info!("open endpoint {url}");
-    on_main(&app, move |_| {
-        let r = unsafe { ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(url.as_str()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
-        // ShellExecute returns a value > 32 on success.
-        if (r.0 as isize) > 32 { Ok(()) } else { Err(format!("Could not open {url} (error {}).", r.0 as isize)) }
-    })
-    .await
-}
-
-/// Copy the endpoint. LLM sessions copy the OpenAI-compatible base URL (".../v1").
-#[tauri::command]
-pub async fn klif_copy_endpoint<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>) -> Result<(), String> {
-    let (e, url) = endpoint(&shell)?;
-    let llm = e.snapshot().session.map(|s| s.slot.kind() == SlotKind::Llm).unwrap_or(false);
-    let text = if llm && !url.trim_end_matches('/').ends_with("/v1") { format!("{}/v1", url.trim_end_matches('/')) } else { url };
-    log::info!("copy endpoint {text}");
-    on_main(&app, move |h| {
-        let w = main_window(h).ok_or("The window is gone.")?;
-        let hwnd = w.hwnd().map_err(|e| e.to_string())?;
-        clipboard::copy_text(hwnd, &text, false)
-    })
-    .await
-}
-
-/// Copy the API key natively (excluded from clipboard history). The key never reaches the page.
-#[tauri::command]
-pub async fn klif_copy_api_key<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>) -> Result<(), String> {
+pub async fn klif_preset_get(shell: ShellState<'_>, id: String, node: Option<String>) -> Result<Option<PresetDetail>, String> {
     let e = engine(&shell)?;
-    let key = e.api_key().ok_or_else(|| "No API key is set.".to_string())?;
-    log::info!("copy API key ({} chars)", key.expose().chars().count());
-    on_main(&app, move |h| {
-        let w = main_window(h).ok_or("The window is gone.")?;
-        let hwnd = w.hwnd().map_err(|e| e.to_string())?;
-        clipboard::copy_text(hwnd, key.expose(), true)
+    blocking(move || e.try_preset(&id, node.as_deref()).map_err(|err| format!("{err:#}"))).await
+}
+
+/// The command an unsaved preset would run for `system` (the Tune drawer's live preview), with its issues.
+/// The spec can carry secret env values: it is neither logged nor printed.
+#[tauri::command]
+pub async fn klif_command_preview(shell: ShellState<'_>, spec: PresetCfg, system: Option<SystemId>) -> Result<CommandView, String> {
+    let e = engine(&shell)?;
+    blocking(move || Ok(e.command_preview(&spec, system.as_ref()))).await
+}
+
+/// Set (a string) or clear (`null`) the API key. The key goes to the core as received and is wiped from this
+/// side; it is never echoed back and never logged (not even its length).
+#[tauri::command]
+pub async fn klif_set_api_key(shell: ShellState<'_>, key: Option<String>) -> Result<(), String> {
+    let e = engine(&shell)?;
+    let secret = match key {
+        None => None,
+        Some(mut k) => {
+            let s = Secret::new(k.as_str());
+            wipe(&mut k);
+            Some(s.ok_or_else(|| "The API key is empty. Use Clear to remove the key.".to_string())?)
+        }
+    };
+    log::info!("{} the API key", if secret.is_some() { "set" } else { "clear" });
+    let r = blocking(move || e.set_api_key(secret).map_err(|err| format!("{err:#}"))).await;
+    if let Err(msg) = &r {
+        log::info!("API key refused: {msg}");
+    }
+    r
+}
+
+/// Overwrite a String's bytes before it is freed (zero bytes are valid UTF-8).
+fn wipe(s: &mut String) {
+    // SAFETY: only zero bytes are written, so the String stays valid UTF-8.
+    unsafe {
+        for b in s.as_bytes_mut() {
+            std::ptr::write_volatile(b, 0);
+        }
+    }
+    s.clear();
+}
+
+/// Open klif.toml in the default editor (the core creates a starter file first when there is none); Notepad
+/// when `.toml` has no handler.
+#[tauri::command]
+pub async fn klif_open_config<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>) -> Result<(), String> {
+    let e = engine(&shell)?;
+    let path = blocking(move || e.ensure_config().map_err(|err| format!("{err:#}"))).await?;
+    log::info!("open config {}", path.display());
+    on_main(&app, move |_| opener::open_file(&path)).await
+}
+
+/// Open the logs folder (`[paths] logs_dir`: session logs and the shell log) in the file manager.
+#[tauri::command]
+pub async fn klif_open_logs<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    // Read from the file, not from the engine: it works while the core is still starting or failed.
+    let dir = blocking(|| {
+        let dir = klif_common::config::load().cfg.logs_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the logs folder {}: {e}", dir.display()))?;
+        Ok(dir)
     })
-    .await
+    .await?;
+    log::info!("open logs {}", dir.display());
+    on_main(&app, move |_| opener::open_folder(&dir)).await
+}
+
+/// A System's endpoint as the shell needs it.
+struct Found {
+    label: String,
+    status: SystemStatus,
+    endpoint: endpoint::Endpoint,
+}
+
+/// The endpoint of `system` (None = the selected one), from what the view model publishes.
+fn find_endpoint(e: &EngineHandle, system: Option<SystemId>) -> Result<Found, String> {
+    let vm = e.snapshot();
+    let id = system.or_else(|| vm.selected.clone()).ok_or_else(|| "No System is selected.".to_string())?;
+    let sys = vm.systems.iter().find(|s| s.id == id).ok_or_else(|| format!("There is no System {id}."))?;
+    let published = sys
+        .endpoint
+        .clone()
+        .or_else(|| e.endpoint_url(Some(&id)))
+        .ok_or_else(|| format!("{} is not running, so it has no endpoint yet.", sys.label))?;
+    // A remote System is reached through its node: loopback / wildcard hosts mean the node's, not ours.
+    let node_host = sys
+        .node
+        .as_ref()
+        .and_then(|n| vm.nodes.iter().find(|x| &x.id == n))
+        .map(|n| endpoint::host_of_address(&n.address));
+    let endpoint = endpoint::normalize(&published, sys.kind == SystemKind::Llm, node_host.as_deref())?;
+    Ok(Found { label: sys.label.clone(), status: sys.status, endpoint })
+}
+
+/// Open a System's endpoint in the default browser (None = the selected System).
+#[tauri::command]
+pub async fn klif_open_endpoint<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>, system: Option<SystemId>) -> Result<(), String> {
+    let e = engine(&shell)?;
+    let found = find_endpoint(&e, system)?;
+    match found.status {
+        SystemStatus::Online | SystemStatus::Busy => {}
+        SystemStatus::Starting => return Err(format!("{} is still starting.", found.label)),
+        _ => return Err(format!("{} is not online.", found.label)),
+    }
+    let url = found.endpoint.open;
+    log::info!("open endpoint {url}");
+    on_main(&app, move |_| opener::open_url(&url)).await
+}
+
+/// Copy a System's endpoint (None = the selected System). An LLM's is the OpenAI-compatible base URL
+/// (".../v1"); a remote System's address uses its node's host.
+#[tauri::command]
+pub async fn klif_copy_endpoint<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>, system: Option<SystemId>) -> Result<(), String> {
+    let e = engine(&shell)?;
+    let text = find_endpoint(&e, system)?.endpoint.copy;
+    log::info!("copy endpoint {text}");
+    on_main(&app, move |h| clipboard::copy(h, &text, false)).await
+}
+
+/// Copy the API key natively (excluded from clipboard history). The key never reaches the page. Only for
+/// local, KLIF-managed Systems: a remote System's key lives on its node, an external server has its own.
+#[tauri::command]
+pub async fn klif_copy_api_key<R: Runtime>(app: AppHandle<R>, shell: ShellState<'_>, system: Option<SystemId>) -> Result<(), String> {
+    let e = engine(&shell)?;
+    let vm = e.snapshot();
+    if let Some(sys) = system.or_else(|| vm.selected.clone()).and_then(|id| vm.systems.into_iter().find(|s| s.id == id)) {
+        if sys.node.is_some() || sys.id.is_remote() {
+            return Err(format!("{} runs on another node; its API key lives on that machine.", sys.label));
+        }
+        if sys.external {
+            return Err(format!("{} is an external server; KLIF does not manage its API key.", sys.label));
+        }
+    }
+    let key = e.api_key().ok_or_else(|| "No API key is set.".to_string())?;
+    log::info!("copy the API key");
+    on_main(&app, move |h| clipboard::copy(h, key.expose(), true)).await
 }
 
 /// Panel mode on / off: move the window onto the small status screen and fill it, or bring the previous

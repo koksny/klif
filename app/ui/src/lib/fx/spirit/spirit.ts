@@ -41,6 +41,10 @@ const toHex = (c: number[]) => '#' + c.map((v) => Math.round(Math.max(0, Math.mi
 export class SpiritVis {
   shift = 0;
   private wasForming = false;
+  // The page sizes its render targets on its own 'resize' event. When the iframe is laid out at 0 x 0 while the page
+  // starts (hidden window, skin mounting before layout), the targets stay empty and the smoke never shows, so a
+  // size change seen here is passed on as a 'resize' event.
+  private sized = '';
 
   constructor(private frame_: HTMLIFrameElement) {}
 
@@ -89,6 +93,14 @@ export class SpiritVis {
     s.color2 = toHex(c2);
     // The page runs no loop of its own (#external=1): one simulation + render step per KLIF frame.
     w.__spiritFrame?.();
+    // __spiritJNow appears once the page has started (its listener is attached by then).
+    if (w.__spiritJNow !== undefined && w.innerWidth > 0 && w.innerHeight > 0) {
+      const size = `${w.innerWidth}x${w.innerHeight}`;
+      if (size !== this.sized) {
+        this.sized = size;
+        w.dispatchEvent(new Event('resize'));
+      }
+    }
   }
 
   dispose() {}

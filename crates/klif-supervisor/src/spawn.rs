@@ -1,6 +1,22 @@
-//! Process creation: STARTUPINFOEX with an explicit inherit list (NUL stdin, append-only log files,
-//! the session job), CREATE_SUSPENDED until the process is in its named job, and a Unicode
-//! environment block built from KLIF's own environment plus the plan's changes.
+//! Process creation (Windows): the child is born inside its session job.
+//!
+//! One `CreateProcessW` call with `STARTUPINFOEXW` and ONE attribute list carrying two attributes:
+//! - `PROC_THREAD_ATTRIBUTE_JOB_LIST` = [the session job]: the process is a member of the job from its first
+//!   instruction (no suspended start, no resume, no separate job assignment, no window in which it could
+//!   spawn something outside the job).
+//! - `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` = exactly the handles the child inherits: NUL as stdin, the
+//!   append-only stdout/stderr log files, and a query-only duplicate of the job handle. The duplicate is
+//!   what keeps the job's NAME alive after KLIF exits (a named kernel object loses its name when its last
+//!   handle closes), so a restarted KLIF can reopen the job by name; it grants the child nothing but
+//!   reading its own job's accounting.
+//!
+//! Flags: `CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT`. The command line is
+//! exactly `klif_common::cmdline::render(exe, args)` (what the UI and `klif-cli plan` show). The environment
+//! block is KLIF's own environment minus `env_remove`, plus `env_set`; secret values are only borrowed from
+//! the spec, encoded straight into the block and the block is wiped after the call.
+//!
+//! The job has no limits at all (in particular no KILL_ON_JOB_CLOSE): servers outlive KLIF and are adopted
+//! by job name after a restart.
 
 use std::{
     ffi::{c_void, OsStr, OsString},
@@ -10,23 +26,27 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use klif_catalog::{EnvValue, LaunchPlan};
+use klif_common::launch::{EnvVal, LaunchSpec};
 use windows::{
     core::{w, HSTRING, PCWSTR, PWSTR},
     Win32::{
-        Foundation::{GetLastError, SetHandleInformation, ERROR_ALREADY_EXISTS, HANDLE, HANDLE_FLAGS, HANDLE_FLAG_INHERIT},
+        Foundation::{
+            DuplicateHandle, GetLastError, SetLastError, DUPLICATE_HANDLE_OPTIONS, ERROR_ALREADY_EXISTS, HANDLE,
+            WIN32_ERROR,
+        },
         Security::SECURITY_ATTRIBUTES,
         Storage::FileSystem::{
             CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_READ_ATTRIBUTES,
             FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING, SYNCHRONIZE,
         },
         System::{
-            JobObjects::{AssignProcessToJobObject, CreateJobObjectW},
+            JobObjects::CreateJobObjectW,
+            SystemServices::JOB_OBJECT_QUERY,
             Threading::{
-                CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, ResumeThread,
-                TerminateProcess, UpdateProcThreadAttribute, CREATE_NO_WINDOW, CREATE_SUSPENDED,
-                CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
-                PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+                CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess, InitializeProcThreadAttributeList,
+                UpdateProcThreadAttribute, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+                LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
             },
         },
     },
@@ -55,6 +75,8 @@ fn wide_z(s: &OsStr) -> Vec<u16> {
     s.encode_wide().chain([0]).collect()
 }
 
+/// Security attributes for handles listed in PROC_THREAD_ATTRIBUTE_HANDLE_LIST (they must be inheritable;
+/// the list is what limits inheritance to exactly those handles).
 fn inheritable() -> SECURITY_ATTRIBUTES {
     SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -68,34 +90,34 @@ fn env_key(name: &OsStr) -> Vec<u16> {
     name.to_string_lossy().to_uppercase().encode_utf16().collect()
 }
 
-/// An environment value: inherited from KLIF's own environment, or borrowed from the plan.
-enum EnvVal<'a> {
+/// An environment value: inherited from KLIF's own environment, or borrowed from the spec.
+enum BlockVal<'a> {
     Os(OsString),
     Str(&'a str),
 }
 
-impl EnvVal<'_> {
+impl BlockVal<'_> {
     fn wide_len(&self) -> usize {
         match self {
-            EnvVal::Os(v) => v.encode_wide().count(),
-            EnvVal::Str(s) => s.encode_utf16().count(),
+            BlockVal::Os(v) => v.encode_wide().count(),
+            BlockVal::Str(s) => s.encode_utf16().count(),
         }
     }
     fn write(&self, out: &mut Vec<u16>) {
         match self {
-            EnvVal::Os(v) => out.extend(v.encode_wide()),
-            EnvVal::Str(s) => out.extend(s.encode_utf16()),
+            BlockVal::Os(v) => out.extend(v.encode_wide()),
+            BlockVal::Str(s) => out.extend(s.encode_utf16()),
         }
     }
 }
 
-/// Current environment minus `remove`, plus `set` (names case-insensitive, as on Windows), sorted
-/// by upper-cased name, as a double-NUL-terminated UTF-16 block. Plan values (secrets included) are
-/// only borrowed and encoded straight into the block, which is allocated once (no regrowth copies)
-/// and wiped by the caller after CreateProcessW.
-fn env_block(remove: &[String], set: &[(String, EnvValue)]) -> Vec<u16> {
-    let mut vars: Vec<(Vec<u16>, OsString, EnvVal<'_>)> =
-        std::env::vars_os().map(|(k, v)| (env_key(&k), k, EnvVal::Os(v))).collect();
+/// Current environment minus `remove`, plus `set` (names case-insensitive, as on Windows; a later `set`
+/// entry wins over an earlier one), sorted by upper-cased name, as a double-NUL-terminated UTF-16 block.
+/// Spec values (secrets included) are only borrowed and encoded straight into the block, which is allocated
+/// once (no regrowth copies) and wiped by the caller after CreateProcessW.
+fn env_block(remove: &[String], set: &[(String, EnvVal)]) -> Vec<u16> {
+    let mut vars: Vec<(Vec<u16>, OsString, BlockVal<'_>)> =
+        std::env::vars_os().map(|(k, v)| (env_key(&k), k, BlockVal::Os(v))).collect();
     let drop_keys: Vec<Vec<u16>> = remove
         .iter()
         .chain(set.iter().map(|(k, _)| k))
@@ -103,11 +125,12 @@ fn env_block(remove: &[String], set: &[(String, EnvValue)]) -> Vec<u16> {
         .collect();
     vars.retain(|(key, _, _)| !drop_keys.contains(key));
     for (k, v) in set {
-        let value = match v {
-            EnvValue::Plain(s) => s.as_str(),
-            EnvValue::Secret(s) => s.expose(),
-        };
-        vars.push((env_key(OsStr::new(k)), OsString::from(k), EnvVal::Str(value)));
+        let key = env_key(OsStr::new(k));
+        let entry = (key, OsString::from(k), BlockVal::Str(v.expose()));
+        match vars.iter_mut().find(|(existing, _, _)| *existing == entry.0) {
+            Some(slot) => *slot = entry,
+            None => vars.push(entry),
+        }
     }
     vars.sort_by(|a, b| a.0.cmp(&b.0));
     let cap: usize = vars.iter().map(|(_, k, v)| k.encode_wide().count() + 1 + v.wide_len() + 1).sum::<usize>() + 2;
@@ -131,47 +154,16 @@ fn wipe(block: &mut [u16]) {
     }
 }
 
-/// Quote one argument by the MSVC CRT / CommandLineToArgvW rules.
-fn quote_arg(arg: &OsStr, out: &mut Vec<u16>) {
-    let a: Vec<u16> = arg.encode_wide().collect();
-    let needs = a.is_empty() || a.iter().any(|&c| c == b' ' as u16 || c == b'\t' as u16 || c == b'\n' as u16 || c == 0x0b || c == b'"' as u16);
-    if !needs {
-        out.extend_from_slice(&a);
-        return;
-    }
-    out.push(b'"' as u16);
-    let mut backslashes = 0usize;
-    for &c in &a {
-        if c == b'\\' as u16 {
-            backslashes += 1;
-        } else {
-            if c == b'"' as u16 {
-                out.extend(std::iter::repeat_n(b'\\' as u16, backslashes + 1));
-            }
-            backslashes = 0;
-        }
-        out.push(c);
-    }
-    out.extend(std::iter::repeat_n(b'\\' as u16, backslashes));
-    out.push(b'"' as u16);
-}
-
+/// The NUL-terminated UTF-16 command line: exactly `klif_common::cmdline::render(exe, args)`, the string
+/// the UI and `klif-cli plan` show.
 pub(crate) fn command_line(exe: &Path, args: &[String]) -> Vec<u16> {
-    let mut cl: Vec<u16> = Vec::new();
-    cl.push(b'"' as u16);
-    cl.extend(exe.as_os_str().encode_wide());
-    cl.push(b'"' as u16);
-    for a in args {
-        cl.push(b' ' as u16);
-        quote_arg(OsStr::new(a), &mut cl);
-    }
-    cl.push(0);
-    cl
+    let line = klif_common::cmdline::render(&exe.to_string_lossy(), args);
+    line.encode_utf16().chain([0]).collect()
 }
 
 fn open_log(path: &Path, sa: &SECURITY_ATTRIBUTES) -> Result<Handle> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot create log folder {}", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| format!("Cannot create the log folder {}.", dir.display()))?;
     }
     let h = unsafe {
         CreateFileW(
@@ -184,28 +176,102 @@ fn open_log(path: &Path, sa: &SECURITY_ATTRIBUTES) -> Result<Handle> {
             None,
         )
     }
-    .with_context(|| format!("cannot open log file {}", path.display()))?;
+    .map_err(|e| anyhow::anyhow!("Cannot open the log file {}: {}", path.display(), sentence(&e)))?;
     Ok(Handle::new(h))
 }
 
-pub(crate) fn spawn(plan: &LaunchPlan, job_name: &str) -> Result<Spawned> {
-    if !plan.exe.is_absolute() {
-        bail!("launch exe must be an absolute path: {}", plan.exe.display());
+/// The system message of a Win32 error without the HRESULT suffix, as a sentence fragment.
+fn sentence(e: &windows::core::Error) -> String {
+    let m = e.message();
+    let m = m.trim().trim_end_matches('.');
+    if m.is_empty() {
+        format!("error 0x{:08X}", e.code().0 as u32)
+    } else {
+        format!("{m}.")
     }
-    if !plan.cwd.is_dir() {
-        bail!("working folder does not exist: {}", plan.cwd.display());
-    }
-    let sa = inheritable();
+}
 
-    // Named, inheritable job WITHOUT KILL_ON_JOB_CLOSE (no limits at all).
+/// An initialised attribute list; deleted on drop. The VALUES it points at (handle arrays) must outlive
+/// every use of the list, which the caller guarantees by keeping them on its stack until CreateProcessW returns.
+struct AttrList {
+    _buf: Vec<u64>,
+    ptr: LPPROC_THREAD_ATTRIBUTE_LIST,
+}
+
+impl AttrList {
+    fn new(count: u32) -> Result<AttrList> {
+        let mut size = 0usize;
+        // The first call only reports the size (and "fails" with ERROR_INSUFFICIENT_BUFFER).
+        let _ = unsafe { InitializeProcThreadAttributeList(None, count, None, &mut size) };
+        if size == 0 {
+            bail!("Cannot size the process attribute list.");
+        }
+        let mut buf = vec![0u64; size.div_ceil(size_of::<u64>())];
+        let ptr = LPPROC_THREAD_ATTRIBUTE_LIST(buf.as_mut_ptr() as *mut c_void);
+        unsafe { InitializeProcThreadAttributeList(Some(ptr), count, None, &mut size) }
+            .map_err(|e| anyhow::anyhow!("Cannot initialise the process attribute list: {}", sentence(&e)))?;
+        Ok(AttrList { _buf: buf, ptr })
+    }
+
+    /// Adds one attribute whose value is an array of handles.
+    ///
+    /// SAFETY: `handles` must stay alive and unmoved until the list is no longer used.
+    unsafe fn handles(&mut self, attribute: u32, handles: &[HANDLE], what: &str) -> Result<()> {
+        unsafe {
+            UpdateProcThreadAttribute(
+                self.ptr,
+                0,
+                attribute as usize,
+                Some(handles.as_ptr() as *const c_void),
+                std::mem::size_of_val(handles),
+                None,
+                None,
+            )
+        }
+        .map_err(|e| anyhow::anyhow!("Cannot set the {what} process attribute: {}", sentence(&e)))
+    }
+}
+
+impl Drop for AttrList {
+    fn drop(&mut self) {
+        unsafe { DeleteProcThreadAttributeList(self.ptr) };
+    }
+}
+
+/// A duplicate of `h` in this process with only `access`, inheritable.
+fn inheritable_duplicate(h: HANDLE, access: u32) -> Result<Handle> {
+    let mut dup = HANDLE::default();
+    let me = unsafe { GetCurrentProcess() };
+    unsafe { DuplicateHandle(me, h, me, &mut dup, access, true, DUPLICATE_HANDLE_OPTIONS(0)) }
+        .map_err(|e| anyhow::anyhow!("Cannot duplicate the session job handle: {}", sentence(&e)))?;
+    Ok(Handle::new(dup))
+}
+
+pub(crate) fn spawn(spec: &LaunchSpec, job_name: &str) -> Result<Spawned> {
+    if !spec.exe.is_absolute() {
+        bail!("The program path must be absolute: {}.", spec.exe.display());
+    }
+    if !spec.cwd.is_dir() {
+        bail!("The working folder does not exist: {}.", spec.cwd.display());
+    }
+
+    // The session job: named, NOT inheritable (PROC_THREAD_ATTRIBUTE_JOB_LIST does not need inheritance),
+    // no limits (no KILL_ON_JOB_CLOSE).
     let jname = HSTRING::from(job_name);
-    let job = unsafe { CreateJobObjectW(Some(&sa), &jname) }.with_context(|| format!("CreateJobObjectW {job_name}"))?;
+    let job = unsafe {
+        SetLastError(WIN32_ERROR(0));
+        CreateJobObjectW(None, &jname)
+    }
+    .map_err(|e| anyhow::anyhow!("Cannot create the session job {job_name}: {}", sentence(&e)))?;
     let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
     let job = Handle::new(job);
     if already {
-        bail!("job {job_name} already exists (session name collision); not launching");
+        bail!("A session named {} already exists (job {job_name}); not launching a second one.", spec.session_name);
     }
+    // What the child inherits of the job: a query-only handle that keeps the name alive (module docs).
+    let anchor = inheritable_duplicate(job.raw(), JOB_OBJECT_QUERY)?;
 
+    let sa = inheritable();
     let nul = unsafe {
         CreateFileW(
             w!("NUL"),
@@ -217,89 +283,73 @@ pub(crate) fn spawn(plan: &LaunchPlan, job_name: &str) -> Result<Spawned> {
             None,
         )
     }
-    .context("cannot open NUL for stdin")?;
+    .map_err(|e| anyhow::anyhow!("Cannot open NUL for the server's input: {}", sentence(&e)))?;
     let nul = Handle::new(nul);
-    let out = open_log(&plan.out_log, &sa)?;
-    let err = if plan.err_log == plan.out_log { None } else { Some(open_log(&plan.err_log, &sa)?) };
+    let out = open_log(&spec.out_log, &sa)?;
+    let err = if spec.err_log == spec.out_log { None } else { Some(open_log(&spec.err_log, &sa)?) };
     let err_h = err.as_ref().map(|h| h.raw()).unwrap_or(out.raw());
 
-    // Inherit exactly these handles (no duplicates allowed in the list).
+    // Exactly these handles are inherited (no duplicates allowed in the list).
     let mut inherit: Vec<HANDLE> = vec![nul.raw(), out.raw()];
     if let Some(e) = &err {
         inherit.push(e.raw());
     }
-    inherit.push(job.raw());
+    inherit.push(anchor.raw());
+    let jobs: [HANDLE; 1] = [job.raw()];
 
-    let app = wide_z(plan.exe.as_os_str());
-    let mut cl = command_line(&plan.exe, &plan.args);
-    let cwd = wide_z(plan.cwd.as_os_str());
-    let mut env = env_block(&plan.env_remove, &plan.env_set);
+    let app = wide_z(spec.exe.as_os_str());
+    let mut cl = command_line(&spec.exe, &spec.args);
+    let cwd = wide_z(spec.cwd.as_os_str());
+    let mut env = env_block(&spec.env_remove, &spec.env_set);
 
     let mut pi = PROCESS_INFORMATION::default();
-    let created = unsafe {
-        let mut attr_size = 0usize;
-        let _ = InitializeProcThreadAttributeList(None, 1, None, &mut attr_size);
-        let mut attr_buf = vec![0u64; attr_size.div_ceil(8)];
-        let attrs = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut c_void);
-        let r = InitializeProcThreadAttributeList(Some(attrs), 1, None, &mut attr_size)
-            .context("InitializeProcThreadAttributeList")
-            .and_then(|_| {
-                let r = UpdateProcThreadAttribute(
-                    attrs,
-                    0,
-                    PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-                    Some(inherit.as_mut_ptr() as *const c_void),
-                    inherit.len() * size_of::<HANDLE>(),
-                    None,
-                    None,
-                )
-                .context("UpdateProcThreadAttribute(HANDLE_LIST)");
-                let r = r.and_then(|_| {
-                    let mut si = STARTUPINFOEXW::default();
-                    si.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
-                    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-                    si.StartupInfo.hStdInput = nul.raw();
-                    si.StartupInfo.hStdOutput = out.raw();
-                    si.StartupInfo.hStdError = err_h;
-                    si.lpAttributeList = attrs;
-                    CreateProcessW(
-                        PCWSTR(app.as_ptr()),
-                        Some(PWSTR(cl.as_mut_ptr())),
-                        None,
-                        None,
-                        true, // required, but limited to the HANDLE_LIST above
-                        CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
-                        Some(env.as_ptr() as *const c_void),
-                        PCWSTR(cwd.as_ptr()),
-                        &si.StartupInfo,
-                        &mut pi,
-                    )
-                    .with_context(|| format!("CreateProcessW {}", plan.exe.display()))
-                });
-                DeleteProcThreadAttributeList(attrs);
-                r
-            });
-        r
-    };
+    let created = (|| -> Result<()> {
+        let mut attrs = AttrList::new(2)?;
+        // SAFETY: `jobs` and `inherit` live on this stack frame until after CreateProcessW below.
+        unsafe {
+            attrs.handles(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs, "job list")?;
+            attrs.handles(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &inherit, "handle list")?;
+        }
+        let mut si = STARTUPINFOEXW::default();
+        si.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = nul.raw();
+        si.StartupInfo.hStdOutput = out.raw();
+        si.StartupInfo.hStdError = err_h;
+        si.lpAttributeList = attrs.ptr;
+        unsafe {
+            CreateProcessW(
+                PCWSTR(app.as_ptr()),
+                Some(PWSTR(cl.as_mut_ptr())),
+                None,
+                None,
+                true, // required for the handle list, and limited to it
+                CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                Some(env.as_ptr() as *const c_void),
+                PCWSTR(cwd.as_ptr()),
+                &si.StartupInfo,
+                &mut pi,
+            )
+        }
+        .map_err(|e| {
+            let mut msg = format!("Cannot start {}: {}", spec.exe.display(), sentence(&e));
+            if let Some(w) = crate::parent_job_warning() {
+                msg.push_str(&format!(" ({w}.)"));
+            }
+            anyhow::anyhow!(msg)
+        })
+    })();
     wipe(&mut env);
-    // The child holds its own copies now; KLIF's ends of NUL and the logs close here.
-    drop((nul, out, err));
+    // The child holds its own copies now; KLIF's ends of NUL, the logs and the anchor close here.
+    drop((nul, out, err, anchor));
     created?;
 
     let process = Handle::new(pi.hProcess);
-    let thread = Handle::new(pi.hThread);
-    // KLIF's own job handle must not leak into unrelated children spawned later.
-    let _ = unsafe { SetHandleInformation(job.raw(), HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) };
-
-    if let Err(e) = unsafe { AssignProcessToJobObject(job.raw(), process.raw()) } {
-        let _ = unsafe { TerminateProcess(process.raw(), 1) }; // still suspended: never ran
-        bail!("AssignProcessToJobObject {job_name}: {e}");
-    }
-    if unsafe { ResumeThread(thread.raw()) } == u32::MAX {
-        let _ = unsafe { TerminateProcess(process.raw(), 1) };
-        bail!("ResumeThread failed for pid {}", pi.dwProcessId);
-    }
-    drop(thread);
-    let ctime = handle_ctime(process.raw()).context("GetProcessTimes on the new process")?;
+    drop(Handle::new(pi.hThread));
+    let Some(ctime) = handle_ctime(process.raw()) else {
+        // Without its creation time the session could never be adopted safely: do not leave it running.
+        crate::win::terminate_job(job.raw(), crate::STOP_EXIT_CODE);
+        bail!("Cannot read the creation time of the new server (pid {}); it was stopped again.", pi.dwProcessId);
+    };
     Ok(Spawned { pid: pi.dwProcessId, ctime, process, job })
 }

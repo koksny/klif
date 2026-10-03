@@ -8,7 +8,7 @@
   import { onMount, untrack } from 'svelte';
   import { prefersReducedMotion } from 'svelte/motion';
   import { getTier, onFrame, onTier } from '../../lib/render/scheduler';
-  import type { Slot, SlotKind, ViewModel } from '../../lib/model/types';
+  import type { System, SystemKind, ViewModel } from '../../lib/model/types';
   import { Drive } from '../../lib/fx/drive';
   import { RingsVis, SPHERE_R } from '../../lib/fx/rings/rings';
   import type { Sleep } from './sleep.svelte';
@@ -16,8 +16,8 @@
 
   interface Props {
     vm: ViewModel;
-    kind: SlotKind;
-    sel: Slot | undefined;
+    kind: SystemKind;
+    sel: System | undefined;
     dz: Sleep | null;
     waking: boolean;
     /** Sphere centre and visible radius in this box's CSS px (the box fills the skin). */

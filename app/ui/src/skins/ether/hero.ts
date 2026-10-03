@@ -7,10 +7,11 @@
 //   image     step / steps, s/it, size
 //   asleep    the last tok/s dimmed, "GPU asleep · D3", paged-out GiB
 //   fault     ERR + the fault title (+ the log tail in the full window)
-import type { LoadStep, ModelRef, Session, Slot, SlotKind, ViewModel } from '../../lib/model/types';
+import type { LoadStep, ModelRef, Session, System, SystemKind, ViewModel } from '../../lib/model/types';
+import { idleState, KIND_LABEL } from '../../lib/model/systems';
 import { fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
 import type { Sleep } from './state.svelte';
-import { availabilityText, fmtAgo, fmtDur, fmtEta, lastSessionText, lastSpeed, shapeText } from './text';
+import { fmtAgo, fmtDur, fmtEta, lastSessionText, lastSpeed, shapeText } from './text';
 
 export interface Hero {
   label: string;
@@ -32,8 +33,8 @@ export interface Hero {
 export interface Ctx {
   vm: ViewModel;
   s: Session | null;
-  kind: SlotKind;
-  sel: Slot | undefined;
+  kind: SystemKind;
+  sel: System | undefined;
   model: ModelRef | undefined;
   /** GPU dormant (live sessions only). */
   dz: Sleep | null;
@@ -48,14 +49,15 @@ export function heroOf(c: Ctx): Hero {
   // the placeholder figure is an en dash: an em dash at hero size reads as a bar
   const base: Hero = { label: '', value: '–', unit: '', sub: '', tone: '', warn: false, steps: null, frac: null, log: [] };
   if (!s) {
-    const unit = kind === 'image' ? 'steps' : 'tok/s';
-    if (sel && sel.availability !== 'ready')
-      return { ...base, label: 'STANDBY', unit, sub: `${sel.label.toLowerCase()} · ${(sel.reason ?? availabilityText(sel.availability)).toLowerCase()}`, tone: 'dim', warn: true };
+    const unit = kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests';
+    const why = idleState(sel);
+    if (sel && (why.warn || sel.status === 'not-set'))
+      return { ...base, label: 'STANDBY', unit, sub: `${sel.label.toLowerCase()} · ${(sel.reason ?? why.text).toLowerCase()}`, tone: 'dim', warn: why.warn };
     const ls = vm.lastSession;
-    if (!ls) return { ...base, label: 'STANDBY', unit, sub: 'nothing running · pick a tier and launch', tone: 'dim' };
+    if (!ls) return { ...base, label: 'STANDBY', unit, sub: 'nothing running · pick a System and launch', tone: 'dim' };
     // standby shows the previous session: its median speed as the (dimmed) figure, the rest as the sub-line
     const sp = lastSpeed(ls);
-    return { ...base, label: 'STANDBY', value: sp?.value ?? base.value, unit: sp?.unit ?? unit, sub: lastSessionText(ls, vm.slots, c.compact), tone: 'dim' };
+    return { ...base, label: 'STANDBY', value: sp?.value ?? base.value, unit: sp?.unit ?? unit, sub: lastSessionText(ls, vm.systems, c.compact), tone: 'dim' };
   }
   const phase = s.phase;
   if (phase === 'fault') {
@@ -108,6 +110,19 @@ export function heroOf(c: Ctx): Hero {
     if (!llm.requests.length && !llm.generatedTokens) return { ...base, label: 'READY', unit: 'tok/s', sub: 'waiting for the first request', tone: 'dim' };
     return { ...base, label: 'READY', value: fmtTps(c.tps), unit: 'tok/s', sub: `last request · ${fmtInt(llm.generatedTokens)} tok`, tone: 'dim' };
   }
+  const gen = s.generic;
+  if (gen) {
+    const on = (gen.requestsInFlight ?? 0) > 0;
+    return {
+      ...base,
+      label: `${KIND_LABEL[kind].toUpperCase()}${on ? ' · WORKING' : ''}`,
+      value: gen.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '–',
+      unit: 'requests',
+      sub: on ? `${gen.requestsInFlight} in flight` : gen.lastActivityS !== undefined ? `last activity ${fmtDur(gen.lastActivityS)} ago` : 'waiting for the next request',
+      tone: on ? '' : 'dim',
+      frac: on ? 1 : null,
+    };
+  }
   if (img) {
     if (img.activity === 'generating' && img.steps > 0)
       return {
@@ -133,6 +148,13 @@ export function factsOf(c: Ctx, n: 2 | 3): [string, string][] {
     return [
       ['last image', j ? `${fmtSeconds(j.seconds)} · ${j.width}x${j.height}${j.edit ? ' · edit' : ''}` : img ? 'none yet' : '—'],
       ['images', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+    ];
+  }
+  if (kind !== 'llm') {
+    const gen = s?.generic ?? null;
+    return [
+      ['in flight', gen ? fmtInt(gen.requestsInFlight ?? 0) : '—'],
+      ['last activity', gen?.lastActivityS !== undefined ? `${fmtDur(gen.lastActivityS)} ago` : '—'],
     ];
   }
   const total = llm?.context.totalTokens || model?.ctxTokens || 0;

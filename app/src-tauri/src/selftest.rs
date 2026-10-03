@@ -1,10 +1,14 @@
-//! Development hooks, driven by environment variables (no effect unless set):
+//! Development hooks, driven by environment variables. Compiled only with the cargo feature `selftest`
+//! (`cargo run --features selftest`); a shipped build has none of this code.
 //!   KLIF_EXIT_AFTER=<seconds>  the app exits by itself after that many seconds.
 //!   KLIF_SELFTEST=1            after the page loaded: minimize/restore and hide/show with the WebView2
 //!                              IsVisible state read back, then a second instance is launched and must be
 //!                              turned away by the single-instance plugin. Results go to the shell log.
-//!                              The engine actions (setRecipe, select, stop, launch krea) run only in a
-//!                              `stub-engine` build: against the real engine they would start a server.
+//!                              Engine actions are not exercised (they would change klif.toml and start
+//!                              or stop servers); the read-only commands are (preset / preview / endpoint).
+//!   KLIF_SELFTEST_KEY=<test value>  with KLIF_SELFTEST: set the API key through klif_set_api_key, then clear it.
+//!   KLIF_SELFTEST_BUSY=<pid>[,<n>]  the first <n> (default 3) engine start attempts report that klif-cli
+//!                              <pid> holds the engine, to exercise the retry loop without a second process.
 //!   KLIF_SELFTEST_PANEL=1      after the page loaded: enter panel mode (the window moves onto the small
 //!                              screen and fills it), hold ~3 s, leave again; the window geometry before, in
 //!                              and after panel mode and the UI's layout class are written to the shell log.
@@ -19,6 +23,15 @@ use tauri::{AppHandle, Runtime};
 use crate::panel;
 use crate::shell::{self, main_window};
 use crate::webview;
+
+/// KLIF_SELFTEST_BUSY: `Some(pid)` for the first n start attempts.
+pub fn fake_busy(attempt: u32) -> Option<u32> {
+    let v = std::env::var("KLIF_SELFTEST_BUSY").ok()?;
+    let mut it = v.split(',');
+    let pid = it.next()?.trim().parse::<u32>().ok()?;
+    let n = it.next().and_then(|n| n.trim().parse::<u32>().ok()).unwrap_or(3);
+    (attempt <= n).then_some(pid)
+}
 
 pub fn exit_after<R: Runtime>(app: &AppHandle<R>) {
     let Some(secs) = std::env::var("KLIF_EXIT_AFTER").ok().and_then(|s| s.trim().parse::<f64>().ok()) else { return };
@@ -237,34 +250,31 @@ pub fn run<R: Runtime>(app: &AppHandle<R>) {
         // The transport's wire shapes, sent from the page exactly as transport/tauri.ts sends them.
         let invoke = |cmd: &str, args: &str, tag: &str| {
             let js = format!(
-                "window.__TAURI_INTERNALS__.invoke('{cmd}', {args}).then(() => window.__TAURI_INTERNALS__.invoke('klif_ui_log', {{ line: '{tag}: ok' }}), (e) => window.__TAURI_INTERNALS__.invoke('klif_ui_log', {{ line: '{tag}: rejected: ' + e }}))"
+                "window.__TAURI_INTERNALS__.invoke('{cmd}', {args}).then((r) => window.__TAURI_INTERNALS__.invoke('klif_ui_log', {{ line: '{tag}: ok ' + JSON.stringify(r === undefined ? null : r).slice(0, 300) }}), (e) => window.__TAURI_INTERNALS__.invoke('klif_ui_log', {{ line: '{tag}: rejected: ' + e }}))"
             );
             let _ = win.eval(js);
         };
-        // Engine actions only against the stub: with the real engine they would persist a recipe, stop an
-        // adopted server and start a real one.
-        if !cfg!(feature = "stub-engine") {
-            log::info!("SELFTEST engine actions skipped (real engine: they would change recipes and start or stop servers)");
-        } else if let Some(e) = s.engine_if_ready() {
-            invoke("klif_act", "{ action: { type: 'setRecipe', slot: 'medium', patch: { ctxTokens: 32768, promptCacheMiB: 8192, kvType: 'q4_0' } } }", "setRecipe");
+        // Engine actions are not exercised: against the real engine they would change klif.toml and start or stop
+        // servers. The read-only commands are: wire shapes in, the sentences out.
+        log::info!("SELFTEST engine actions skipped (they would change klif.toml and start or stop servers)");
+        invoke("klif_engine_status", "{}", "engineStatus");
+        invoke("klif_preset_get", "{ id: 'no-such-preset' }", "presetGet (null expected)");
+        invoke("klif_command_preview", "{ spec: { adapter: 'generic', kind: 'tts', command: 'D:/tools/server.exe', args: ['--port', '7099'], port: 7099 } }", "commandPreview");
+        invoke("klif_open_endpoint", "{ system: 'no-such-system' }", "openEndpoint (rejection expected)");
+        invoke("klif_copy_endpoint", "{ system: 'no-such-system' }", "copyEndpoint (rejection expected)");
+        // The selected System's endpoint goes to the clipboard (a clipboard write: expect your clipboard to change).
+        invoke("klif_copy_endpoint", "{}", "copyEndpoint (selected System)");
+        invoke("klif_copy_api_key", "{ system: 'no-such-system' }", "copyApiKey");
+        // KLIF_SELFTEST_KEY=<test value>: set the API key through the command, then clear it again. Scratch
+        // KLIF_CONFIG only: it replaces the key file of the state dir.
+        if let Ok(key) = std::env::var("KLIF_SELFTEST_KEY") {
+            let key = key.replace(['\'', '\\'], "");
+            invoke("klif_set_api_key", &format!("{{ key: '{key}' }}"), "setApiKey");
+            std::thread::sleep(Duration::from_millis(1500));
+            invoke("klif_set_api_key", "{ key: '' }", "setApiKey (empty, rejection expected)");
             std::thread::sleep(Duration::from_millis(500));
-            let r = e.snapshot().slots.iter().find(|x| x.id == klif_common::vm::SlotId::Medium).and_then(|x| x.recipe.clone());
-            check(
-                &format!("setRecipe from the page applied: {r:?}"),
-                r.map(|r| r.ctx_tokens == Some(32768) && r.prompt_cache_mib == Some(8192) && r.kv_type.as_deref() == Some("q4_0")).unwrap_or(false),
-            );
-            invoke("klif_act", "{ action: { type: 'select', slot: 'low' } }", "select while running (must be refused)");
-            invoke("klif_act", "{ action: { type: 'stop' } }", "stop");
-            std::thread::sleep(Duration::from_millis(2500));
-            let vm = e.snapshot();
-            check(&format!("stop -> session {:?}, last session {:?}", vm.session.as_ref().map(|x| x.phase), vm.last_session.as_ref().map(|l| l.ended)), vm.session.is_none() && vm.last_session.is_some());
-            invoke("klif_act", "{ action: { type: 'launch', slot: 'krea' } }", "launch krea");
-            std::thread::sleep(Duration::from_millis(1600));
-            let p1 = e.snapshot().session.map(|x| (x.slot, x.phase));
-            std::thread::sleep(Duration::from_millis(5500));
-            let p2 = e.snapshot().session.map(|x| (x.slot, x.phase));
-            check(&format!("launch krea -> {p1:?} then {p2:?}"), p2.map(|(sl, ph)| sl == klif_common::vm::SlotId::Krea && ph == klif_common::vm::Phase::Live).unwrap_or(false));
-            dom_probe(&win, "krea live");
+            invoke("klif_set_api_key", "{ key: null }", "clearApiKey");
+            std::thread::sleep(Duration::from_millis(500));
         }
         // Window chrome through the JS window API's commands (capability check), then back.
         invoke("plugin:window|toggle_maximize", "{ label: 'main' }", "toggleMaximize");

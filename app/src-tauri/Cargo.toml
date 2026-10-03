@@ -1,6 +1,6 @@
 [package]
 name = "klif"
-version = "0.2.0"
+version = "0.3.0"
 description = "KLIF desktop shell: Tauri 2 window, tray and native transport for the KLIF core"
 edition = "2021"
 license = "MIT"
@@ -10,14 +10,21 @@ publish = false
 # Its own workspace (Tauri convention): not a member of the root workspace, depends on the core by path.
 [workspace]
 
+# klif.exe VERSIONINFO strings that tauri-build does not set itself (it sets ProductName, FileVersion,
+# ProductVersion, CompanyName, FileDescription and LegalCopyright from tauri.conf.json). See build.rs.
+[package.metadata.tauri-winres]
+OriginalFilename = "klif.exe"
+InternalName = "klif"
+Comments = "Koksny.com LOCAL INFERENCE FORNICATOR. AMD optimized frontend for transformers and DiT."
+
 [features]
-# Serve sample data (a port of app/ui/src/lib/model/sample.ts) instead of the real engine, so the shell
-# runs end to end before the engine exists. Never starts anything.
-stub-engine = []
 # Release builds MUST enable this (scripts/Build-Release.ps1 does): without it tauri::is_dev() stays true
 # and the window loads tauri.conf.json's devUrl instead of the UI embedded from frontendDist. The Tauri CLI
 # adds the same feature itself; a plain `cargo build --release` does not. Debug / `cargo run` leave it off.
 custom-protocol = ["tauri/custom-protocol"]
+# Development hooks driven by environment variables (KLIF_EXIT_AFTER, KLIF_SELFTEST, KLIF_SELFTEST_PANEL,
+# KLIF_SELFTEST_BUSY). Never part of a shipped build.
+selftest = []
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
@@ -26,13 +33,26 @@ tauri-build = { version = "2.7", features = [] }
 klif-core = { path = "../../crates/klif-core" }
 klif-common = { path = "../../crates/klif-common" }
 klif-telemetry = { path = "../../crates/klif-telemetry" }
-tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+# tauri's default feature set (wry, compression, common-controls-v6, dynamic-acl, x11, dbus) minus `compression`
+# (brotli-compressed assets are high-entropy blobs that look like a packed executable to scanners), plus the
+# features the shell uses: tray-icon, image-png. Re-check this list when tauri is upgraded.
+tauri = { version = "2.12", default-features = false, features = [
+  "wry",
+  "common-controls-v6",
+  "dynamic-acl",
+  "x11",
+  "dbus",
+  "tray-icon",
+  "image-png",
+] }
 tauri-plugin-single-instance = "2.5"
-webview2-com = "0.39"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
 # 0.62 is what tauri / wry / webview2-com use, so the COM and HWND types unify.
 windows = { version = "0.62", features = [
   "Win32_Foundation",

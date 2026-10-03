@@ -1,0 +1,160 @@
+# KLIF model recommendations, schema 1.
+#
+# Disclaimer: these are starting points measured on one machine. Models, drivers and backends change; your
+# agent should benchmark and calibrate (`klif-cli bench <system>`). Each model keeps its own license. KLIF
+# downloads only from huggingface.co, and only when you ask it to.
+#
+# Rules for entries (checked at load; a bad entry is skipped with a warning):
+# - hf_repo is "owner/name", revision a 40-hex commit sha, file names plain paths inside the repo (no "..", each
+#   listed once); repo + revision + every file's sha256 must be verifiable on the Hugging Face hub;
+# - a file from ANOTHER repo names its own `repo` ("owner/name") and `revision` (40-hex, required with `repo`); they
+#   override hf_repo / revision for that file (download, install folder <models_dir>\<repo with / as -->\<file>);
+# - a preset made from an entry gets `model` from the file with role "model" and `mmproj` from the one with role
+#   "mmproj" ({model} / {mmproj} in args); any other listed file is written into args as {file:<its name>}, which
+#   becomes that file's install path;
+# - `measured` only when the local file's sha256 equals the hub file;
+# - no network / model-fetch flags in `args` (-hf --hf-repo -hff --hf-file -hft --hf-token -mu --model-url
+#   -dr --docker-repo, and their draft / vocoder / mmproj-url forms), no secret flags (--api-key), no env
+#   templates, no unknown keys;
+# - no personal data (paths, hostnames, LAN addresses).
+#
+# Entry shape (one [[recommendation]] table per model):
+#
+# [[recommendation]]
+# id = "example-id"                      # [a-z0-9][a-z0-9_-]*
+# kind = "llm"                           # llm | image | tts | stt | video
+# class = "fast"                         # llm only, optional: fast | deep | max (System 1 / 2 / 3)
+# name = "Example Model 8B"
+# adapter = "llama.cpp"                  # llama.cpp | sd.cpp | vllm | openai | generic
+# hf_repo = "org/repo"
+# revision = "<40-hex commit sha>"
+# quant = "Q4_K_M"
+# license = "apache-2.0"
+# hardware_class = "16 GB VRAM"
+# min_vram_gib = 8.0
+# args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}"]
+# ctx = 16384
+# files = [
+#   { name = "model-Q4_K_M.gguf", role = "model", sha256 = "<64 hex>", size = 0 },
+#   # optional, from another repo: role model | mmproj | other
+#   # { name = "encoder.gguf", role = "other", repo = "org/other-repo", revision = "<40-hex commit sha>", sha256 = "<64 hex>", size = 0 },
+# ]
+# measured = { decode_tps = 0.0, prefill_tps = 0.0, hardware = "", backend = "", date = "YYYY-MM-DD" }
+# notes = ""
+
+schema = 1
+
+# ---------------------------------------------------------------------------------------------- System 1 (fast)
+[[recommendation]]
+id = "gemma-4-26b-a4b-qat-q4-0"
+kind = "llm"
+class = "fast"
+name = "Gemma 4 26B-A4B it (QAT Q4_0)"
+adapter = "llama.cpp"
+hf_repo = "google/gemma-4-26B-A4B-it-qat-q4_0-gguf"
+revision = "d1c082be9cf3c8a514acf63b8761f4b41935842e"
+quant = "Q4_0 (QAT)"
+license = "apache-2.0"
+hardware_class = "16 GB VRAM"
+min_vram_gib = 14.0
+ctx = 32768
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--metrics"]
+files = [
+  { name = "gemma-4-26B_q4_0-it.gguf", role = "model", sha256 = "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d", size = 14439363584 },
+]
+measured = { decode_tps = 91.8, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), llama.cpp build of 2026-08", date = "2026-08-20" }
+notes = "MoE, 4B active. Decode measured at 32k context, q8_0 KV, auto layer fit with a 1024 MiB VRAM margin (-fitt is the margin to leave free, not a budget); 76.4 tok/s at 128k. Prefill was not measured with a long prompt. The 26B-A4B is the large Gemma that fits a 16 GB card; the dense 31B does not."
+
+# ---------------------------------------------------------------------------------------------- System 2 (deep)
+[[recommendation]]
+id = "qwen3-8-27b-gsq-rco-iq3-s-mtp"
+kind = "llm"
+class = "deep"
+name = "Qwen 3.8 27B GSQ-RCO IQ3_S (with MTP head)"
+adapter = "llama.cpp"
+hf_repo = "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF"
+revision = "d562806dbafae37109975e970aae91b43e73b440"
+quant = "GSQ-RCO IQ3_S (mixed precision)"
+license = "apache-2.0"
+hardware_class = "16 GB VRAM"
+min_vram_gib = 15.0
+ctx = 98304
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-cram", "16384", "-n", "16384", "-b", "1024", "-ub", "256", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-fit", "off", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-preserve", "--reasoning-effort", "xhigh", "--jinja", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0", "-np", "1", "--metrics", "--spec-type", "draft-mtp,ngram-mod", "--spec-draft-n-max", "2", "-ctkd", "f16", "-ctvd", "f16", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "48", "--spec-ngram-mod-n-max", "64"]
+files = [
+  { name = "Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf", role = "model", sha256 = "58fd826723939933dc86f45b7fe04545cbc2de1c70f6fe2cdd3858c87a98c12f", size = 12120016960 },
+]
+measured = { decode_tps = 34.3, prefill_tps = 382.5, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), llama.cpp b714 (7fe450e19)", date = "2026-09-24" }
+notes = "Daily dense agent model on the measuring machine: 96k context with q8_0 KV fits the 16 GB card's dedicated VRAM; MTP (in-GGUF head) + n-gram drafts. Measured as one session's aggregate over 43 real agent requests (87.5k generated tokens; prefill aggregate over 17 prompts of 2k-42k tokens, median 557 tok/s). Text only here: the repo's mmproj-Qwen3.8-27B-BF16.gguf adds vision (keep it in RAM with --no-mmproj-offload above 64k context)."
+
+[[recommendation]]
+id = "qwen3-8-27b-ud-q3-k-xl"
+kind = "llm"
+class = "deep"
+name = "Qwen 3.8 27B UD-Q3_K_XL + vision"
+adapter = "llama.cpp"
+hf_repo = "unsloth/Qwen3.8-27B-GGUF"
+revision = "4ca720788d1e01f1bff70c033e0d0028fd02e502"
+quant = "UD-Q3_K_XL"
+license = "apache-2.0"
+hardware_class = "16 GB VRAM"
+min_vram_gib = 15.5
+ctx = 131072
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-n", "16384", "-b", "1024", "-ub", "256", "-fa", "on", "-ctk", "q4_0", "-ctv", "q4_0", "-fit", "off", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-preserve", "--jinja", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0", "-np", "1", "--metrics", "--spec-type", "ngram-mod", "--spec-draft-n-max", "2", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "48", "--spec-ngram-mod-n-max", "64", "--mmproj", "{mmproj}", "--image-min-tokens", "1024", "--no-mmproj-offload"]
+files = [
+  { name = "Qwen3.8-27B-UD-Q3_K_XL.gguf", role = "model", sha256 = "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e", size = 13146393504 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
+]
+notes = "Former dense default on the measuring machine (128k context with q4_0 KV stays resident; the vision projector lives in host RAM). No MTP head in this file, so drafts are n-gram only. Not measured on the current llama.cpp build."
+
+# ----------------------------------------------------------------------------------------------- System 3 (max)
+[[recommendation]]
+id = "qwen3-8-flash-next-gsq-rco-coder"
+kind = "llm"
+class = "max"
+name = "Qwen 3.8 Flash-Next GSQ-RCO Coder (256 of 512 experts)"
+adapter = "llama.cpp"
+hf_repo = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF"
+revision = "5348543e0147355ac9cbcb031184a3546350988e"
+quant = "GSQ-RCO IQ1_M (pruned experts)"
+license = "apache-2.0"
+hardware_class = "16 GB VRAM + 96 GB RAM"
+min_vram_gib = 16.0
+ctx = 131072
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-ncmoe", "42", "-n", "16384", "-b", "8192", "-ub", "4096", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-fit", "off", "-np", "1", "--cache-prompt", "-cram", "2048", "--metrics", "--temp", "1", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0", "--repeat-penalty", "1", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-effort", "xhigh", "--reasoning-preserve", "--jinja", "--spec-type", "ngram-mod", "--spec-draft-n-max", "2", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "4", "--spec-ngram-mod-n-max", "16", "--lazy-mode", "auto"]
+files = [
+  { name = "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf", role = "model", sha256 = "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad", size = 29608446496 },
+  { name = "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf", role = "other", sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113", size = 28800138432 },
+]
+measured = { decode_tps = 8.97, prefill_tps = 406.7, hardware = "RX 9070 XT 16 GB, Ryzen 9 9950X3D, 96 GB DDR5, Windows", backend = "HIP (ROCm 7.2), llama.cpp b714 (7fe450e19)", date = "2026-09-29" }
+notes = "Experts stay in host RAM (-ncmoe 42), dense layers and KV on the card; split GGUF (2 shards, 58.4 GB), {model} is shard 1. Measured on ONE 66.9k-token request at 128k context: prefill 406.7 tok/s, decode 8.97 tok/s at that depth. At 128k this build is about 0.8 GiB over the 16 GB card's budget, which likely depresses decode; try -ub 2048 or 64k context (-ncmoe 41) first. CPU threads were tuned to -t 8 -tb 32 on a 16-core Zen 5 (add them for your CPU). --lazy-mode needs a llama.cpp with lazy tensor reads (v0.5.0)."
+
+# --------------------------------------------------------------------------------------------- image (held back)
+# Held back until its repos, revisions and sha256 are verified on the hub (it needs files from 3 repos: per-file
+# repo + revision). Written in the current schema, so enabling it is uncommenting it.
+# [[recommendation]]
+# id = "qwen-image-2-1-q4-0"
+# kind = "image"
+# name = "Qwen Image 2.1 (Q4_0 DiT, Qwen3-VL 8B encoder)"
+# adapter = "sd.cpp"
+# hf_repo = "leejet/Qwen-Image-2.1-GGUF"
+# revision = "cc11433936a06e9765f7c0c0b1f0436cfd2b9856"
+# quant = "Q4_0"
+# license = "other (Qwen Research License; encoder apache-2.0)"
+# hardware_class = "16 GB VRAM"
+# min_vram_gib = 12.0
+# port = 1235
+# args = ["--diffusion-model", "{model}", "--llm", "{file:Qwen3VL-8B-Instruct-Q4_K_M.gguf}", "--llm_vision", "{mmproj}", "--vae", "{file:vae/qwen_image_2.1_vae_bf16.safetensors}", "--max-vram", "ROCm0=15", "--offload-to-cpu", "--fa", "--width", "512", "--height", "768", "--steps", "20", "--cfg-scale", "6.0", "--sampling-method", "euler", "--listen-ip", "{host}", "--listen-port", "{port}"]
+# files = [
+#   { name = "qwen_image_2.1-Q4_0.gguf", role = "model", sha256 = "8d992dc95dcbf13196a4aca893697fb56a5c9263e19e7b40c898be2cf29e9147", size = 4197494816 },
+#   # Qwen3-VL 8B encoder + its projector (apache-2.0):
+#   { name = "Qwen3VL-8B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2", size = 5027784800 },
+#   { name = "mmproj-Qwen3VL-8B-Instruct-F16.gguf", role = "mmproj", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", sha256 = "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38", size = 1159029824 },
+#   # VAE (qwen-research):
+#   { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+# ]
+# measured = { seconds_per_image = 53.9, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), sd.cpp (qwen21 build of 2026-09-22)", date = "2026-09-22" }
+# notes = "20 steps, cfg 6, euler, text encoder offloaded to the CPU, --max-vram 15 GiB. 768x1024: 53.9 s/image (median of 4 in one session: 55.5, 52.4, 51.9, 122.1 s); 512x768: 29.2 s (one image, 2026-09-24)."

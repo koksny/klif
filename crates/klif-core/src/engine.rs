@@ -1,43 +1,59 @@
-//! The engine: one session at a time on one inference GPU.
+//! The engine: N Systems on this machine, each with its own session, running concurrently, plus external Systems
+//! (watched only) and the Systems of remote nodes (merged in from `crate::nodes`). SPEC section 5 + 16.
 //!
-//! Threads: the 2 Hz tick thread (this module), the telemetry sampler and probe threads (klif-telemetry),
-//! and a short-lived stop thread per stop (TerminateJobObject + wait, up to 5 s). Host commands (`act`)
-//! run on the caller's thread, take the state lock, and wake the tick thread so the result is published
-//! at once.
+//! Threads: the 2 Hz tick thread (this module), telemetry's sampler and probe threads, the node clients (E3), the
+//! control servers (E3), a short-lived stop thread per stop / fault cleanup (TerminateJobObject + waits) and the
+//! download threads (E2). Host commands (`act`) run on the caller's thread.
 //!
-//! Lock order: `st` -> `telemetry` -> (telemetry's own lock). `vm` and `subs` are never held together with
-//! `st`.
+//! Locks (order): `act_serial` -> `tick_lock` -> `reload_lock` -> `persist_lock` -> `st` -> `telemetry` (->
+//! telemetry's own lock). `loaded`, `catalog`, `published`, `subs`, `files`, `key_info`, `bench`, `downloads`,
+//! `servers`, `ulps`, `gpu_ids`, `nodes_sig` are leaves: nothing else is locked while one of them is held. The node
+//! hub is never called while `st` is held. Slow IO (spawning, stopping, store writes, state file writes, port
+//! tables, network, the catalog's file metadata probes) never happens under `st`.
+//!
+//! Modules: `session` (per-System session state machine: phases, faults, dormancy narration, last session),
+//! `conflicts` (holders, reservations, the port / exclusive / VRAM rules), `compose` (the view model: status
+//! mapping, ghosts, remote merge, conveniences, float clamping), `actions` (every `Action`, pending launches,
+//! routing to nodes, store writes, downloads), `watch` (config hot reload, GPUs, external watches, API key, bench
+//! cache, port owners, the network listener).
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+mod actions;
+mod compose;
+mod conflicts;
+mod session;
+mod watch;
+
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Result};
-use klif_catalog::{Catalog, LiveFacts, Recipes};
-use klif_common::config::Config;
+use anyhow::{anyhow, Result};
+use klif_catalog::Catalog;
+use klif_common::config::{Config, LoadedConfig, PresetCfg};
+use klif_common::now_s;
 use klif_common::vm::{
-    Availability, Backend, Endpoint, Ended, Fault, GpuMemory, HostInfo, ImageLive, LastSession, LlmLive, LoadProgress, LoadStep,
-    LoadStepId, ModelArch, ModelRef, Phase, Recipe, RecipePatch, Session, Slot, SlotId, SlotKind, StepState, SystemStats, ViewModel,
+    ApiKeyInfo, BenchSummary, CommandView, ConfigInfo, DownloadInfo, GpuMemory, HostInfo, Issue, IssueLevel, MachineStats, ModelArch,
+    PresetDetail, SystemId, SystemStatus, ViewModel, VramLayer,
 };
-use klif_common::{now_s, Secret};
-use klif_supervisor::{Owned, PortOwner, ProcState, Supervisor};
-use klif_telemetry::{Health, ServerSignals, Telemetry, TelemetrySnapshot, UlpsSetting, WatchSpec};
+use klif_common::Secret;
+use klif_supervisor::Supervisor;
+use klif_telemetry::{Telemetry, UlpsSetting};
 
-use crate::narrate::{dormant_line, wake_line};
-use crate::oldstate::{self, OldState};
-use crate::state::{self, PersistedLast, PersistedSession, PersistedState, SessionOrigin, STATE_VERSION};
-use crate::timefmt;
+use crate::control::{ControlServer, NetworkServer, NodeAuth};
+use crate::download::DownloadHandle;
+use crate::nodes::NodeHub;
+use crate::state::{self, PersistedLast, PersistedState, STATE_VERSION};
+use crate::{keys, timefmt, wire, EngineHandle, StartError};
+
+pub(crate) use session::SessionCtx;
 
 const TICK: Duration = Duration::from_millis(500);
-/// A fatal log line while the process stays up and the server is not ready: wait this long for it to exit.
-const FATAL_GRACE_S: f64 = 10.0;
-/// While idle, how often the old launcher's state file is checked for a new run to adopt.
-const LEGACY_CHECK_S: f64 = 2.0;
-const CONSOLE_LEN: usize = 200;
-const LOG_TAIL_LEN: usize = 12;
+/// Console lines kept per System.
+pub(crate) const CONSOLE_LEN: usize = 200;
 
 /// A view-model subscriber (called on the engine thread).
 type Subscriber = Arc<dyn Fn(&ViewModel) + Send + Sync>;
@@ -46,435 +62,415 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn r1(v: f64) -> f64 {
+pub(crate) fn r1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
 // ------------------------------------------------------------------------------------------ state
 
-struct FaultRec {
-    title: String,
-    exit_code: Option<i64>,
-    exit_code_hex: Option<String>,
-    log_tail: Vec<String>,
-    at: f64,
-    steps: Option<Vec<LoadStep>>,
+/// A launch that waits for other Systems to stop (stop others, restart), or is being spawned right now.
+/// Pending Systems are holders: they reserve their expected VRAM, their port and their GPU.
+pub(crate) struct PendingLaunch {
+    /// Systems that must be gone first (stopped one after the other, in this order).
+    pub(crate) waiting_for: Vec<SystemId>,
+    pub(crate) at: f64,
+    /// The spawn is in progress (outside the state lock).
+    pub(crate) spawning: bool,
+    pub(crate) label: String,
+    pub(crate) host: String,
+    pub(crate) port: Option<u16>,
+    pub(crate) gpus: Vec<String>,
+    pub(crate) exclusive: bool,
+    pub(crate) expected_gib: Option<f64>,
+    /// The holders are stopped by `[launch] on_conflict = "stop"`, not by an explicit stopOthers: a holder that
+    /// became busy meanwhile is never stopped (SPEC 16.8); the launch is cancelled instead.
+    pub(crate) auto: bool,
 }
 
-/// The session KLIF owns right now.
-struct Sess {
-    p: PersistedSession,
-    owned: Arc<Owned>,
-    phase: Phase,
-    fault: Option<FaultRec>,
-    /// When Stop was requested (uptime ends there).
-    stop_at: Option<f64>,
-    stopper: Option<JoinHandle<Result<()>>>,
-    /// Cleanup of what is left of a faulted session's tree.
-    cleanup: Option<JoinHandle<Result<()>>>,
-    fatal_since: Option<f64>,
-    /// KLIF's own lines shown before the logs (launch facts) and after them (stop / fault notes).
-    header: Vec<String>,
-    tail: Vec<String>,
-    been_live: bool,
-    /// Every PID seen in the session's tree: a dying member still listed in the TCP table is not foreign.
-    known_pids: BTreeSet<u32>,
-    last_llm: Option<LlmLive>,
-    last_image: Option<ImageLive>,
-    median_tps: Option<f64>,
-    /// Dormant-GPU episodes already narrated in the console (entry, wake).
-    dormant_logged: u64,
-    wake_logged: u64,
+/// A permanently watched external System (preset `endpoint`).
+pub(crate) struct ExternalWatch {
+    /// What the watch was made from (re-watched when it changes).
+    pub(crate) signature: String,
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    /// When it was last seen coming online (uptime of the synthetic session).
+    pub(crate) online_since: Option<f64>,
 }
 
-impl Sess {
-    fn new(p: PersistedSession, owned: Owned, phase: Phase, header: Vec<String>) -> Sess {
-        Sess {
-            p,
-            owned: Arc::new(owned),
-            phase,
-            fault: None,
-            stop_at: None,
-            stopper: None,
-            cleanup: None,
-            fatal_since: None,
-            header,
-            tail: Vec::new(),
-            been_live: false,
-            known_pids: BTreeSet::new(),
-            last_llm: None,
-            last_image: None,
-            median_tps: None,
-            dormant_logged: 0,
-            wake_logged: 0,
-        }
-    }
-
-    fn started_at(&self) -> f64 {
-        self.p.record.started_at
-    }
+/// One measured GPU, as the conflict rules need it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct GpuFact {
+    pub(crate) id: String,
+    pub(crate) total: f64,
+    pub(crate) used: f64,
 }
 
 pub(crate) struct State {
-    sup: Supervisor,
-    recipes: Recipes,
-    /// Tiers whose recipe the user tuned (only these are persisted; the others follow klif.toml / presets).
-    tuned: BTreeSet<SlotId>,
-    selected: SlotId,
-    host: HostInfo,
-    session: Option<Sess>,
-    /// Bumped whenever a session begins or ends (the telemetry snapshot must then be re-taken).
-    session_seq: u64,
-    last: Option<PersistedLast>,
-    /// Model shapes seen in server logs, by card id (persisted: the tiers show them before a launch).
-    arches: BTreeMap<String, ModelArch>,
-    tier_ports: BTreeMap<SlotId, u16>,
-    port_owners: BTreeMap<u16, PortOwner>,
-    pending_launch: Option<SlotId>,
-    /// Startup notices (shown in the console while idle).
-    notes: Vec<String>,
-    /// KLIF lines after the last session's logs (while idle).
-    idle_tail: Vec<String>,
-    old_mtime: Option<SystemTime>,
-    last_legacy_check: f64,
+    pub(crate) selected: Option<SystemId>,
+    pub(crate) host: HostInfo,
+    pub(crate) sessions: BTreeMap<SystemId, SessionCtx>,
+    pub(crate) pending: BTreeMap<SystemId, PendingLaunch>,
+    pub(crate) externals: BTreeMap<SystemId, ExternalWatch>,
+    pub(crate) last: BTreeMap<SystemId, PersistedLast>,
+    pub(crate) arches: BTreeMap<String, ModelArch>,
+    pub(crate) layers: BTreeMap<String, Vec<VramLayer>>,
+    /// The console of a System's ended session (shown while it is idle).
+    pub(crate) idle_tails: BTreeMap<SystemId, Vec<String>>,
+    /// Engine notices (shown in idle consoles).
+    pub(crate) notes: Vec<String>,
+    /// Ports held by processes KLIF does not own: port -> (pid, image).
+    pub(crate) foreign_ports: BTreeMap<u16, (u32, String)>,
+    /// (host, port) of every local System's active preset (external: its endpoint).
+    pub(crate) endpoints: BTreeMap<SystemId, (String, u16)>,
+    pub(crate) gpu_facts: Vec<GpuFact>,
+    /// Last measured GPUs / machine (used when a snapshot is missing).
+    pub(crate) gpus_mem: Vec<GpuMemory>,
+    pub(crate) machine: MachineStats,
+    /// Issues the engine adds to the config's (e.g. the network listener could not start).
+    pub(crate) engine_issues: Vec<Issue>,
+    /// The persisted part changed (written by `flush`, outside the lock).
+    pub(crate) dirty: bool,
+    /// Bumped whenever a session begins or ends (the telemetry snapshot is then re-taken).
+    pub(crate) session_seq: u64,
+}
+
+impl State {
+    fn persisted(&self) -> PersistedState {
+        PersistedState {
+            version: STATE_VERSION,
+            selected: self.selected.clone(),
+            sessions: self
+                .sessions
+                .iter()
+                // A faulted session is kept only while processes of it are left (they must stay adoptable).
+                .filter(|(_, s)| s.phase != klif_common::vm::Phase::Fault || !s.pids.is_empty())
+                .map(|(k, s)| (k.clone(), s.p.clone()))
+                .collect(),
+            last_sessions: self.last.clone(),
+            arches: self.arches.clone(),
+            layers: self.layers.clone(),
+        }
+    }
+
+    /// The tab label of a System (config label, else a ghost label, else the id).
+    pub(crate) fn label_of(&self, cfg: &Config, id: &SystemId) -> String {
+        if let Some(l) = cfg.system_label(id.as_str()) {
+            return l;
+        }
+        if let Some(p) = self.pending.get(id) {
+            return p.label.clone();
+        }
+        ghost_label(id)
+    }
+}
+
+pub(crate) fn ghost_label(id: &SystemId) -> String {
+    format!("{id} (not in klif.toml)")
+}
+
+/// The console and VRAM view of one System (the conveniences when it is selected / focused).
+#[derive(Clone)]
+pub(crate) struct Focus {
+    pub(crate) console: Vec<String>,
+    pub(crate) vram: GpuMemory,
+}
+
+struct Published {
+    vm: ViewModel,
+    focus: BTreeMap<SystemId, Focus>,
+}
+
+/// The control servers this engine runs (E3).
+#[derive(Default)]
+struct Servers {
+    local: Option<ControlServer>,
+    /// `[node] listen` as served (None: not listening).
+    listen: Option<String>,
+    network: Option<NetworkServer>,
+    auth: Option<Arc<NodeAuth>>,
+    last_auth_refresh: f64,
+    last_listen_try: f64,
+}
+
+type Stat = (std::time::SystemTime, u64);
+
+/// What the engine last saw of the files it watches.
+#[derive(Default)]
+struct FileWatch {
+    /// klif.toml (None: missing).
+    config: Option<Stat>,
+    config_path: Option<PathBuf>,
+    /// api-key.txt (source string, stat, when computed).
+    key: Option<(String, Option<Stat>, f64)>,
+}
+
+/// Cached bench summaries (`bench::latest` reads files: refreshed every few seconds outside the state lock).
+#[derive(Default)]
+pub(crate) struct BenchCache {
+    /// (preset id, command hash) -> (when read, latest).
+    pub(crate) by_hash: BTreeMap<(String, String), (f64, Option<BenchSummary>)>,
+    /// preset id -> (when read, latest for its default params).
+    pub(crate) by_preset: BTreeMap<String, (f64, Option<BenchSummary>)>,
+    /// What the last compose asked for.
+    pub(crate) wanted: std::collections::BTreeSet<(String, String)>,
+}
+
+/// Downloads of recommendations (updated from the download threads).
+#[derive(Default)]
+pub(crate) struct Downloads {
+    pub(crate) infos: BTreeMap<(String, String), (DownloadInfo, f64)>,
+    pub(crate) handles: BTreeMap<String, DownloadHandle>,
+    /// A file finished: the catalog (installed flags) is rebuilt on the next tick.
+    pub(crate) rebuild: bool,
 }
 
 pub(crate) struct Inner {
-    pub(crate) cfg: Config,
-    catalog: Catalog,
+    me: Weak<Inner>,
+    loaded: Mutex<LoadedConfig>,
+    catalog: Mutex<Arc<Catalog>>,
     telemetry: Mutex<Option<Telemetry>>,
+    nodes: NodeHub,
+    sup: Supervisor,
     st: Mutex<State>,
-    vm: Mutex<ViewModel>,
+    published: Mutex<Published>,
     subs: Mutex<Vec<Subscriber>>,
     wake: Mutex<bool>,
     wake_cv: Condvar,
     stop: AtomicBool,
     thread: Mutex<Option<JoinHandle<()>>>,
+    act_serial: Mutex<()>,
+    tick_lock: Mutex<()>,
+    /// Serializes klif.toml reloads (tick, own writes, ensure_config): stat, record and apply happen together, so a
+    /// slower reload never applies an older file after a newer one was recorded.
+    reload_lock: Mutex<()>,
+    persist_lock: Mutex<()>,
+    files: Mutex<FileWatch>,
+    key_info: Mutex<ApiKeyInfo>,
+    bench: Mutex<BenchCache>,
+    downloads: Arc<Mutex<Downloads>>,
+    servers: Mutex<Servers>,
+    /// ULPS settings by GPU pci id, read lazily (the first time a dormancy episode is narrated).
+    ulps: Mutex<BTreeMap<String, Option<UlpsSetting>>>,
+    /// The GPU ids telemetry measures now.
+    gpu_ids: Mutex<Vec<String>>,
+    /// `[nodes.*]` as the hub was last configured with.
+    nodes_sig: Mutex<String>,
+    /// `engine.lock`, held for the engine's lifetime.
+    engine_lock: Mutex<Option<File>>,
+    state_dir: PathBuf,
+    data_dir: PathBuf,
+}
+
+pub(crate) fn empty_gpu(warn_below_gib: f64) -> GpuMemory {
+    GpuMemory {
+        id: String::new(),
+        name: String::new(),
+        device: String::new(),
+        total_gib: 0.0,
+        used_gib: 0.0,
+        layers: Vec::new(),
+        spill_mib: 0.0,
+        history: Vec::new(),
+        layer_history: None,
+        baseline_gib: 0.0,
+        warn_below_gib,
+        dormant: None,
+    }
+}
+
+pub(crate) fn empty_machine() -> MachineStats {
+    MachineStats { ram_used_gib: 0.0, ram_total_gib: 0.0, ram_type: None, cpu_name: String::new(), cpu_pct: 0.0 }
+}
+
+fn fallback_vm(host: HostInfo) -> ViewModel {
+    ViewModel {
+        now: now_s(),
+        systems: Vec::new(),
+        selected: None,
+        session: None,
+        last_session: None,
+        console: Vec::new(),
+        vram: empty_gpu(0.0),
+        gpus: Vec::new(),
+        machine: empty_machine(),
+        host,
+        presets: Vec::new(),
+        recommendations: Vec::new(),
+        downloads: Vec::new(),
+        config: ConfigInfo::default(),
+        nodes: Vec::new(),
+    }
 }
 
 // ------------------------------------------------------------------------------------------ start
 
-/// Recipes for every tier: the persisted ones, else the catalog defaults (config tiers / launcher presets
-/// with the old launcher's KV, vision and mode).
-pub(crate) fn initial_recipes(cfg: &Config, catalog: &Catalog, persisted: &PersistedState, old: Option<&OldState>) -> Recipes {
-    let defaults = catalog.default_recipes(cfg, &old.map(|o| o.defaults.clone()).unwrap_or_default());
-    SlotId::ALL
-        .iter()
-        .filter_map(|&slot| persisted.recipes.get(&slot).or_else(|| defaults.get(&slot)).cloned().map(|r| (slot, r)))
-        .collect()
-}
-
-/// The port each tier's recipe would use (the plan's effective port; only the catalog knows pinned ports).
-pub(crate) fn tier_ports(cfg: &Config, catalog: &Catalog, recipes: &Recipes) -> BTreeMap<SlotId, u16> {
-    SlotId::ALL
-        .iter()
-        .map(|&slot| {
-            let fallback = if slot.kind() == SlotKind::Image { 1234 } else { 7030 };
-            let port = recipes
-                .get(&slot)
-                .and_then(|r| catalog.plan_unchecked(cfg, slot, r, None, timefmt::FIXED_STAMP).ok().map(|p| p.port).or(r.port))
-                .unwrap_or(fallback);
-            (slot, port)
-        })
-        .collect()
-}
-
-fn fallback_vm(host: HostInfo, selected: SlotId) -> ViewModel {
-    ViewModel {
-        now: now_s(),
-        slots: Vec::new(),
-        selected,
-        session: None,
-        vram: GpuMemory {
-            device: String::new(),
-            total_gib: 0.0,
-            used_gib: 0.0,
-            layers: Vec::new(),
-            spill_mib: 0.0,
-            history: Vec::new(),
-            layer_history: None,
-            baseline_gib: 0.0,
-            warn_below_gib: 0.0,
-            dormant: None,
-        },
-        system: SystemStats { ram_used_gib: 0.0, ram_total_gib: 0.0, ram_type: None, cpu_name: String::new(), cpu_pct: 0.0 },
-        last_session: None,
-        host,
-        console: Vec::new(),
+/// Take `engine.lock` in `state_dir` (std `File::try_lock`). Held by another process -> `Busy` with the pid from
+/// its `control.json` (0 when unknown).
+fn take_engine_lock(state_dir: &Path) -> Result<File, StartError> {
+    let path = state_dir.join(wire::LOCK_FILE);
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| StartError::Other(anyhow!("{} could not be opened: {e}", path.display())))?;
+    match f.try_lock() {
+        Ok(()) => Ok(f),
+        Err(std::fs::TryLockError::WouldBlock) => Err(StartError::Busy { pid: control_pid(state_dir).unwrap_or(0) }),
+        Err(std::fs::TryLockError::Error(e)) => Err(StartError::Other(anyhow!("{} could not be locked: {e}", path.display()))),
     }
 }
 
-pub(crate) fn start(cfg: Config, host: HostInfo) -> Result<Arc<Inner>> {
+/// The pid in `control.json` (written by the engine that holds the lock).
+fn control_pid(state_dir: &Path) -> Option<u32> {
+    let bytes = std::fs::read(state_dir.join(wire::CONTROL_FILE)).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    serde_json::from_str::<wire::ControlFile>(text.trim_start_matches('\u{feff}')).ok().map(|c| c.pid)
+}
+
+pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, StartError> {
     let t0 = Instant::now();
-    let catalog = Catalog::load(&cfg).map_err(|e| anyhow!("The launcher catalog could not be loaded: {e:#}"))?;
-    log::info!("catalog loaded ({:?}) in {} ms", catalog.origin(), t0.elapsed().as_millis());
+    let cfg = loaded.cfg.clone();
+    let state_dir = cfg.state_dir.clone();
+    let data_dir = cfg.data_dir.clone();
+    std::fs::create_dir_all(&state_dir)
+        .map_err(|e| StartError::Other(anyhow!("The KLIF folder {} could not be created: {e}", state_dir.display())))?;
+    let lock_file = take_engine_lock(&state_dir)?;
+
+    let catalog = Catalog::new(&cfg);
     let mut notes: Vec<String> = Vec::new();
-    for w in catalog.warnings() {
-        log::warn!("catalog: {w}");
+    for i in &loaded.issues {
+        match i.level {
+            IssueLevel::Error => log::warn!("config: {}", i.text),
+            IssueLevel::Warn => log::info!("config: {}", i.text),
+        }
     }
-    if !catalog.warnings().is_empty() {
-        notes.push(format!("[KLIF] catalog: {} warning(s), see the KLIF log", catalog.warnings().len()));
+    let errors = loaded.issues.iter().filter(|i| i.is_error()).count();
+    if errors > 0 {
+        notes.push(format!("[KLIF] klif.toml: {errors} error(s), see Tune or `klif-cli diag`"));
     }
-
-    let state_file = cfg.launcher.state_file.clone();
-    let old = oldstate::read(state_file.as_deref());
-    let persisted = state::load(&cfg.state_path("state.json"));
-    let recipes = initial_recipes(&cfg, &catalog, &persisted, old.as_ref());
-    let selected = persisted.selected.unwrap_or(SlotId::Medium);
-    let ports = tier_ports(&cfg, &catalog, &recipes);
-
-    // Telemetry on the inference adapter (resolved by PCI id: LUIDs change every boot).
-    let adapter = match cfg.gpu.inference.as_deref() {
-        Some(pci) => {
-            let a = klif_telemetry::find_adapter(pci);
-            if a.is_none() {
-                log::warn!("inference GPU {pci} not found among the DXGI adapters");
-                notes.push(format!("[KLIF] inference GPU {pci} was not found; VRAM is not measured"));
-            }
-            a
-        }
-        None => {
-            notes.push("[KLIF] no inference GPU configured (gpu.inference); VRAM is not measured".into());
-            None
-        }
-    };
-    let adapter = adapter.map(|mut a| {
-        if let Some(name) = cfg.gpu.inference_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            a.name = name.to_string();
-        }
-        log::info!("inference adapter {} ({}), {} MiB", a.display_name(), a.pci_id(), a.dedicated_bytes >> 20);
-        a
-    });
-    let telemetry = Telemetry::start(adapter, cfg.telemetry.warn_below_gib);
-
-    let sup = Supervisor::new();
-    if let Some(w) = sup.parent_job_warning() {
+    if let Some(w) = klif_supervisor::parent_job_warning() {
         log::warn!("{w}");
         notes.push(format!("[KLIF] warning: {w}"));
     }
+    let (persisted, origin) = state::load_with_origin(&state_dir);
+    match &origin {
+        state::Origin::Legacy => notes.push("[KLIF] read 0.2's state.json once (it is left unchanged)".into()),
+        state::Origin::Fresh(Some(bad)) => notes.push(format!("[KLIF] state.v3.json was unreadable; moved to {}", bad.display())),
+        _ => {}
+    }
+
+    // Telemetry on every GPU a System uses (+ [gpu] inference), resolved by PCI id (LUIDs change every boot).
+    let session_gpus: Vec<String> = persisted.sessions.values().flat_map(|p| p.all_gpus()).collect();
+    let (adapters, gpu_ids, gpu_notes) = watch::resolve_gpus(&cfg, &session_gpus);
+    notes.extend(gpu_notes);
+    let telemetry = Telemetry::start(adapters, cfg.telemetry.warn_below_gib);
+    let nodes = NodeHub::start(&cfg);
+    let nodes_sig = watch::nodes_signature(&cfg);
 
     let st = State {
-        sup,
-        recipes,
-        tuned: persisted.recipes.keys().copied().collect(),
-        selected,
+        selected: persisted.selected.clone(),
         host: host.clone(),
-        session: None,
-        session_seq: 0,
-        last: persisted.last_session.clone(),
+        sessions: BTreeMap::new(),
+        pending: BTreeMap::new(),
+        externals: BTreeMap::new(),
+        last: persisted.last_sessions.clone(),
         arches: persisted.arches.clone(),
-        tier_ports: ports,
-        port_owners: BTreeMap::new(),
-        pending_launch: None,
+        layers: persisted.layers.clone(),
+        idle_tails: BTreeMap::new(),
         notes,
-        idle_tail: Vec::new(),
-        old_mtime: oldstate::mtime(state_file.as_deref()),
-        last_legacy_check: now_s(),
+        foreign_ports: BTreeMap::new(),
+        endpoints: BTreeMap::new(),
+        gpu_facts: Vec::new(),
+        gpus_mem: Vec::new(),
+        machine: empty_machine(),
+        engine_issues: Vec::new(),
+        dirty: true,
+        session_seq: 0,
     };
-    let inner = Arc::new(Inner {
-        cfg,
-        catalog,
+    let files = FileWatch {
+        config: watch::stat(&cfg.file_path()),
+        config_path: Some(cfg.file_path()),
+        key: None,
+    };
+    let key_info = keys::info(&cfg);
+    let inner = Arc::new_cyclic(|me| Inner {
+        me: me.clone(),
+        loaded: Mutex::new(loaded),
+        catalog: Mutex::new(Arc::new(catalog)),
         telemetry: Mutex::new(Some(telemetry)),
+        nodes,
+        sup: Supervisor::new(),
         st: Mutex::new(st),
-        vm: Mutex::new(fallback_vm(host, selected)),
+        published: Mutex::new(Published { vm: fallback_vm(host), focus: BTreeMap::new() }),
         subs: Mutex::new(Vec::new()),
         wake: Mutex::new(false),
         wake_cv: Condvar::new(),
         stop: AtomicBool::new(false),
         thread: Mutex::new(None),
+        act_serial: Mutex::new(()),
+        tick_lock: Mutex::new(()),
+        reload_lock: Mutex::new(()),
+        persist_lock: Mutex::new(()),
+        files: Mutex::new(files),
+        key_info: Mutex::new(key_info),
+        bench: Mutex::new(BenchCache::default()),
+        downloads: Arc::new(Mutex::new(Downloads::default())),
+        servers: Mutex::new(Servers::default()),
+        ulps: Mutex::new(BTreeMap::new()),
+        gpu_ids: Mutex::new(gpu_ids),
+        nodes_sig: Mutex::new(nodes_sig),
+        engine_lock: Mutex::new(Some(lock_file)),
+        state_dir,
+        data_dir,
     });
 
-    // Adoption: a persisted KLIF session first, else the old launcher's live run. Never start anything.
+    // Adoption: every persisted session (jobs by name). Never start anything.
     {
+        let cfg = inner.cfg();
         let mut st = lock(&inner.st);
-        let mut adopted = false;
-        if let Some(ps) = persisted.session.clone() {
-            adopted = inner.adopt_persisted(&mut st, ps);
+        for (id, p) in persisted.sessions {
+            let id = if p.system.as_str().is_empty() { id } else { p.system.clone() };
+            inner.adopt_persisted(&mut st, &cfg, id, p);
         }
-        if !adopted {
-            if let Some(old) = &old {
-                adopted = inner.adopt_legacy(&mut st, old);
-            }
-        }
-        if !adopted && persisted.session.is_some() {
-            log::info!("the persisted session is gone; forgetting it");
-        }
-        inner.persist(&st);
+        st.dirty = true;
     }
-
+    inner.flush();
+    if let Some(sel) = lock(&inner.st).selected.clone() {
+        if let Some(node) = sel.node() {
+            inner.nodes.set_focus(node, Some(sel.local()));
+        }
+    }
     inner.tick();
     let worker = inner.clone();
-    let h = std::thread::Builder::new().name("klif-engine".into()).spawn(move || worker.run())?;
+    let h = std::thread::Builder::new()
+        .name("klif-engine".into())
+        .spawn(move || worker.run())
+        .map_err(|e| StartError::Other(anyhow!("could not start the engine thread: {e}")))?;
     *lock(&inner.thread) = Some(h);
     log::info!("engine started in {} ms", t0.elapsed().as_millis());
     Ok(inner)
 }
 
-// ------------------------------------------------------------------------------------------ helpers
-
-fn backend_of(s: &str) -> Option<Backend> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "hip" => Some(Backend::Hip),
-        "vulkan" => Some(Backend::Vulkan),
-        "cpu" => Some(Backend::Cpu),
-        _ => None,
-    }
-}
-
-fn display_host(host: &str) -> &str {
-    match host.trim() {
-        "" | "0.0.0.0" | "*" => "127.0.0.1",
-        "::" => "::1",
-        h => h,
-    }
-}
-
-fn url_for(host: &str, port: u16) -> String {
-    let h = display_host(host);
-    if h.contains(':') && !h.starts_with('[') {
-        format!("http://[{h}]:{port}/")
-    } else {
-        format!("http://{h}:{port}/")
-    }
-}
-
-fn median(mut v: Vec<f64>) -> Option<f64> {
-    v.retain(|x| x.is_finite() && *x > 0.0);
-    if v.is_empty() {
-        return None;
-    }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = v.len();
-    Some(if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 })
-}
-
-fn step_failed_detail(id: LoadStepId) -> &'static str {
-    match id {
-        LoadStepId::Process => "process did not start",
-        LoadStepId::Device => "device listing failed",
-        LoadStepId::Weights => "weights not loaded",
-        LoadStepId::Kv => "allocation failed",
-        LoadStepId::Warmup => "warm-up failed",
-        LoadStepId::Ready => "never became ready",
-    }
-}
-
-fn initial_steps(kind: SlotKind) -> Vec<LoadStep> {
-    klif_telemetry::llama::STEP_IDS
-        .iter()
-        .enumerate()
-        .map(|(i, id)| LoadStep {
-            id: *id,
-            label: klif_telemetry::llama::step_label(*id, kind == SlotKind::Image).to_string(),
-            state: if i == 0 { StepState::Active } else { StepState::Pending },
-            detail: None,
-        })
-        .collect()
-}
-
-/// The load steps at the moment the session died: the running step is marked failed.
-fn fail_steps(mut steps: Vec<LoadStep>) -> Vec<LoadStep> {
-    if steps.iter().any(|s| s.state == StepState::Failed) {
-        return steps;
-    }
-    let idx = steps.iter().rposition(|s| s.state == StepState::Active).or_else(|| steps.iter().position(|s| s.state == StepState::Pending));
-    if let Some(i) = idx {
-        steps[i].state = StepState::Failed;
-        steps[i].detail = Some(step_failed_detail(steps[i].id).to_string());
-    }
-    steps
-}
-
-/// Did the server get past "process spawned" (log lines, a device, an answering socket)?
-fn progressed(sig: &ServerSignals) -> bool {
-    sig.health != Health::Down
-        || sig.load_steps.first().map(|s| s.state == StepState::Done).unwrap_or(false)
-        || sig.load_steps.iter().skip(1).any(|s| s.state != StepState::Pending)
-}
-
-enum Cause {
-    Exited(u32),
-    Gone,
-    Fatal,
-}
-
-fn build_fault(kind: SlotKind, phase: Phase, cause: &Cause, sig: Option<&ServerSignals>, console: &[String], now: f64) -> FaultRec {
-    let loading = matches!(phase, Phase::Starting | Phase::Loading);
-    let base = match cause {
-        Cause::Exited(_) if loading => "The server exited while loading",
-        Cause::Exited(_) => "The server exited unexpectedly",
-        Cause::Gone if loading => "The server process disappeared while loading",
-        Cause::Gone => "The server process disappeared",
-        Cause::Fatal => "The server reported a fatal error and did not recover",
-    };
-    let hint = sig.and_then(|s| s.fatal_hint.clone());
-    let title = match &hint {
-        Some(h) => format!("{base}: {}.", h.trim().trim_end_matches('.')),
-        None => format!("{base}."),
-    };
-    // The image starters print the server's own exit code; it says more than the starter's.
-    let starter = sig.and_then(|s| s.starter_exit).filter(|c| *c != 0);
-    let code: Option<i64> = starter.or(match cause {
-        Cause::Exited(c) => Some(*c as i32 as i64),
-        _ => None,
-    });
-    let exit_code_hex = code.map(|c| c as i32 as u32).filter(|u| u & 0x8000_0000 != 0).map(|u| format!("0x{u:08X}"));
-    let err_tail: Vec<String> = sig.map(|s| s.error_tail.clone()).unwrap_or_default();
-    let src: &[String] = if err_tail.len() >= 3 { &err_tail } else { console };
-    let log_tail = src[src.len().saturating_sub(LOG_TAIL_LEN)..].to_vec();
-    let steps = if loading {
-        let steps = sig.map(|s| s.load_steps.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| initial_steps(kind));
-        Some(fail_steps(steps))
-    } else {
-        None
-    };
-    FaultRec { title, exit_code: code, exit_code_hex, log_tail, at: now, steps }
-}
-
-fn spawn_stop(owned: Arc<Owned>, what: &'static str) -> Option<JoinHandle<Result<()>>> {
-    std::thread::Builder::new()
-        .name(format!("klif-{what}"))
-        .spawn(move || {
-            let mut sup = Supervisor::new();
-            sup.stop(&owned)
-        })
-        .map_err(|e| log::error!("could not start the {what} thread: {e}"))
-        .ok()
-}
-
-fn join_result(h: JoinHandle<Result<()>>) -> Result<()> {
-    h.join().unwrap_or_else(|_| Err(anyhow!("the stop thread panicked")))
-}
-
-enum Outcome {
-    Nothing,
-    End(Ended),
-    Fault(FaultRec, bool),
-}
-
 // ------------------------------------------------------------------------------------------ engine
 
 impl Inner {
-    fn tel<R>(&self, f: impl FnOnce(&Telemetry) -> R) -> Option<R> {
+    pub(crate) fn cfg(&self) -> Config {
+        lock(&self.loaded).cfg.clone()
+    }
+
+    pub(crate) fn catalog(&self) -> Arc<Catalog> {
+        lock(&self.catalog).clone()
+    }
+
+    pub(crate) fn tel<R>(&self, f: impl FnOnce(&Telemetry) -> R) -> Option<R> {
         lock(&self.telemetry).as_ref().map(f)
     }
 
-    pub(crate) fn api_key(&self) -> Option<Secret> {
-        oldstate::read_api_key(self.cfg.launcher.state_file.as_deref())
-    }
-
-    fn persist(&self, st: &State) {
-        let ps = PersistedState {
-            version: STATE_VERSION,
-            recipes: st.recipes.iter().filter(|(k, _)| st.tuned.contains(k)).map(|(k, v)| (*k, v.clone())).collect(),
-            selected: Some(st.selected),
-            session: st.session.as_ref().filter(|s| s.phase != Phase::Fault).map(|s| s.p.clone()),
-            last_session: st.last.clone(),
-            arches: st.arches.clone(),
-        };
-        if let Err(e) = state::save(&self.cfg.state_path("state.json"), &ps) {
-            log::warn!("could not write state.json: {e:#}");
-        }
+    /// A handle to this engine (for the control servers).
+    fn handle(&self) -> Option<EngineHandle> {
+        self.me.upgrade().map(|inner| EngineHandle { inner })
     }
 
     fn poke(&self) {
@@ -482,384 +478,40 @@ impl Inner {
         self.wake_cv.notify_all();
     }
 
-    fn watch(&self, p: &PersistedSession, from_start: bool) {
-        let api_key = if p.kind == SlotKind::Llm { self.api_key() } else { None };
-        let spec = WatchSpec {
-            kind: p.kind,
-            out_log: p.record.out_log.clone(),
-            err_log: p.record.err_log.clone(),
-            host: display_host(&p.host).to_string(),
-            port: p.record.port,
-            api_key,
-            started_at: p.record.started_at,
-            ctx_tokens: p.ctx_tokens,
-            spec_mode: p.spec_mode.clone(),
-        };
-        self.tel(|t| t.watch(spec, from_start));
-    }
-
-    fn begin_session(&self, st: &mut State, sess: Sess, from_start: bool) {
-        self.watch(&sess.p, from_start);
-        st.selected = sess.p.slot;
-        st.session = Some(sess);
-        st.session_seq += 1;
-        st.idle_tail.clear();
-        st.pending_launch = None;
-    }
-
-    // ---- adoption ---------------------------------------------------------------------------
-
-    fn adopt_persisted(&self, st: &mut State, p: PersistedSession) -> bool {
-        let Some(owned) = st.sup.adopt(&p.record) else { return false };
-        log::info!(
-            "adopted session {} (root pid {}, job {})",
-            p.record.session_name,
-            p.record.root_pid,
-            if owned.has_job() { "open" } else { "none" }
-        );
-        let header = vec![
-            format!("[KLIF] adopted {} (pid {}) after a KLIF restart", p.record.session_name, p.record.root_pid),
-            format!("[KLIF] stdout: {}", p.record.out_log.display()),
-            format!("[KLIF] stderr: {}", p.record.err_log.display()),
-        ];
-        let sess = Sess::new(p, owned, Phase::Loading, header);
-        self.begin_session(st, sess, true);
-        true
-    }
-
-    /// Adopt the old PowerShell GUI's live run (RuntimeProcesses), mapped to the tier its card sits in.
-    fn adopt_legacy(&self, st: &mut State, old: &OldState) -> bool {
-        if old.runtime.is_empty() || st.session.is_some() {
-            return false;
-        }
-        let named = old
-            .out_log
-            .as_deref()
-            .and_then(oldstate::parse_session_log_name)
-            .or_else(|| old.err_log.as_deref().and_then(oldstate::parse_session_log_name));
-        let card_id = named.as_ref().map(|n| n.0.clone());
-        let log_port = named.as_ref().map(|n| n.1);
-        let slot = card_id
-            .as_deref()
-            .and_then(|c| self.catalog.home_slot(c))
-            .unwrap_or(if matches!(log_port, Some(1234) | Some(1235)) { SlotId::Krea } else { st.selected });
-
-        // The recipe that run most likely used: the tier's, with the card, axes and context of the run.
-        let base = st.recipes.get(&slot).cloned().unwrap_or_default();
-        let mut patch = RecipePatch { card_id: card_id.clone(), ..RecipePatch::default() };
-        patch.backend = old.backend.as_deref().and_then(backend_of);
-        patch.hardware = old.hardware.clone();
-        if slot.kind() == SlotKind::Image {
-            patch.image_size = old.context.and_then(oldstate::image_size_label);
-        } else {
-            patch.ctx_tokens = old.context;
-            patch.port = log_port;
-        }
-        let recipe = self.catalog.apply_patch(slot, &base, &patch);
-        let plan = self.catalog.plan_unchecked(&self.cfg, slot, &recipe, None, timefmt::FIXED_STAMP).ok();
-        let port = log_port.or(plan.as_ref().map(|p| p.port)).unwrap_or(if slot.kind() == SlotKind::Image { 1234 } else { 7030 });
-
-        let Some(owned) = st.sup.adopt_legacy(&old.runtime, old.out_log.clone(), old.err_log.clone(), port) else {
-            return false;
-        };
-        let record = owned.record.clone();
-        let kind = slot.kind();
-        let (mut model, host, spec_mode) = match &plan {
-            Some(p) => (p.model.clone(), p.host.clone(), p.spec_mode.clone()),
-            None => (
-                ModelRef { name: card_id.clone().unwrap_or_else(|| "Unknown model".into()), ..ModelRef::default() },
-                if kind == SlotKind::Image { self.cfg.net.image_host.clone() } else { self.cfg.net.llm_host.clone() },
-                None,
-            ),
-        };
-        if kind == SlotKind::Image {
-            // The old launcher only knows the catalog's starter: no fast-Krea "Edit · Low" mode for its runs.
-            model.mode = None;
-        }
-        let p = PersistedSession {
-            record: record.clone(),
-            origin: SessionOrigin::Legacy,
-            slot,
-            kind,
-            card_id: card_id.unwrap_or_default(),
-            ctx_tokens: model.ctx_tokens,
-            model,
-            recipe: Some(recipe),
-            host,
-            spec_mode,
-            api_key_set: kind == SlotKind::Llm && self.api_key().is_some(),
-        };
-        log::info!(
-            "adopted the old launcher's run {} as {} (root pid {}, port {})",
-            record.session_name,
-            slot.as_str(),
-            record.root_pid,
-            record.port
-        );
-        let header = vec![
-            format!("[KLIF] adopted the old launcher's run {} (pid {})", record.session_name, record.root_pid),
-            format!("[KLIF] stdout: {}", record.out_log.display()),
-            format!("[KLIF] stderr: {}", record.err_log.display()),
-        ];
-        let sess = Sess::new(p, owned, Phase::Loading, header);
-        self.begin_session(st, sess, true);
-        true
-    }
-
-    /// While idle: if the old launcher's state file changed, look for a run it started.
-    fn check_legacy(&self, st: &mut State, now: f64) {
-        if st.session.is_some() || now - st.last_legacy_check < LEGACY_CHECK_S {
-            return;
-        }
-        st.last_legacy_check = now;
-        let path = self.cfg.launcher.state_file.clone();
-        let m = oldstate::mtime(path.as_deref());
-        if m.is_none() || m == st.old_mtime {
-            return;
-        }
-        st.old_mtime = m;
-        if let Some(old) = oldstate::read(path.as_deref()) {
-            if self.adopt_legacy(st, &old) {
-                self.persist(st);
-            }
-        }
-    }
-
-    // ---- actions ----------------------------------------------------------------------------
-
-    pub(crate) fn act(&self, action: klif_common::vm::Action) -> Result<()> {
-        let r = {
+    /// Write `state.v3.json` when the persisted part changed (the file write happens outside `st`).
+    pub(crate) fn flush(&self) {
+        let _g = lock(&self.persist_lock);
+        let ps = {
             let mut st = lock(&self.st);
-            self.act_locked(&mut st, action)
+            if !st.dirty {
+                return;
+            }
+            st.dirty = false;
+            st.persisted()
         };
-        self.poke();
-        r
-    }
-
-    fn act_locked(&self, st: &mut State, action: klif_common::vm::Action) -> Result<()> {
-        use klif_common::vm::Action;
-        let current = st.session.as_ref().map(|s| (s.phase, s.p.slot));
-        let running = matches!(current, Some((p, _)) if p != Phase::Fault);
-        match action {
-            Action::Select { slot } => {
-                if running && current.map(|c| c.1) != Some(slot) {
-                    bail!("Stop the running session to change the slot.");
-                }
-                st.selected = slot;
-                self.persist(st);
-                Ok(())
-            }
-            Action::Launch { slot } => {
-                if running {
-                    bail!("A session is already running. Stop it first.");
-                }
-                let id = slot.unwrap_or(st.selected);
-                self.launch(st, id)
-            }
-            Action::Stop => match current {
-                None => bail!("Nothing is running."),
-                Some((Phase::Fault, _)) => self.dismiss(st),
-                Some((Phase::Stopping, _)) => Ok(()),
-                Some(_) => {
-                    self.begin_stop(st);
-                    Ok(())
-                }
-            },
-            Action::Restart => match current {
-                None => bail!("Nothing is running."),
-                Some((Phase::Fault, slot)) => {
-                    self.dismiss(st)?;
-                    self.launch(st, slot)
-                }
-                Some((Phase::Stopping, slot)) => {
-                    st.pending_launch = Some(slot);
-                    Ok(())
-                }
-                Some((_, slot)) => {
-                    self.begin_stop(st);
-                    st.pending_launch = Some(slot);
-                    Ok(())
-                }
-            },
-            Action::Dismiss => match current {
-                Some((Phase::Fault, _)) => self.dismiss(st),
-                Some(_) => bail!("Stop the running session first."),
-                None => Ok(()),
-            },
-            Action::SetRecipe { slot, patch } => {
-                let cur = st.recipes.get(&slot).cloned().unwrap_or_default();
-                let next = self.catalog.apply_patch(slot, &cur, &patch);
-                st.recipes.insert(slot, next);
-                st.tuned.insert(slot);
-                st.tier_ports = tier_ports(&self.cfg, &self.catalog, &st.recipes);
-                self.refresh_ports(st);
-                self.persist(st);
-                Ok(())
-            }
+        if let Err(e) = state::save(&self.state_dir, &ps) {
+            log::warn!("could not write {}: {e:#}", state::STATE_FILE);
+            lock(&self.st).dirty = true;
         }
     }
 
-    /// The slot as the UI sees it right now (fresh port facts).
-    fn slot_now(&self, st: &mut State, id: SlotId) -> Option<Slot> {
-        self.refresh_ports(st);
-        self.slots_view(st).into_iter().find(|s| s.id == id)
-    }
+    // ---- control servers (E3) ---------------------------------------------------------------
 
-    /// The catalog's slots with live port facts; a busy port names the process that holds it.
-    fn slots_view(&self, st: &State) -> Vec<Slot> {
-        let live = Self::live_facts(st);
-        let mut slots = self.catalog.slots(&st.recipes, &live);
-        for s in slots.iter_mut() {
-            if s.model.arch.is_none() {
-                s.model.arch = st.recipes.get(&s.id).and_then(|r| st.arches.get(&r.card_id)).cloned();
+    /// `control::serve_local` always; the network listener when `[node] listen` is set.
+    pub(crate) fn start_servers(&self) {
+        let Some(handle) = self.handle() else { return };
+        match crate::control::serve_local(handle, &self.state_dir) {
+            Ok(s) => {
+                log::info!("local control server on 127.0.0.1:{}", s.port());
+                lock(&self.servers).local = Some(s);
             }
-            if s.availability == Availability::Busy {
-                if let Some(r) = self.busy_reason(st, s.id) {
-                    s.reason = Some(r);
-                }
+            Err(e) => {
+                log::warn!("the local control server did not start: {e:#}");
+                lock(&self.st).notes.push(format!("[KLIF] klif-cli cannot reach this KLIF: {e:#}"));
             }
         }
-        slots
-    }
-
-    fn launch(&self, st: &mut State, slot: SlotId) -> Result<()> {
-        if st.session.as_ref().map(|s| s.phase == Phase::Fault).unwrap_or(false) {
-            // Launching over a faulted session ends that one (it becomes the last session).
-            self.dismiss(st)?;
-        }
-        if st.session.is_some() {
-            bail!("A session is already running. Stop it first.");
-        }
-        let Some(view) = self.slot_now(st, slot) else { bail!("Unknown slot {}.", slot.as_str()) };
-        if view.availability != Availability::Ready {
-            let reason = view.reason.clone().unwrap_or_else(|| format!("{:?}.", view.availability));
-            bail!("{} cannot start: {}", view.label, reason.trim_end_matches('.').to_string() + ".");
-        }
-        let recipe = st.recipes.get(&slot).cloned().ok_or_else(|| anyhow!("{} has no recipe.", slot.label()))?;
-        let key = if slot.kind() == SlotKind::Llm { self.api_key() } else { None };
-        let plan = self
-            .catalog
-            .plan(&self.cfg, slot, &recipe, key.as_ref(), timefmt::local_stamp())
-            .map_err(|e| anyhow!("{} cannot start: {}.", slot.label(), e.to_string().trim_end_matches('.')))?;
-        // One session at a time, and never on a port someone else holds.
-        match st.sup.port_owner(plan.port, None) {
-            PortOwner::Free => {}
-            PortOwner::Ours { pid } | PortOwner::Foreign { pid, .. } => {
-                let image = klif_supervisor::image_name(pid);
-                bail!("Port {} is in use by {image} (pid {pid}). KLIF will not stop a process it did not start.", plan.port);
-            }
-        }
-        let owned = st
-            .sup
-            .launch(&plan)
-            .map_err(|e| anyhow!("{} could not be started: {}.", slot.label(), format!("{e:#}").trim_end_matches('.')))?;
-        let record = owned.record.clone();
-        log::info!(
-            "launched {} as {} (pid {}, port {}, profile {})",
-            record.session_name,
-            slot.as_str(),
-            record.root_pid,
-            plan.port,
-            plan.profile_key
-        );
-        let api_key_set = slot.kind() == SlotKind::Llm && key.is_some();
-        drop(key);
-        let header = vec![
-            format!("[KLIF] started {} (powershell pid {})", record.session_name, record.root_pid),
-            format!("[KLIF] stdout: {}", record.out_log.display()),
-            format!("[KLIF] stderr: {}", record.err_log.display()),
-        ];
-        let p = PersistedSession {
-            record,
-            origin: SessionOrigin::Klif,
-            slot,
-            kind: slot.kind(),
-            card_id: plan.card_id.clone(),
-            ctx_tokens: plan.model.ctx_tokens,
-            model: ModelRef { arch: plan.model.arch.clone().or_else(|| st.arches.get(&plan.card_id).cloned()), ..plan.model.clone() },
-            recipe: Some(recipe),
-            host: plan.host.clone(),
-            spec_mode: plan.spec_mode.clone(),
-            api_key_set,
-        };
-        let sess = Sess::new(p, owned, Phase::Starting, header);
-        self.begin_session(st, sess, false);
-        self.persist(st);
-        Ok(())
-    }
-
-    fn begin_stop(&self, st: &mut State) {
-        let Some(sess) = st.session.as_mut() else { return };
-        if sess.phase == Phase::Stopping {
-            return;
-        }
-        let now = now_s();
-        log::info!("stopping {}", sess.p.record.session_name);
-        sess.phase = Phase::Stopping;
-        sess.stop_at = Some(now);
-        sess.tail.push(format!("[KLIF] stopping {}", sess.p.record.session_name));
-        sess.stopper = spawn_stop(sess.owned.clone(), "stop");
-    }
-
-    /// End a faulted session (it becomes the last session). Whatever is left of its tree is stopped first.
-    fn dismiss(&self, st: &mut State) -> Result<()> {
-        let Some(sess) = st.session.as_mut() else { return Ok(()) };
-        if sess.phase != Phase::Fault {
-            bail!("Stop the running session first.");
-        }
-        if let Some(h) = sess.cleanup.take() {
-            if let Err(e) = join_result(h) {
-                log::warn!("cleanup of {}: {e:#}", sess.p.record.session_name);
-            }
-        }
-        if !st.sup.tree_pids(&sess.owned).is_empty() {
-            st.sup.stop(&sess.owned).map_err(|e| anyhow!("The faulted session could not be cleaned up: {e:#}."))?;
-        }
-        st.pending_launch = None;
-        self.end_session(st, Ended::Fault, now_s());
-        Ok(())
-    }
-
-    fn end_session(&self, st: &mut State, ended: Ended, now: f64) {
-        let Some(sess) = st.session.take() else { return };
-        st.session_seq += 1;
-        let (up_end, ended_at) = match (ended, &sess.fault) {
-            (Ended::Fault, Some(f)) => (f.at, f.at),
-            _ => (sess.stop_at.unwrap_or(now), now),
-        };
-        let llm = sess.last_llm.as_ref();
-        let img = sess.last_image.as_ref();
-        let decode = sess.median_tps.or_else(|| {
-            median(llm.map(|l| l.requests.iter().filter(|r| r.decode_s > 0.0).map(|r| r.generated_tokens as f64 / r.decode_s).collect()).unwrap_or_default())
-        });
-        let summary = LastSession {
-            slot: sess.p.slot,
-            model: sess.p.model.clone(),
-            uptime_s: (up_end - sess.started_at()).max(0.0).round(),
-            ended_ago_s: 0.0,
-            ended,
-            requests: llm.map(|l| l.totals.requests),
-            generated_tokens: llm.map(|l| l.totals.generated_tokens),
-            decode_tps: decode.map(r1),
-            images: img.map(|i| i.images_this_session),
-            seconds_per_image: img.and_then(|i| median(i.recent.iter().map(|j| j.seconds).collect())).map(r1),
-        };
-        log::info!("session {} ended ({:?}) after {} s", sess.p.record.session_name, ended, summary.uptime_s);
-        st.last = Some(PersistedLast { summary, ended_at });
-        st.idle_tail = sess.tail.clone();
-        st.idle_tail.push(format!(
-            "[KLIF] {} {}",
-            sess.p.record.session_name,
-            if ended == Ended::Stopped { "stopped" } else { "ended with a fault" }
-        ));
-        self.tel(|t| t.unwatch());
-        self.persist(st);
-        if let Some(next) = st.pending_launch.take() {
-            if let Err(e) = self.launch(st, next) {
-                log::warn!("restart failed: {e:#}");
-                st.idle_tail.push(format!("[KLIF] restart failed: {e}"));
-            }
-        }
+        let cfg = self.cfg();
+        self.sync_listener(&cfg);
     }
 
     // ---- tick -------------------------------------------------------------------------------
@@ -882,40 +534,66 @@ impl Inner {
                 break;
             }
             let t = Instant::now();
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick()));
-            if r.is_err() {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick())).is_err() {
                 log::error!("engine tick panicked");
             }
             let el = t.elapsed();
             if el > Duration::from_millis(250) {
                 log::debug!("slow tick: {} ms", el.as_millis());
             }
-            next = Instant::now().max(next + TICK);
-            if next > Instant::now() + TICK {
-                next = Instant::now() + TICK;
-            }
+            next = Instant::now() + TICK;
         }
     }
 
+    /// One engine step: reload changed files, advance every session, fire ready launches, refresh port owners,
+    /// compose and publish the view model.
     pub(crate) fn tick(&self) {
-        let now = now_s();
         let vm = {
-            let mut st = lock(&self.st);
-            let seq = st.session_seq;
+            let _t = lock(&self.tick_lock);
+            let now = now_s();
+            self.reload_if_changed(now);
+            self.refresh_side_facts(now);
+            let cfg = self.cfg();
+            let catalog = self.catalog();
+            let remote = self.nodes.remote();
             let mut snap = self.tel(|t| t.snapshot());
-            self.advance(&mut st, snap.as_ref(), now);
-            self.check_legacy(&mut st, now);
-            if st.session_seq != seq {
+            let (ready, seq) = {
+                let mut st = lock(&self.st);
+                self.advance(&mut st, &cfg, snap.as_ref(), now);
+                self.sync_externals(&mut st, &cfg, &catalog, now);
+                let ready = self.drive_pending(&mut st, &cfg, now);
+                (ready, st.session_seq)
+            };
+            for id in ready {
+                if let Err(e) = self.fire(&id) {
+                    log::warn!("launch of {id} failed: {e:#}");
+                }
+            }
+            self.refresh_ports(&cfg, &catalog);
+            self.refresh_bench(&cfg, now);
+            if lock(&self.st).session_seq != seq {
                 snap = self.tel(|t| t.snapshot());
             }
-            self.refresh_ports(&mut st);
-            self.compose(&st, snap.as_ref(), now)
+            // The catalog probes files (programs, models, PATH; a dead network share blocks for its timeout): that
+            // happens here, never under `st`, so Stop / Launch / previews are not held up by it (SPEC 5).
+            let live = self.live_facts(&cfg);
+            let parts = compose::CatalogParts {
+                systems: catalog.systems(&cfg, &live),
+                presets: catalog.presets(&cfg, &live),
+                recommendations: catalog.recommendations(&cfg),
+            };
+            let (vm, focus) = {
+                let mut st = lock(&self.st);
+                self.compose(&mut st, &cfg, parts, snap.as_ref(), &remote, now)
+            };
+            *lock(&self.published) = Published { vm: vm.clone(), focus };
+            self.flush();
+            vm
         };
         self.publish(vm);
     }
 
     fn publish(&self, vm: ViewModel) {
-        *lock(&self.vm) = vm.clone();
         let subs: Vec<Subscriber> = lock(&self.subs).clone();
         for f in subs {
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&vm))).is_err() {
@@ -924,303 +602,25 @@ impl Inner {
         }
     }
 
-    fn advance(&self, st: &mut State, snap: Option<&TelemetrySnapshot>, now: f64) {
-        let mut learned = false;
-        let outcome = {
-            let State { sup, session, arches, .. } = &mut *st;
-            let Some(sess) = session.as_mut() else { return };
-            let ps = sup.state(&sess.owned);
-            let pids = match &ps {
-                ProcState::Running { pids } => pids.clone(),
-                _ => Vec::new(),
-            };
-            sess.known_pids.extend(pids.iter().copied());
-            self.tel(|t| t.set_session_pids(pids));
-            let sig = snap.and_then(|s| s.server.as_ref());
-            let console: &[String] = snap.map(|s| s.console.as_slice()).unwrap_or(&[]);
-            if let Some(sig) = sig {
-                if matches!(sess.phase, Phase::Live | Phase::Stopping) {
-                    if sig.llm.is_some() {
-                        sess.last_llm = sig.llm.clone();
-                    }
-                    if sig.image.is_some() {
-                        sess.last_image = sig.image.clone();
-                    }
-                    if sig.median_decode_tps.is_some() {
-                        sess.median_tps = sig.median_decode_tps;
-                    }
-                }
-                if let Some(a) = sig.arch.as_ref().filter(|a| sess.p.model.arch.as_ref() != Some(*a)) {
-                    sess.p.model.arch = Some(a.clone());
-                    if !sess.p.card_id.is_empty() {
-                        arches.insert(sess.p.card_id.clone(), a.clone());
-                    }
-                    learned = true;
-                }
-            }
-            if let Some(t) = snap {
-                self.narrate_dormancy(sess, t);
-            }
-            match sess.phase {
-                Phase::Stopping => {
-                    if sess.stopper.as_ref().map(|h| h.is_finished()).unwrap_or(true) {
-                        match sess.stopper.take().map(join_result).unwrap_or(Ok(())) {
-                            Ok(()) => Outcome::End(Ended::Stopped),
-                            Err(e) => {
-                                log::error!("stop failed: {e:#}");
-                                let mut f = build_fault(sess.p.kind, Phase::Live, &Cause::Gone, sig, console, now);
-                                f.title = format!("KLIF could not stop the session: {}.", format!("{e:#}").trim_end_matches('.'));
-                                f.steps = None;
-                                Outcome::Fault(f, false)
-                            }
-                        }
-                    } else {
-                        Outcome::Nothing
-                    }
-                }
-                Phase::Fault => {
-                    if sess.cleanup.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
-                        if let Some(h) = sess.cleanup.take() {
-                            match join_result(h) {
-                                Ok(()) => sess.tail.push("[KLIF] the rest of the session's processes were stopped".into()),
-                                Err(e) => sess.tail.push(format!("[KLIF] cleanup failed: {e:#}")),
-                            }
-                        }
-                    }
-                    Outcome::Nothing
-                }
-                Phase::Starting | Phase::Loading | Phase::Live => match ps {
-                    ProcState::Exited { code } => {
-                        let left = !sup.tree_pids(&sess.owned).is_empty();
-                        Outcome::Fault(build_fault(sess.p.kind, sess.phase, &Cause::Exited(code), sig, console, now), left)
-                    }
-                    ProcState::Gone => Outcome::Fault(build_fault(sess.p.kind, sess.phase, &Cause::Gone, sig, console, now), false),
-                    ProcState::Running { .. } => {
-                        let health = sig.map(|s| s.health).unwrap_or(Health::Down);
-                        let fatal = sig.map(|s| s.fatal_hint.is_some()).unwrap_or(false);
-                        let mut out = Outcome::Nothing;
-                        if fatal && health != Health::Ready {
-                            let since = *sess.fatal_since.get_or_insert(now);
-                            if now - since >= FATAL_GRACE_S {
-                                out = Outcome::Fault(build_fault(sess.p.kind, sess.phase, &Cause::Fatal, sig, console, now), true);
-                            }
-                        } else {
-                            sess.fatal_since = None;
-                        }
-                        if matches!(out, Outcome::Nothing) {
-                            if health == Health::Ready && sess.phase != Phase::Live {
-                                log::info!("{} is live", sess.p.record.session_name);
-                                sess.phase = Phase::Live;
-                                sess.been_live = true;
-                            } else if sess.phase == Phase::Starting && sig.map(progressed).unwrap_or(false) {
-                                sess.phase = Phase::Loading;
-                            }
-                        }
-                        out
-                    }
-                },
-            }
-        };
-        if learned {
-            self.persist(st);
-        }
-        match outcome {
-            Outcome::Nothing => {}
-            Outcome::End(ended) => self.end_session(st, ended, now),
-            Outcome::Fault(f, cleanup) => {
-                let Some(sess) = st.session.as_mut() else { return };
-                log::warn!("{} faulted: {}", sess.p.record.session_name, f.title);
-                sess.tail.push(format!("[KLIF] fault: {}", f.title));
-                sess.phase = Phase::Fault;
-                sess.fault = Some(f);
-                sess.stopper = None;
-                if cleanup {
-                    sess.tail.push("[KLIF] stopping what is left of the session's processes".into());
-                    sess.cleanup = spawn_stop(sess.owned.clone(), "cleanup");
-                }
-                st.pending_launch = None;
-                self.persist(st);
-            }
-        }
-    }
-
-    /// The inference card's EnableUlps (read-only registry check; None without a configured card).
-    pub(crate) fn ulps(&self) -> Option<UlpsSetting> {
-        self.cfg.gpu.inference.as_deref().and_then(klif_telemetry::ulps_setting)
-    }
-
-    /// Console lines when the inference GPU goes dormant with the session loaded, and when it is back.
-    fn narrate_dormancy(&self, sess: &mut Sess, snap: &TelemetrySnapshot) {
-        let f = &snap.dormancy;
-        let dev = match snap.vram.device.trim() {
-            "" => "The inference GPU",
-            d => d,
-        };
-        if let Some(e) = f.last_entry.as_ref().filter(|e| e.episode > sess.dormant_logged) {
-            sess.dormant_logged = e.episode;
-            // Only a live session sleeps; anything seen while stopping is the teardown.
-            if sess.phase == Phase::Live {
-                let ulps = self.ulps();
-                log::info!(
-                    "inference GPU dormant (episode {}): {:.2} GiB paged out, power {:?}, EnableUlps {:?} ({})",
-                    e.episode,
-                    e.paged_out_gib,
-                    e.power,
-                    ulps.as_ref().and_then(|u| u.enable_ulps),
-                    ulps.as_ref().map(|u| u.key.as_str()).unwrap_or("no driver key")
-                );
-                let line = dormant_line(dev, e, ulps.as_ref().map(UlpsSetting::is_on).unwrap_or(false));
-                self.tel(|t| t.note(line));
-            } else {
-                sess.wake_logged = e.episode;
-            }
-        }
-        if let Some(w) = f.last_wake.as_ref().filter(|w| w.episode > sess.wake_logged) {
-            sess.wake_logged = w.episode;
-            log::info!("inference GPU awake (episode {}): {:.1} s, {:.2} GiB resident", w.episode, w.seconds, w.resident_gib);
-            let line = wake_line(dev, w);
-            self.tel(|t| t.note(line));
-        }
-    }
-
-    fn refresh_ports(&self, st: &mut State) {
-        let mut ports: BTreeSet<u16> = st.tier_ports.values().copied().collect();
-        if let Some(s) = &st.session {
-            ports.insert(s.p.record.port);
-        }
-        let ours = st.session.as_ref().map(|s| s.owned.clone());
-        let known = st.session.as_ref().map(|s| &s.known_pids);
-        let owners: BTreeMap<u16, PortOwner> = ports
-            .into_iter()
-            .map(|p| {
-                let o = match st.sup.port_owner(p, ours.as_deref()) {
-                    PortOwner::Foreign { pid, .. } if known.is_some_and(|k| k.contains(&pid)) => PortOwner::Ours { pid },
-                    o => o,
-                };
-                (p, o)
-            })
-            .collect();
-        st.port_owners = owners;
-    }
-
-    fn live_facts(st: &State) -> LiveFacts {
-        LiveFacts {
-            foreign_ports: st.port_owners.iter().filter(|(_, o)| matches!(o, PortOwner::Foreign { .. })).map(|(p, _)| *p).collect(),
-        }
-    }
-
-    fn busy_reason(&self, st: &State, slot: SlotId) -> Option<String> {
-        let port = *st.tier_ports.get(&slot)?;
-        match st.port_owners.get(&port)? {
-            PortOwner::Foreign { pid, image } => {
-                Some(format!("Port {port} is in use by {image} (pid {pid}), which KLIF did not start"))
-            }
-            _ => None,
-        }
-    }
-
-    fn compose(&self, st: &State, snap: Option<&TelemetrySnapshot>, now: f64) -> ViewModel {
-        let slots = self.slots_view(st);
-        let (vram, system) = match snap {
-            Some(t) => (t.vram.clone(), t.system.clone()),
-            None => {
-                let prev = lock(&self.vm);
-                (prev.vram.clone(), prev.system.clone())
-            }
-        };
-        let sig = snap.and_then(|s| s.server.as_ref());
-        let session = st.session.as_ref().map(|s| self.session_vm(s, sig, now));
-
-        let mut console: Vec<String> = Vec::new();
-        match &st.session {
-            Some(s) => console.extend(s.header.iter().cloned()),
-            None => console.extend(st.notes.iter().cloned()),
-        }
-        if let Some(t) = snap {
-            console.extend(t.console.iter().cloned());
-        }
-        match &st.session {
-            Some(s) => console.extend(s.tail.iter().cloned()),
-            None => console.extend(st.idle_tail.iter().cloned()),
-        }
-        if console.len() > CONSOLE_LEN {
-            console.drain(..console.len() - CONSOLE_LEN);
-        }
-
-        let last_session = st.last.as_ref().map(|l| {
-            let mut s = l.summary.clone();
-            s.ended_ago_s = r1((now - l.ended_at).max(0.0));
-            s
-        });
-        ViewModel {
-            now,
-            slots,
-            selected: st.session.as_ref().map(|s| s.p.slot).unwrap_or(st.selected),
-            session,
-            vram,
-            system,
-            last_session,
-            host: st.host.clone(),
-            console,
-        }
-    }
-
-    fn session_vm(&self, s: &Sess, sig: Option<&ServerSignals>, now: f64) -> Session {
-        let end = match (&s.fault, s.phase) {
-            (Some(f), Phase::Fault) => f.at,
-            _ => now,
-        };
-        let uptime = r1((end - s.started_at()).max(0.0));
-        let loading = matches!(s.phase, Phase::Starting | Phase::Loading).then(|| {
-            let (steps, fraction) = match sig {
-                Some(g) if !g.load_steps.is_empty() => (g.load_steps.clone(), g.load_fraction),
-                _ => (initial_steps(s.p.kind), 0.0),
-            };
-            LoadProgress { steps, fraction: (fraction * 100.0).round() / 100.0, elapsed_s: uptime }
-        });
-        let fault = s.fault.as_ref().filter(|_| s.phase == Phase::Fault).map(|f| Fault {
-            title: f.title.clone(),
-            exit_code: f.exit_code,
-            exit_code_hex: f.exit_code_hex.clone(),
-            log_tail: f.log_tail.clone(),
-            since_s: r1((now - f.at).max(0.0)),
-            steps: f.steps.clone(),
-        });
-        let show_live = match s.phase {
-            Phase::Live | Phase::Stopping => true,
-            Phase::Fault => s.been_live,
-            _ => false,
-        };
-        let (llm, image) = if show_live {
-            match s.phase {
-                // A faulted or stopping server says nothing new: show what it last said.
-                Phase::Fault => (s.last_llm.clone(), s.last_image.clone()),
-                _ => (
-                    sig.and_then(|g| g.llm.clone()).or_else(|| s.last_llm.clone()),
-                    sig.and_then(|g| g.image.clone()).or_else(|| s.last_image.clone()),
-                ),
-            }
-        } else {
-            (None, None)
-        };
-        Session {
-            slot: s.p.slot,
-            model: s.p.model.clone(),
-            phase: s.phase,
-            uptime_s: uptime,
-            endpoint: Endpoint { host: display_host(&s.p.host).to_string(), port: s.p.record.port },
-            api_key_set: s.p.api_key_set,
-            loading,
-            fault,
-            llm: if s.p.kind == SlotKind::Llm { llm } else { None },
-            image: if s.p.kind == SlotKind::Image { image } else { None },
-        }
-    }
-
     // ---- host-facing ------------------------------------------------------------------------
 
     pub(crate) fn snapshot(&self) -> ViewModel {
-        lock(&self.vm).clone()
+        lock(&self.published).vm.clone()
+    }
+
+    pub(crate) fn snapshot_focus(&self, focus: Option<&SystemId>) -> ViewModel {
+        let p = lock(&self.published);
+        let mut vm = p.vm.clone();
+        let Some(id) = focus else { return vm };
+        let Some(sys) = vm.systems.iter().find(|s| &s.id == id).cloned() else { return vm };
+        vm.session = sys.session.clone();
+        vm.last_session = sys.last_session.clone();
+        if let Some(f) = p.focus.get(id) {
+            vm.console = f.console.clone();
+            vm.vram = f.vram.clone();
+        }
+        vm.selected = Some(sys.id);
+        vm
     }
 
     pub(crate) fn subscribe(&self, f: Box<dyn Fn(&ViewModel) + Send + Sync>) {
@@ -1232,10 +632,153 @@ impl Inner {
         self.poke();
     }
 
-    pub(crate) fn endpoint_url(&self) -> Option<String> {
-        let st = lock(&self.st);
-        let s = st.session.as_ref().filter(|s| s.phase != Phase::Fault)?;
-        Some(url_for(&s.p.host, s.p.record.port))
+    pub(crate) fn endpoint_url(&self, system: Option<&SystemId>) -> Option<String> {
+        let p = lock(&self.published);
+        let id = system.cloned().or_else(|| p.vm.selected.clone())?;
+        let s = p.vm.systems.iter().find(|s| s.id == id)?;
+        matches!(s.status, SystemStatus::Online | SystemStatus::Busy | SystemStatus::Starting).then(|| s.endpoint.clone()).flatten()
+    }
+
+    pub(crate) fn api_key(&self) -> Option<Secret> {
+        keys::load(&self.cfg())
+    }
+
+    /// A preset in full (masked). Ok(None): there is no such preset (a node answers null for that). A remote node
+    /// that cannot be asked, refuses or answers something unreadable is an Err with its sentence, never "no such
+    /// preset".
+    pub(crate) fn preset(&self, id: &str, node: Option<&str>) -> Result<Option<PresetDetail>> {
+        if let Some(node) = node.map(str::trim).filter(|n| !n.is_empty()) {
+            let v = self.nodes.call(node, "preset", serde_json::json!({ "id": id }))?;
+            if v.is_null() {
+                return Ok(None);
+            }
+            let mut d: PresetDetail = serde_json::from_value(v)
+                .map_err(|e| anyhow!("Node \"{node}\": the preset could not be read ({e}). Use the same KLIF version on both machines."))?;
+            d.info.node = Some(node.to_string());
+            return Ok(Some(d));
+        }
+        let cfg = self.cfg();
+        let live = self.live_facts(&cfg);
+        Ok(self.catalog().preset_detail(&cfg, id, &live))
+    }
+
+    pub(crate) fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> CommandView {
+        if let Some(node) = system.and_then(|s| s.node()) {
+            // A clear secret never crosses plain TCP (SPEC 7 / 16.10), whichever frontend asks (Tune's live preview,
+            // klif-cli, any control client). MASK passes: the node keeps its stored value.
+            let clear = actions::clear_secrets(spec);
+            if !clear.is_empty() {
+                return CommandView {
+                    adapter: spec.adapter,
+                    issues: vec![Issue::error(None, format!("{} ({}).", actions::REMOTE_SECRET_REFUSAL, clear.join(", ")))],
+                    ..CommandView::default()
+                };
+            }
+            let local = system.map(|s| s.local().to_string());
+            let params = serde_json::json!({ "spec": spec, "system": local });
+            return match self.nodes.call(node, "command_preview", params).and_then(|v| Ok(serde_json::from_value::<CommandView>(v)?)) {
+                Ok(c) => c,
+                Err(e) => CommandView {
+                    adapter: spec.adapter,
+                    issues: vec![Issue::error(None, format!("Node \"{node}\" could not preview the command: {e:#}"))],
+                    ..CommandView::default()
+                },
+            };
+        }
+        let cfg = self.cfg();
+        let live = self.live_facts(&cfg);
+        self.catalog().command_view(&cfg, spec, system, &live)
+    }
+
+    pub(crate) fn plan(&self, system: &SystemId) -> Result<CommandView> {
+        if let Some(node) = system.node() {
+            let v = self.nodes.call(node, "plan", serde_json::json!({ "system": system.local() }))?;
+            return Ok(serde_json::from_value(v)?);
+        }
+        let cfg = self.cfg();
+        let catalog = self.catalog();
+        if cfg.system(system.as_str()).is_none() {
+            if lock(&self.st).sessions.contains_key(system) {
+                anyhow::bail!("{} is not in klif.toml any more; it can only be stopped.", system);
+            }
+            anyhow::bail!("There is no System \"{system}\".");
+        }
+        let Some((_, spec)) = cfg.system_preset(system.as_str()) else {
+            // No preset, a missing one or one that does not parse: nothing to show; the catalog's sentence says
+            // which (resolving stops before any file probe).
+            return catalog.plan(&cfg, system, None, timefmt::FIXED_STAMP).map(|p| p.command);
+        };
+        let live = self.live_facts(&cfg);
+        // The System's view: also the cross-System "shares port N" and foreign-port-holder warnings.
+        let view = catalog.command_view(&cfg, spec, Some(system), &live);
+        if spec.is_external() {
+            return Ok(view);
+        }
+        let key = keys::load(&cfg);
+        match catalog.plan(&cfg, system, key.as_ref(), timefmt::FIXED_STAMP) {
+            Ok(p) => {
+                let mut c = p.command;
+                for i in view.issues.into_iter().filter(|i| !i.is_error()) {
+                    if !c.issues.iter().any(|x| x.text == i.text) {
+                        c.issues.push(i);
+                    }
+                }
+                Ok(c)
+            }
+            // Not launchable now (error issues, a program that does not resolve...): still the command it would run,
+            // with the errors (`klif-cli plan` then says launchable: no). An Invalid System is shown, not refused.
+            Err(e) => {
+                let mut c = view;
+                if !c.issues.iter().any(Issue::is_error) {
+                    c.issues.push(Issue::error(None, format!("{e:#}")));
+                }
+                Ok(c)
+            }
+        }
+    }
+
+    pub(crate) fn config_path(&self) -> Option<PathBuf> {
+        self.cfg().source
+    }
+
+    pub(crate) fn ensure_config(&self) -> Result<PathBuf> {
+        let cfg = self.cfg();
+        let p = klif_catalog::store::ensure_file(&cfg)?;
+        self.reload_config(true);
+        Ok(p)
+    }
+
+    pub(crate) fn set_api_key(&self, key: Option<Secret>) -> Result<()> {
+        let r = keys::store(&self.cfg(), key.as_ref());
+        lock(&self.files).key = None;
+        self.poke();
+        r
+    }
+
+    pub(crate) fn diag(&self) -> serde_json::Value {
+        self.diag_json()
+    }
+
+    pub(crate) fn ulps(&self) -> Option<UlpsSetting> {
+        self.cfg().gpu.inference.as_deref().and_then(|g| self.ulps_for(g))
+    }
+
+    /// ULPS of one GPU (cached; read on first use).
+    pub(crate) fn ulps_for(&self, gpu: &str) -> Option<UlpsSetting> {
+        let pci = gpu.split('#').next().unwrap_or(gpu).trim().to_string();
+        if pci.is_empty() || pci.eq_ignore_ascii_case("cpu") {
+            return None;
+        }
+        let mut cache = lock(&self.ulps);
+        cache.entry(pci.clone()).or_insert_with(|| klif_telemetry::ulps_setting(&pci)).clone()
+    }
+
+    pub(crate) fn state_dir(&self) -> PathBuf {
+        self.state_dir.clone()
+    }
+
+    pub(crate) fn data_dir(&self) -> PathBuf {
+        self.data_dir.clone()
     }
 
     pub(crate) fn shutdown(&self) {
@@ -1247,21 +790,28 @@ impl Inner {
             let _ = h.join();
         }
         {
-            let st = lock(&self.st);
-            self.persist(&st);
+            let mut s = lock(&self.servers);
+            if let Some(n) = s.network.take() {
+                n.shutdown();
+            }
+            if let Some(l) = s.local.take() {
+                l.shutdown();
+            }
+            s.auth = None;
         }
+        self.nodes.shutdown();
+        for (_, h) in std::mem::take(&mut lock(&self.downloads).handles) {
+            h.cancel();
+        }
+        lock(&self.st).dirty = true;
+        self.flush();
         // Dropping the telemetry joins its threads. Servers are left running by design.
         let t = lock(&self.telemetry).take();
         drop(t);
+        if let Some(f) = lock(&self.engine_lock).take() {
+            let _ = f.unlock();
+        }
         log::info!("engine stopped (servers keep running)");
     }
-
-    /// Recipes and ports as the engine sees them (for tools).
-    pub(crate) fn recipe(&self, slot: SlotId) -> Option<Recipe> {
-        lock(&self.st).recipes.get(&slot).cloned()
-    }
-
-    pub(crate) fn state_dir(&self) -> PathBuf {
-        self.cfg.state_dir.clone()
-    }
 }
+

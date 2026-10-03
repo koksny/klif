@@ -1,4 +1,4 @@
-//! Live telemetry sample: lists DXGI adapters, then prints one GpuMemory + SystemStats snapshot of
+//! Live telemetry sample: lists DXGI adapters, then prints one GpuMemory + MachineStats snapshot of
 //! the inference adapter taken by the real sampler thread.
 //!
 //!   cargo run -p klif-telemetry --example sample [-- VEN:DEV] [--pid N ...] [--secs S]
@@ -10,7 +10,7 @@
 //!   it would only add an "unauthorized" line to a running server's log).
 //! - `--tail` watches a scratch log next to LOGCOPY (a COPY of a llama-server .err.log) through the
 //!   real Telemetry threads (probes on) while this process appends the copy's lines, then prints
-//!   the ServerSignals summary and the console tail.
+//!   the SessionSignals summary and the console tail.
 //!
 //! Nothing is started or stopped besides this process's own threads.
 
@@ -36,7 +36,7 @@ fn main() {
             _ => pci = Some(a),
         }
     }
-    let cfg = klif_common::config::Config::load().ok();
+    let cfg = Some(klif_common::config::load().cfg);
     let from_cfg = pci.is_none();
     let pci = pci.or_else(|| cfg.as_ref().and_then(|c| c.gpu.inference.clone()));
     let warn = cfg.as_ref().map(|c| c.telemetry.warn_below_gib).unwrap_or(0.15);
@@ -75,7 +75,7 @@ fn main() {
         None => println!("== no inference adapter resolved (pass VEN:DEV or set gpu.inference)"),
     }
 
-    let t = Telemetry::start(inf, warn);
+    let t = Telemetry::start(inf.into_iter().collect(), warn);
     let mut writer: Option<(std::fs::File, Vec<String>)> = None;
     if let Some(src) = &tail {
         let dir = src.parent().unwrap().join("run-live-tail");
@@ -86,16 +86,23 @@ fn main() {
         std::fs::File::create(&out).unwrap();
         let lines: Vec<String> = String::from_utf8_lossy(&std::fs::read(src).unwrap()).lines().map(|l| l.to_string()).collect();
         t.watch(
+            "sample",
             WatchSpec {
-                kind: klif_common::vm::SlotKind::Llm,
-                out_log: out,
-                err_log: err,
+                kind: klif_common::vm::SystemKind::Llm,
+                adapter: klif_common::vm::AdapterId::LlamaCpp,
+                external: false,
+                out_log: Some(out),
+                err_log: Some(err),
                 host: "127.0.0.1".into(),
                 port: 7030,
                 api_key: None,
                 started_at: klif_common::now_s(),
                 ctx_tokens: None,
                 spec_mode: None,
+                health: klif_common::vm::HealthCheck::Auto,
+                metrics: false,
+                expect_device: None,
+                gpu: None,
             },
             false,
         );
@@ -104,22 +111,29 @@ fn main() {
         // A session with no logs: only the per-process measurement feeds the session layer.
         let dir = std::env::temp_dir();
         t.watch(
+            "sample",
             WatchSpec {
-                kind: klif_common::vm::SlotKind::Llm,
-                out_log: dir.join("klif-sample-none.out.log"),
-                err_log: dir.join("klif-sample-none.err.log"),
+                kind: klif_common::vm::SystemKind::Llm,
+                adapter: klif_common::vm::AdapterId::LlamaCpp,
+                external: false,
+                out_log: Some(dir.join("klif-sample-none.out.log")),
+                err_log: Some(dir.join("klif-sample-none.err.log")),
                 host: "127.0.0.1".into(),
                 port: 9,
                 api_key: None,
                 started_at: klif_common::now_s(),
                 ctx_tokens: None,
                 spec_mode: None,
+                health: klif_common::vm::HealthCheck::Auto,
+                metrics: false,
+                expect_device: None,
+                gpu: None,
             },
             false,
         );
     }
     if !pids.is_empty() {
-        t.set_session_pids(pids.clone());
+        t.set_session_pids("sample", pids.clone());
     }
     match writer.as_mut() {
         Some((f, lines)) => {
@@ -138,12 +152,14 @@ fn main() {
     }
     let snap = t.snapshot();
     println!("== GpuMemory (session pids: {:?})", pids);
-    println!("{}", serde_json::to_string_pretty(&snap.vram).unwrap());
-    println!("== SystemStats");
-    println!("{}", serde_json::to_string_pretty(&snap.system).unwrap());
-    println!("spill_mib = {}", snap.spill_mib);
-    if let Some(s) = &snap.server {
-        println!("== ServerSignals: health {:?}, load {:.2}, fatal {:?}", s.health, s.load_fraction, s.fatal_hint);
+    for g in &snap.gpus {
+        println!("{}", serde_json::to_string_pretty(&g.memory).unwrap());
+    }
+    println!("== MachineStats");
+    println!("{}", serde_json::to_string_pretty(&snap.machine).unwrap());
+    if let Some(s) = snap.sessions.get("sample") {
+        println!("spill_mib = {}", s.spill_mib);
+        println!("== SessionSignals: health {:?}, load {:.2}, fatal {:?}", s.health, s.load_fraction, s.fatal_hint);
         for st in &s.load_steps {
             println!("   {:?} {:?} {:?}", st.id, st.state, st.detail);
         }
@@ -154,10 +170,10 @@ fn main() {
                 l.activity, l.decode_tps, l.generated_tokens, l.context.used_tokens, l.context.total_tokens, l.totals.requests, l.spec
             );
         }
-        println!("== console: {} lines, last 3:", snap.console.len());
-        for c in snap.console.iter().rev().take(3).rev() {
+        println!("== console: {} lines, last 3:", s.console.len());
+        for c in s.console.iter().rev().take(3).rev() {
             println!("   {}", c.chars().take(150).collect::<String>());
         }
     }
-    t.unwatch();
+    t.unwatch("sample");
 }

@@ -1,18 +1,19 @@
 // Ether text helpers: display strings derived from ViewModel fields (never invented values).
-import type { Availability, GpuMemory, LastSession, ModelArch, ModelRef, Slot, SlotKind } from '../../lib/model/types';
-import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
+import type { Availability, GpuMemory, LastSession, ModelArch, ModelRef, System, SystemKind } from '../../lib/model/types';
+import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { shortLabel as tierShort } from '../../lib/model/systems';
 
-/** Why a slot cannot launch, in plain words. */
+/** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
   switch (a) {
     case 'ready':
       return 'ready';
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
+    case 'invalid':
+      return 'needs fixing';
     case 'unsupported':
       return 'unsupported';
     case 'busy':
@@ -43,12 +44,12 @@ export function fmtEta(sec: number): string {
 }
 
 /** The model line: "Qwen 3.8 27B · GSQ-RCO IQ3_S · HIP · RX 9070 XT · ctx 96k · kv q8_0" (image: engine and size). */
-export function modelLine(m: ModelRef | undefined, kind: SlotKind): string {
+export function modelLine(m: ModelRef | undefined, kind: SystemKind): string {
   if (!m) return '';
   const parts: (string | undefined | false)[] = [
     m.name,
     m.quant,
-    kind === 'image' && m.engine,
+    kind !== 'llm' && m.engine,
     m.backend,
     m.device,
     m.ctxTokens ? `ctx ${fmtCtx(m.ctxTokens)}` : m.imageSize,
@@ -85,8 +86,8 @@ export function lastSpeed(ls: LastSession): { value: string; unit: string } | nu
 }
 
 /** "last S2 · ran 2 h 14 min · 412 requests · stopped 12 min ago" (compact: tier and end only). The speed is the figure. */
-export function lastSessionText(ls: LastSession, slots: Slot[], compact = false): string {
-  const label = tierShort(slots.find((x) => x.id === ls.slot)?.label ?? ls.model.name);
+export function lastSessionText(ls: LastSession, systems: System[], compact = false): string {
+  const label = tierShort(systems.find((x) => x.id === ls.system)?.label ?? ls.model.name);
   const end = ls.ended === 'fault' ? `fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
   if (compact) return [`last ${label}`, end].join(' · ');
   const count = ls.requests !== undefined ? `${fmtInt(ls.requests)} requests` : ls.images !== undefined ? `${fmtInt(ls.images)} images` : '';
@@ -100,8 +101,8 @@ export function baselineOf(vram: GpuMemory): number {
 }
 
 /** The selected tier's expected footprint on top of what is in use (idle fit preview), or null. */
-export function fitOf(vram: GpuMemory, slot: Slot | undefined): { base: number; top: number; spare: number } | null {
-  if (!slot?.expectedVram?.length) return null;
+export function fitOf(vram: GpuMemory, slot: System | undefined): { base: number; top: number; spare: number } | null {
+  if (!slot?.expectedVram?.length || slot.external) return null;
   const base = Math.max(baselineOf(vram), vram.usedGiB);
   const top = base + slot.expectedVram.reduce((a, l) => a + l.gib, 0);
   return { base, top, spare: vram.totalGiB - top };

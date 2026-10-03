@@ -6,11 +6,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use klif_common::vm::HostInfo;
+use klif_telemetry::Adapter;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 use crate::engine::EngineHandle;
 use crate::geometry::GeometryStore;
-use crate::gpu::{Adapter, GpuReport};
 use crate::panel::PanelCtl;
 use crate::webview;
 
@@ -18,8 +19,32 @@ pub const MAIN: &str = "main";
 
 enum EngineState {
     Starting,
+    /// Another process holds the engine (`engine.lock`); the shell retries every 2 s. The text is the sentence
+    /// shown to the user.
+    Waiting(String),
     Ready(EngineHandle),
     Failed(String),
+}
+
+/// Where the engine start stands, for the UI's Connecting screen (`klif_engine_status`).
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineStatus {
+    /// "starting" | "waiting" | "ready" | "failed".
+    pub state: &'static str,
+    /// The sentence to show (waiting / failed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// What the UI is told after the WebView2 GPU check (event `klif://gpu`).
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuReport {
+    pub ok: bool,
+    /// The adapter the WebView2 GPU process renders on, if found.
+    pub adapter: Option<String>,
+    /// The adapter it was pinned to, if any.
+    pub expected: Option<String>,
+    pub pid: Option<u32>,
 }
 
 pub struct Shell {
@@ -70,11 +95,27 @@ impl Shell {
         self.engine_cv.notify_all();
     }
 
+    /// The engine start found `engine.lock` held by someone else and will try again.
+    pub fn set_waiting(&self, message: String) {
+        *self.engine.lock().unwrap() = EngineState::Waiting(message);
+        self.engine_cv.notify_all();
+    }
+
+    pub fn engine_status(&self) -> EngineStatus {
+        match &*self.engine.lock().unwrap() {
+            EngineState::Starting => EngineStatus { state: "starting", message: None },
+            EngineState::Waiting(m) => EngineStatus { state: "waiting", message: Some(m.clone()) },
+            EngineState::Ready(_) => EngineStatus { state: "ready", message: None },
+            EngineState::Failed(e) => EngineStatus { state: "failed", message: Some(e.clone()) },
+        }
+    }
+
     /// The engine if it is ready (never blocks).
     pub fn engine(&self) -> Result<EngineHandle, String> {
         match &*self.engine.lock().unwrap() {
             EngineState::Ready(h) => Ok(h.clone()),
             EngineState::Starting => Err("The KLIF core is still starting.".into()),
+            EngineState::Waiting(m) => Err(m.clone()),
             EngineState::Failed(e) => Err(e.clone()),
         }
     }
@@ -83,14 +124,17 @@ impl Shell {
         self.engine().ok()
     }
 
-    /// Wait (blocking) until the engine started or failed.
+    /// Wait (blocking) until the engine started or failed. `timeout` bounds the start itself; time spent
+    /// waiting for another process to release `engine.lock` does not count (the shell keeps retrying, so the
+    /// UI keeps waiting instead of giving up on a core that is about to come).
     pub fn wait_engine(&self, timeout: Duration) -> Result<EngineHandle, String> {
-        let deadline = Instant::now() + timeout;
+        let mut deadline = Instant::now() + timeout;
         let mut g = self.engine.lock().unwrap();
         loop {
             match &*g {
                 EngineState::Ready(h) => return Ok(h.clone()),
                 EngineState::Failed(e) => return Err(e.clone()),
+                EngineState::Waiting(_) => deadline = Instant::now() + timeout,
                 EngineState::Starting => {}
             }
             let left = deadline.saturating_duration_since(Instant::now());

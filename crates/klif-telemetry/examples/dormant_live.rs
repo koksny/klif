@@ -21,7 +21,7 @@ fn main() {
             _ => {}
         }
     }
-    let cfg = klif_common::config::Config::load().expect("klif.toml");
+    let cfg = klif_common::config::load().cfg;
     let pci = cfg.gpu.inference.clone().expect("gpu.inference");
     let adapter = find_adapter(&pci).expect("inference adapter");
     println!("== {} ({}), pdh {}, pids {:?}", adapter.name, adapter.pci_id(), adapter.pdh_luid(), pids);

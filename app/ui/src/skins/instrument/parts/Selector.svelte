@@ -1,79 +1,132 @@
 <script lang="ts">
-  // Rotary MODE selector: a knob with one detent per tier, printed leader lines to each label, and a
-  // state column of lamps on the right. One layout in every phase (idle, loading, live, fault).
-  // Pointer = the running tier (or the launcher's selection while idle). Click selects, double-click asks
-  // to launch (the caller decides whether that is allowed right now).
-  // Per tier the state column reads: ready / cannot launch (why) / the running tier's phase / locked while
-  // a session starts or stops. Locked clicks still reach onselect so the core can say why it refuses.
-  import type { Slot, SlotId } from '../../../lib/model/types';
+  // Rotary MODE selector: a knob with one detent per System (a window of four at a time when there are more:
+  // it follows the selected System; the chevrons scroll it without selecting anything and carry one small lamp
+  // per System out of view, so a fault or a running System there still shows), printed leader lines to each
+  // label, and a state column of lamps on the right. One layout in every phase. The pointer is the selected
+  // System.
+  // Click selects (never stops anything), double-click launches a System that is ready and has nothing in its
+  // way. A row carries the shared status dot, the label (ellipsis) and, for a remote System, its node.
+  import type { SystemId, ViewModel } from '../../../lib/model/types';
+  import { blockedText, canLaunch, STATUS_TEXT } from '../../../lib/model/systems';
+  import TabLabel from '../../../lib/shell/SystemTabs/TabLabel.svelte';
+  import { tabsFor, type SystemTab } from '../../../lib/shell/SystemTabs/tabs';
   import { availLabel, slotSubtitle } from '../theme';
   import Icon from './Icon.svelte';
 
   let {
-    slots,
+    vm,
     pointer,
-    selected,
-    running,
-    runWord = 'running',
-    locked = false,
     tone = 'cyan',
+    sleepWord = null,
     onselect,
     onlaunch,
   }: {
-    slots: Slot[];
-    pointer: SlotId;
-    selected: SlotId;
-    running: SlotId | null;
-    /** What the running tier is doing: "starting", "running", "stopping", "fault", "asleep". */
-    runWord?: string;
-    /** A session is starting or stopping: every other tier is locked. */
-    locked?: boolean;
-    /** orange = the running tier faulted; amber = its GPU is dormant. */
+    vm: ViewModel;
+    pointer: SystemId;
+    /** orange = the pointer System faulted; amber = its GPU is dormant. */
     tone?: 'cyan' | 'orange' | 'amber';
-    onselect?: (id: SlotId) => void;
-    onlaunch?: (id: SlotId) => void;
+    /** The pointer System's GPU is dormant: its state word reads "asleep" / "waking". */
+    sleepWord?: string | null;
+    onselect?: (id: SystemId) => void;
+    onlaunch?: (id: SystemId) => void;
   } = $props();
 
   const uid = $props.id();
+  const MAXV = 4;
 
   // Geometry in unscaled px (multiplied by --u in CSS).
   const G = { rowH: 25, R: 41, cx: 50, rho: 52, dotX: 136, pad: 3 };
   const W = G.dotX;
-  const n = $derived(Math.max(1, slots.length));
+  const all = $derived(tabsFor(vm));
+  const selIdx = $derived(Math.max(0, all.findIndex((t) => t.id === pointer)));
+  // A number, so the 2 Hz snapshot (a new list every tick) does not reset a window the chevrons moved.
+  const count = $derived(all.length);
+  const clampStart = (i: number) => Math.max(0, Math.min(count - MAXV, i));
+  /** First System in view: follows the pointer; the chevrons move it (until the pointer or the count changes). */
+  let start = $derived(clampStart(selIdx - Math.floor(MAXV / 2)));
+  const shown = $derived(all.slice(start, start + MAXV));
+  const hiddenAbove = $derived(all.slice(0, start));
+  const hiddenBelow = $derived(all.slice(start + shown.length));
+  const above = $derived(hiddenAbove.length);
+  const below = $derived(hiddenBelow.length);
+  const ptrShown = $derived(shown.some((t) => t.id === pointer));
+  const n = $derived(Math.max(1, shown.length));
   const H = $derived(G.pad * 2 + n * G.rowH);
   const cy = $derived(H / 2);
   const rows = $derived(
-    slots.map((s, i) => {
+    shown.map((t, i) => {
       const y = G.pad + G.rowH * (i + 0.5);
       const off = y - cy;
       const a = Math.asin(Math.max(-0.97, Math.min(0.97, off / G.rho))); // radians, screen y down
-      return { slot: s, y, a, deg: (a * 180) / Math.PI, rx: G.cx + G.rho * Math.cos(a) };
+      return { tab: t, y, a, deg: (a * 180) / Math.PI, rx: G.cx + G.rho * Math.cos(a) };
     }),
   );
-  const pointerRow = $derived(rows.find((r) => r.slot.id === pointer) ?? rows[0]);
+  const pointerRow = $derived(rows.find((r) => r.tab.id === pointer));
+  // The pointer System scrolled out of view: the knob points past the first / last detent, toward it.
+  const pointerDeg = $derived(pointerRow ? pointerRow.deg : ((selIdx < start ? -1 : 1) * Math.asin(0.97) * 180) / Math.PI);
   const knurl = Array.from({ length: 56 }, (_, i) => (i / 56) * Math.PI * 2);
 
-  function key(e: KeyboardEvent, i: number) {
-    const dir =
-      e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+  function step(dir: 1 | -1, from: number) {
+    const j = (from + dir + all.length) % all.length;
+    onselect?.(all[j].id);
+    return j;
+  }
+
+  function key(e: KeyboardEvent, id: SystemId) {
+    const dir = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
     if (!dir) return;
     e.preventDefault();
-    const j = (i + dir + rows.length) % rows.length;
-    onselect?.(rows[j].slot.id);
-    const list = (e.currentTarget as HTMLElement).closest('.opts')?.querySelectorAll<HTMLButtonElement>('button.opt');
-    list?.[j]?.focus();
+    const i = all.findIndex((t) => t.id === id);
+    const j = step(dir, i);
+    const el = (e.currentTarget as HTMLElement).closest('.opts');
+    queueMicrotask(() => el?.querySelector<HTMLButtonElement>(`button.opt[data-system="${CSS.escape(all[j].id)}"]`)?.focus());
   }
 
-  /** The state column of one tier: lamp tone and word. */
-  function stateOf(slot: Slot): { lamp: 'off' | 'cyan' | 'orange' | 'amber'; word: string; lock: boolean } {
-    if (slot.id === running) return { lamp: tone, word: runWord, lock: false };
-    if (locked) return { lamp: 'off', word: 'locked', lock: true };
-    if (slot.availability !== 'ready') return { lamp: 'orange', word: availLabel(slot.availability), lock: false };
-    return { lamp: slot.id === pointer && !running ? 'cyan' : 'off', word: 'ready', lock: false };
+  /** The state column of one System: lamp tone and word. */
+  function stateOf(t: SystemTab): { lamp: 'off' | 'cyan' | 'orange' | 'amber'; word: string } {
+    const s = t.system;
+    const isPtr = t.id === pointer;
+    switch (s.status) {
+      case 'starting':
+        return { lamp: isPtr ? tone : 'cyan', word: 'starting' };
+      case 'stopping':
+        return { lamp: isPtr ? tone : 'cyan', word: 'stopping' };
+      case 'online':
+      case 'busy':
+        return { lamp: isPtr ? tone : 'cyan', word: isPtr && sleepWord ? sleepWord : 'running' };
+      case 'fault':
+        return { lamp: 'orange', word: 'fault' };
+      case 'not-set':
+        return { lamp: 'off', word: 'not set' };
+      case 'unreachable':
+        return { lamp: 'orange', word: 'unreachable' };
+      case 'invalid':
+        return { lamp: 'orange', word: s.availability === 'ready' ? 'invalid' : availLabel(s.availability) };
+      default:
+        if (s.external) return { lamp: 'orange', word: 'not answering' };
+        if (s.availability !== 'ready') return { lamp: 'orange', word: availLabel(s.availability) };
+        return { lamp: isPtr ? 'cyan' : 'off', word: 'ready' };
+    }
   }
+
+  const LAMP_RANK = { off: 0, amber: 1, cyan: 2, orange: 3 } as const;
+  /** The lamps of Systems out of view: one each, or one in the worst tone when there are many. */
+  function hiddenLamps(list: SystemTab[]): ('off' | 'cyan' | 'orange' | 'amber')[] {
+    const lamps = list.map((t) => stateOf(t).lamp);
+    if (lamps.length <= 5) return lamps;
+    return [lamps.reduce((a, b) => (LAMP_RANK[b] > LAMP_RANK[a] ? b : a), 'off' as const)];
+  }
+  const hiddenText = (list: SystemTab[]) => list.map((t) => `${t.label}${t.nodeName ? ` on ${t.nodeName}` : ''}: ${stateOf(t).word}`).join('; ');
+
+  const titleOf = (t: SystemTab) => {
+    const s = t.system;
+    const where = t.nodeName ? ` on ${t.nodeName}` : '';
+    const why = canLaunch(s) ? '' : blockedText(s);
+    return `${t.label}${where}: ${s.model.name || 'no preset'} (${STATUS_TEXT[s.status].toLowerCase()}${why ? `: ${why}` : ''})`;
+  };
 </script>
 
-<div class="sel" class:orange={tone === 'orange'} class:amber={tone === 'amber'} class:locked style="--w:{W}; --h:{H}; --rowh:{G.rowH}">
+<div class="sel" class:orange={tone === 'orange'} class:amber={tone === 'amber'} style="--w:{W}; --h:{H}; --rowh:{G.rowH}">
   <svg class="geo" viewBox="0 0 {W} {H}" aria-hidden="true">
     <defs>
       <radialGradient id="{uid}-cap" cx="45%" cy="38%" r="70%">
@@ -87,10 +140,10 @@
       </linearGradient>
     </defs>
     <!-- printed leader lines from each detent to its label -->
-    {#each rows as r (r.slot.id)}
+    {#each rows as r (r.tab.id)}
       <polyline
         class="leader"
-        class:on={r.slot.id === pointer}
+        class:on={r.tab.id === pointer}
         points="{G.cx + (G.R + 4) * Math.cos(r.a)},{cy + (G.R + 4) * Math.sin(r.a)} {r.rx},{r.y} {G.dotX - 4},{r.y}"
       />
     {/each}
@@ -107,50 +160,52 @@
       />
     {/each}
     <circle cx={G.cx} {cy} r={G.R * 0.84} fill="url(#{uid}-cap)" stroke="#0c0d0e" stroke-width="1" />
-    <g class="pointer" style="transform-origin:{G.cx}px {cy}px; transform: rotate({pointerRow?.deg ?? 0}deg)">
+    <g class="pointer" style="transform-origin:{G.cx}px {cy}px; transform: rotate({pointerDeg}deg)">
       <line x1={G.cx + G.R * 0.12} y1={cy} x2={G.cx + G.R * 0.8} y2={cy} class="ptr-glow" />
       <line x1={G.cx + G.R * 0.12} y1={cy} x2={G.cx + G.R * 0.8} y2={cy} class="ptr" />
     </g>
   </svg>
 
-  <button
-    class="knobhit"
-    style="--cx:{G.cx}; --cy:{cy}; --r:{G.R + 3}"
-    aria-label="Next tier"
-    onclick={() => {
-      const i = rows.findIndex((r) => r.slot.id === selected);
-      onselect?.(rows[(i + 1) % rows.length].slot.id);
-    }}
-  ></button>
+  <button class="knobhit" style="--cx:{G.cx}; --cy:{cy}; --r:{G.R + 3}" aria-label="Next System" onclick={() => step(1, selIdx)}></button>
 
-  <div class="opts" role="radiogroup" aria-label="Tier">
-    {#each rows as r, i (r.slot.id)}
-      {@const isSel = r.slot.id === selected}
-      {@const isPtr = r.slot.id === pointer}
-      {@const st = stateOf(r.slot)}
-      {@const ready = r.slot.availability === 'ready'}
+  <div class="opts" role="radiogroup" aria-label="Systems">
+    {#each rows as r, i (r.tab.id)}
+      {@const isPtr = r.tab.id === pointer}
+      {@const st = stateOf(r.tab)}
       <button
         class="opt"
         class:ptr={isPtr}
         style="--y:{r.y - G.rowH / 2}; --x:{G.dotX - 6}"
         role="radio"
-        aria-checked={isSel}
-        tabindex={isSel ? 0 : -1}
-        onclick={() => onselect?.(r.slot.id)}
-        ondblclick={() => onlaunch?.(r.slot.id)}
-        onkeydown={(e) => key(e, i)}
-        title={st.lock ? `${r.slot.label}: locked while the session ${runWord === 'stopping' ? 'stops' : 'starts'}` : ready ? `${r.slot.label}: ${r.slot.model.name}` : `${r.slot.label}: ${r.slot.reason ?? availLabel(r.slot.availability)}`}
+        data-system={r.tab.id}
+        aria-checked={isPtr}
+        tabindex={isPtr || (!ptrShown && i === 0) ? 0 : -1}
+        onclick={() => onselect?.(r.tab.id)}
+        ondblclick={() => onlaunch?.(r.tab.id)}
+        onkeydown={(e) => key(e, r.tab.id)}
+        title={titleOf(r.tab)}
       >
-        <span class="dot" class:on={isPtr} class:sel={isSel && !isPtr}></span>
-        <span class="name">{r.slot.label}</span>
-        <span class="sub">{slotSubtitle(r.slot)}</span>
+        <span class="dot" class:on={isPtr}></span>
+        <span class="name"><TabLabel tab={r.tab} /></span>
+        <span class="sub">{slotSubtitle(r.tab.system)}</span>
       </button>
-      <!-- state column: lit lamp = this tier runs (or is selected and ready); orange = cannot launch -->
-      <div class="av {st.lamp}" class:lock={st.lock} style="--y:{r.y - G.rowH / 2}">
-        {#if st.lock}<span class="lk"><Icon name="lock" size="calc(12 * var(--u))" /></span>{:else}<span class="lamp"></span>{/if}
+      <!-- state column: lit lamp = this System runs (or is selected and ready); orange = cannot launch -->
+      <div class="av {st.lamp}" style="--y:{r.y - G.rowH / 2}">
+        <span class="lamp"></span>
         <span class="avt">{st.word}</span>
       </div>
     {/each}
+    <!-- Systems out of view: the chevrons scroll the window (they never select) and show each one's lamp -->
+    {#if above > 0}
+      <button class="more up" type="button" aria-label="Show {above} more above: {hiddenText(hiddenAbove)}" title={hiddenText(hiddenAbove)} onclick={() => (start = clampStart(start - 1))}>
+        <Icon name="up" size="calc(10 * var(--u))" />{above}{#each hiddenLamps(hiddenAbove) as l, k (k)}<span class="ml {l}"></span>{/each}
+      </button>
+    {/if}
+    {#if below > 0}
+      <button class="more down" type="button" aria-label="Show {below} more below: {hiddenText(hiddenBelow)}" title={hiddenText(hiddenBelow)} onclick={() => (start = clampStart(start + 1))}>
+        <Icon name="down" size="calc(10 * var(--u))" />{below}{#each hiddenLamps(hiddenBelow) as l, k (k)}<span class="ml {l}"></span>{/each}
+      </button>
+    {/if}
   </div>
 </div>
 
@@ -245,9 +300,6 @@
     min-width: 0;
     text-align: left;
   }
-  .locked .opt:not(.ptr) {
-    cursor: default;
-  }
   .dot {
     display: inline-block;
     flex: 0 0 auto;
@@ -275,6 +327,8 @@
   }
   .name {
     flex: 0 0 calc(104 * var(--u));
+    min-width: 0;
+    overflow: hidden;
     font-family: var(--font-label);
     font-weight: 600;
     font-size: var(--fs-tier);
@@ -307,13 +361,6 @@
   }
   .orange .opt.ptr:hover .name,
   .amber .opt.ptr:hover .name,
-  .locked .opt.ptr:hover .name {
-    color: var(--tone);
-  }
-  .locked .opt:not(.ptr) .name,
-  .locked .opt:not(.ptr) .sub {
-    color: rgba(237, 230, 214, 0.38);
-  }
   /* state column */
   .av {
     position: absolute;
@@ -344,15 +391,6 @@
     background: radial-gradient(circle at 50% 42%, #6b6862 0%, #45433f 70%);
     box-shadow: 0 0 0 calc(1.4 * var(--u)) #0b0c0d;
   }
-  .lk {
-    display: flex;
-    width: calc(10 * var(--u));
-    justify-content: center;
-    color: rgba(237, 230, 214, 0.45);
-  }
-  .av.lock {
-    color: rgba(237, 230, 214, 0.42);
-  }
   .av.cyan {
     color: var(--cyan);
   }
@@ -379,5 +417,54 @@
     box-shadow:
       0 0 0 calc(1.4 * var(--u)) #0b0c0d,
       0 0 calc(8 * var(--u)) rgba(255, 176, 46, 0.6);
+  }
+  /* more Systems out of view above / below the four shown */
+  .more {
+    position: absolute;
+    left: calc(var(--x) * var(--u));
+    display: flex;
+    align-items: center;
+    gap: calc(3 * var(--u));
+    padding: 0 calc(4 * var(--u));
+    background: none;
+    border: 0;
+    margin: 0;
+    height: calc(10 * var(--u));
+    font-family: var(--font-text);
+    font-size: calc(10 * var(--u));
+    color: rgba(237, 230, 214, 0.5);
+    cursor: pointer;
+  }
+  .more:hover {
+    color: var(--cream);
+  }
+  .more.up {
+    top: calc(-8 * var(--u));
+  }
+  /* one small lamp per System out of view (same tones as the state column) */
+  .ml {
+    flex: none;
+    width: calc(6 * var(--u));
+    height: calc(6 * var(--u));
+    border-radius: 50%;
+    background: #45433f;
+  }
+  .ml:first-of-type {
+    margin-left: calc(3 * var(--u));
+  }
+  .ml.cyan {
+    background: #5ab6eb;
+    box-shadow: 0 0 calc(5 * var(--u)) rgba(90, 182, 235, 0.65);
+  }
+  .ml.orange {
+    background: #ff6b2c;
+    box-shadow: 0 0 calc(5 * var(--u)) rgba(255, 107, 44, 0.6);
+  }
+  .ml.amber {
+    background: #ffb02e;
+    box-shadow: 0 0 calc(5 * var(--u)) rgba(255, 176, 46, 0.6);
+  }
+  .more.down {
+    bottom: calc(-8 * var(--u));
   }
 </style>

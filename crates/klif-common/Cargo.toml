@@ -10,3 +10,6 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 anyhow.workspace = true
+# Param choices keep their file order (ParamCfg.choices / PresetCfg.params): the first choice is the default when a
+# param has no `default`. Already in the build through toml's `preserve_order`; `serde` adds no new crate.
+indexmap = { version = "2", features = ["serde"] }

@@ -1,9 +1,9 @@
 <script lang="ts">
   // One line, always shown: the running model, or (idle) the selected tier's.
-  import type { ModelRef, SlotKind } from '../../../lib/model/types';
+  import type { ModelRef, SystemKind } from '../../../lib/model/types';
   import { modelFacts } from '../util';
 
-  let { model, kind, label, dim = false }: { model: ModelRef | null; kind: SlotKind; label: string; dim?: boolean } = $props();
+  let { model, kind, label, dim = false }: { model: ModelRef | null; kind: SystemKind; label: string; dim?: boolean } = $props();
   const facts = $derived(model ? modelFacts(model, kind) : []);
 </script>
 

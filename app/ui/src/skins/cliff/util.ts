@@ -1,8 +1,9 @@
-import type { Availability, LastSession, ModelRef, Slot, SlotKind, ViewModel, VramLayer } from '../../lib/model/types';
+import type { Availability, LastSession, ModelRef, System, SystemKind, ViewModel, VramLayer } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
+import { selectedSystem } from '../../lib/model/systems';
 
 /** What the main area shows. 'stopping' renders the live view of its kind. */
-export type ViewState = 'idle' | 'loading' | 'fault' | 'llm' | 'image';
+export type ViewState = 'idle' | 'loading' | 'fault' | 'llm' | 'image' | 'generic';
 
 export type Tone = 'live' | 'busy' | 'idle' | 'stop' | 'fault';
 
@@ -18,23 +19,15 @@ export function blockView(vm: ViewModel): BlockView {
   if (s.phase === 'fault') return 'fault';
   if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
   if (s.phase === 'stopping') return 'stopping';
-  return (sessionKind(vm) === 'image' ? s.image : s.llm) ? 'live' : 'waiting';
+  const kind = sessionKind(vm);
+  return (kind === 'image' ? s.image : kind === 'llm' ? s.llm : s.generic) ? 'live' : 'waiting';
 }
 
-export function selectedSlot(vm: ViewModel): Slot | null {
-  return vm.slots.find((s) => s.id === vm.selected) ?? vm.slots[0] ?? null;
-}
+export { selectedSystem };
 
-export function sessionSlot(vm: ViewModel): Slot | null {
-  const s = vm.session;
-  if (!s) return null;
-  return vm.slots.find((x) => x.id === s.slot) ?? null;
-}
-
-export function sessionKind(vm: ViewModel): SlotKind {
-  const s = vm.session;
-  if (!s) return selectedSlot(vm)?.kind ?? 'llm';
-  return sessionSlot(vm)?.kind ?? (s.image ? 'image' : 'llm');
+/** The kind of the selected System: vm.session and vm.lastSession are always its. */
+export function sessionKind(vm: ViewModel): SystemKind {
+  return selectedSystem(vm)?.kind ?? 'llm';
 }
 
 export function viewState(vm: ViewModel): ViewState {
@@ -42,8 +35,10 @@ export function viewState(vm: ViewModel): ViewState {
   if (!s) return 'idle';
   if (s.phase === 'fault') return 'fault';
   if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
-  if (sessionKind(vm) === 'image') return s.image ? 'image' : 'loading';
-  return s.llm ? 'llm' : 'loading';
+  const kind = sessionKind(vm);
+  if (kind === 'image') return s.image ? 'image' : 'loading';
+  if (kind === 'llm') return s.llm ? 'llm' : 'loading';
+  return s.generic ? 'generic' : 'loading';
 }
 
 export function statusOf(vm: ViewModel): { text: string; tone: Tone } {
@@ -73,12 +68,12 @@ export function modelShort(m: ModelRef): string {
   const f = [m.name, m.quant];
   if (m.ctxTokens) f.push(fmtCtx(m.ctxTokens));
   else if (m.imageSize) f.push(m.imageSize);
-  return f.join(' · ');
+  return f.filter(Boolean).join(' · ');
 }
 
 /** The facts line under "Active model". */
-export function modelFacts(m: ModelRef, kind: SlotKind): string[] {
-  const f = kind === 'llm' ? [m.name, m.quant, m.backend, m.device] : [m.name, m.quant, m.engine, m.backend, m.device];
+export function modelFacts(m: ModelRef, kind: SystemKind): string[] {
+  const f: (string | undefined)[] = kind === 'llm' ? [m.name, m.quant, m.backend, m.device] : [m.name, m.quant, m.engine, m.backend, m.device];
   if (kind === 'llm') {
     if (m.ctxTokens) f.push(`ctx ${fmtCtx(m.ctxTokens)}`);
     if (m.kvType) f.push(`KV ${m.kvType}`);
@@ -88,7 +83,7 @@ export function modelFacts(m: ModelRef, kind: SlotKind): string[] {
   } else if (m.imageSize) {
     f.push(m.imageSize);
   }
-  return f.filter(Boolean);
+  return f.filter(Boolean) as string[];
 }
 
 /** Layer GiB label: one decimal unless that would hide a small value (0.12 stays 0.12). */
@@ -115,19 +110,19 @@ export function releasedGiB(vm: ViewModel): number {
   return Math.max(0, peak - vm.vram.usedGiB);
 }
 
-/** Why a slot cannot be launched, in words (null when it can). */
+/** Why a System's preset cannot be launched, in words (null when it can). */
 export function availabilityText(a: Availability): string | null {
   switch (a) {
     case 'ready':
       return null;
     case 'model-missing':
       return 'model missing';
-    case 'build-required':
-      return 'build required';
-    case 'script-missing':
-      return 'script missing';
+    case 'exe-missing':
+      return 'program missing';
     case 'unsupported':
       return 'unsupported';
+    case 'invalid':
+      return 'needs fixing';
     case 'busy':
       return 'port busy';
     default:
@@ -159,8 +154,8 @@ export function fmtEta(sec: number): string {
 }
 
 /** The previous session in one line: "SYSTEM 2 · 2 h 14 min · 12 requests · ... · stopped 21 min ago". */
-export function lastSessionLine(last: LastSession, slots: Slot[]): string {
-  const f = [slots.find((x) => x.id === last.slot)?.label ?? last.model.name, fmtSpan(last.uptimeS)];
+export function lastSessionLine(last: LastSession, systems: System[]): string {
+  const f = [systems.find((x) => x.id === last.system)?.label ?? last.model.name, fmtSpan(last.uptimeS)];
   if (last.requests !== undefined) f.push(`${fmtInt(last.requests)} requests`);
   if (last.generatedTokens !== undefined) f.push(`${fmtInt(last.generatedTokens)} tok`);
   if (last.decodeTps !== undefined) f.push(`${fmtTps(last.decodeTps)} tok/s`);

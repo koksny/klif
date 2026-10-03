@@ -1,7 +1,7 @@
 // Fault texts. Shapes follow real failures seen in the session logs; paths and addresses removed.
 import type { Fault, LoadStep, LoadStepId } from '../model/types';
 
-export type FaultKind = 'powershell' | 'rocm-crash';
+export type FaultKind = 'exit' | 'rocm-crash';
 
 export const ROCM_EXIT_CODE = -1073740791;
 
@@ -15,14 +15,13 @@ export const ROCM_CRASH_STDERR: string[] = [
   'ggml-cuda.cu:104: ROCm error',
 ];
 
-/** What the starter script's own error stream showed when it died two seconds after launch. */
-export const POWERSHELL_FAIL_STDERR: string[] = [
-  'llama-server.exe : 0.00.001.123 I srv  llama_server: initializing ...',
-  'At launcher.ps1:90 char:18',
-  '+ $deviceOutput = (& $server --list-devices 2>&1 | Out-String)',
-  '+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~',
-  '    + CategoryInfo          : NotSpecified: (0.00.001.123 I ...nitializing ...:String) [], RemoteException',
-  '    + FullyQualifiedErrorId : NativeCommandError',
+/** What a llama.cpp server printed when it died two seconds after launch (a bad model file). */
+export const EXIT_FAIL_STDERR: string[] = [
+  'llama_model_load: error loading model: unable to open file',
+  'llama_model_load_from_file_impl: failed to load model',
+  'common_init_from_params: failed to load model',
+  'srv    load_model: failed to load model, exiting',
+  'llama-server.exe exited with code 1.',
 ];
 
 export function exitCodeHex(code: number): string {
@@ -40,8 +39,10 @@ export function makeFault(kind: FaultKind, sinceS: number): Fault {
     };
   }
   return {
-    title: 'The starter script failed two seconds after launch.',
-    logTail: [...POWERSHELL_FAIL_STDERR],
+    title: 'The server exited two seconds after launch.',
+    exitCode: 1,
+    exitCodeHex: exitCodeHex(1),
+    logTail: [...EXIT_FAIL_STDERR],
     sinceS,
   };
 }
