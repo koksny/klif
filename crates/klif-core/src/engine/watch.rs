@@ -12,7 +12,7 @@ use klif_common::vm::{BenchSummary, HealthCheck, Issue, SystemId, SystemKind};
 use klif_supervisor::{PortOwner, ProcessHost};
 use klif_telemetry::{Adapter, WatchSpec};
 
-use super::{lock, ExternalWatch, Inner, State, Stat};
+use super::{lock, ExternalWatch, HardwareState, Inner, State, Stat};
 use crate::control::{serve_network, NodeAuth};
 use crate::keys;
 
@@ -170,6 +170,7 @@ impl Inner {
             self.nodes.reconfigure(&cfg);
         }
         self.sync_gpus(&cfg);
+        self.sync_hardware(&cfg);
         self.sync_listener(&cfg);
         true
     }
@@ -188,6 +189,15 @@ impl Inner {
         if !notes.is_empty() {
             lock(&self.st).notes.extend(notes);
         }
+    }
+
+    /// Recompute the machine inventory when `[hardware]` changed (the adapters are read again then, not per tick).
+    pub(super) fn sync_hardware(&self, cfg: &Config) {
+        if lock(&self.hardware).cfg == cfg.hardware {
+            return;
+        }
+        let state = HardwareState::read(&cfg.hardware);
+        *lock(&self.hardware) = state;
     }
 
     /// Start, stop or move the network listener to match `[node] listen`; refresh its auth every second.

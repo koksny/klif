@@ -370,8 +370,15 @@ export function nodePresets(): Record<string, PresetSpec> {
 
 // ----------------------------------------------------------------------------------------- resolution
 
-const ADAPTER_PORT: Record<AdapterId, number | null> = { 'llama.cpp': 7030, 'sd.cpp': 1234, vllm: 8000, openai: 8080, generic: null };
-const ADAPTER_KIND: Record<AdapterId, SystemKind | null> = { 'llama.cpp': 'llm', 'sd.cpp': 'image', vllm: 'llm', openai: 'llm', generic: null };
+const ADAPTER_PORT: Record<AdapterId, number | null> = { 'llama.cpp': 7030, 'sd.cpp': 1234, vllm: 8000, openai: 8080, audiocpp: 8080, generic: null };
+const ADAPTER_KIND: Record<AdapterId, SystemKind | null> = {
+  'llama.cpp': 'llm',
+  'sd.cpp': 'image',
+  vllm: 'llm',
+  openai: 'llm',
+  audiocpp: 'tts',
+  generic: null,
+};
 const SECRET_FLAGS = new Set(['--api-key', '--hf-token', '-hft', '--token', '--password']);
 const SECRET_ENV = /(KEY|TOKEN|SECRET|PASSWORD)/i;
 
@@ -786,6 +793,43 @@ const MEASURED = (decodeTps: number): RecommendationInfo['measured'] => ({
 });
 
 export const REC_DEFS: RecDef[] = [
+  // The suggestions of the embedded pool for the mock machine (see mock/hardware.ts MOCK_SUGGESTIONS): pool ids.
+  {
+    id: 'gemma-4-12b.qat-ud-q4-k-xl', kind: 'llm', class: 'fast', name: 'Gemma 4 12B', adapter: 'llama.cpp',
+    hfRepo: 'unsloth/gemma-4-12B-it-qat-GGUF', quant: 'UD-Q4_K_XL (QAT)', license: 'apache-2.0', hardwareClass: '7.6 GiB of files + KV',
+    files: [{ name: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf', role: 'model', gib: 7.6 }],
+  },
+  {
+    id: 'qwen3.8-27b.ud-q4-k-xl', kind: 'llm', class: 'deep', name: 'Qwen 3.8 27B', adapter: 'llama.cpp',
+    hfRepo: 'unsloth/Qwen3.8-27B-GGUF', quant: 'UD-Q4_K_XL', license: 'apache-2.0', hardwareClass: '16.4 GiB of files + KV',
+    files: [{ name: 'Qwen3.8-27B-UD-Q4_K_XL.gguf', role: 'model', gib: 16.4 }],
+  },
+  {
+    id: 'glm-5.3-flash.ud-q2-k-xl', kind: 'llm', class: 'max', name: 'GLM-5.3-Flash', adapter: 'llama.cpp',
+    hfRepo: 'unsloth/GLM-5.3-Flash-GGUF', quant: 'UD-Q2_K_XL', license: 'glm-5.3', hardwareClass: '101 GiB of files + KV (MoE: experts can stay in RAM)',
+    files: [{ name: 'UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00001-of-00003.gguf', role: 'model', gib: 101 }],
+  },
+  {
+    id: 'krea-2-turbo.q4-k-m', kind: 'image', name: 'Krea 2 Turbo', adapter: 'sd.cpp',
+    hfRepo: 'realrebelai/Krea-2-Turbo-GGUF', quant: 'Q4_K_M + Qwen3-VL-4B Q4_K_M', license: 'krea-2-community', hardwareClass: '14.3 GiB VRAM (estimates)',
+    files: [{ name: 'krea2-turbo-Q4_K_M.gguf', role: 'model', gib: 9.3 }],
+  },
+  {
+    id: 'voxcpm2.bf16', kind: 'tts', name: 'VoxCPM2', adapter: 'audiocpp',
+    hfRepo: 'audio-cpp/audio.cpp-gguf', quant: 'BF16', license: 'apache-2.0', hardwareClass: '5.4 GiB VRAM (estimates)',
+    files: [{ name: 'VoxCPM2-GGUF/voxcpm2-bf16.gguf', role: 'model', gib: 4.4 }],
+  },
+  {
+    id: 'whisper-large-v3-turbo.f16', kind: 'stt', name: 'Whisper large-v3 turbo', adapter: 'generic',
+    hfRepo: 'ggerganov/whisper.cpp', quant: 'F16', license: 'mit', hardwareClass: '2.1 GiB VRAM (estimates)',
+    files: [{ name: 'ggml-large-v3-turbo.bin', role: 'model', gib: 1.5 }],
+  },
+  {
+    id: 'minimax-h3-fl2va.q4-k', kind: 'video', name: 'MiniMax H3 (FL2VA)', adapter: 'sd.cpp',
+    hfRepo: 'unsloth/MiniMax-H3-GGUF', quant: 'Q4_K + Qwen3-VL Q4_K_M', license: 'minimax-h3-community', hardwareClass: '13.6 GiB VRAM + 33 GiB RAM (estimates)',
+    files: [{ name: 'minimax_h3_fl2va_pruned-Q4_K.gguf', role: 'model', gib: 11.2 }],
+    notes: 'The MiniMax H3 license grants no rights in the EU, the UK, South Korea or the USA.',
+  },
   {
     id: 'gemma-4-26b-a4b-q4_0',
     kind: 'llm',

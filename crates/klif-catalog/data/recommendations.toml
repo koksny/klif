@@ -1,160 +1,2079 @@
-# KLIF model recommendations, schema 1.
+# KLIF model pool, schema 2: the models KLIF suggests per machine (klif-cli suggest, Tune), embedded in klif.exe.
 #
-# Disclaimer: these are starting points measured on one machine. Models, drivers and backends change; your
-# agent should benchmark and calibrate (`klif-cli bench <system>`). Each model keeps its own license. KLIF
-# downloads only from huggingface.co, and only when you ask it to.
+# Disclaimer: every memory number here and every suggestion made from it is an ESTIMATE. Models, drivers and
+# backends change; your agent should benchmark and calibrate (`klif-cli bench <system>`). Each model keeps its own
+# license. KLIF downloads only from huggingface.co, and only when you ask it to.
 #
-# Rules for entries (checked at load; a bad entry is skipped with a warning):
+# Each [[model]] has a ladder of [[model.quant]] rungs. Every (model, quant) becomes one recommendation with the id
+# "<model id>.<quant id>" (klif-cli models list / download / adopt). Rules (checked at load; a bad model or rung is
+# skipped with a warning):
 # - hf_repo is "owner/name", revision a 40-hex commit sha, file names plain paths inside the repo (no "..", each
-#   listed once); repo + revision + every file's sha256 must be verifiable on the Hugging Face hub;
-# - a file from ANOTHER repo names its own `repo` ("owner/name") and `revision` (40-hex, required with `repo`); they
-#   override hf_repo / revision for that file (download, install folder <models_dir>\<repo with / as -->\<file>);
-# - a preset made from an entry gets `model` from the file with role "model" and `mmproj` from the one with role
-#   "mmproj" ({model} / {mmproj} in args); any other listed file is written into args as {file:<its name>}, which
-#   becomes that file's install path;
+#   listed once); repo + revision + every file's sha256 and size were read from the Hugging Face API;
+# - a rung may name its own hf_repo + revision (e.g. the QAT repo); a file from ANOTHER repo names its own `repo` and
+#   `revision` (40-hex, required with `repo`);
+# - `save_as` stores a file under another path below the repo's install folder (a replacement shard that must sit
+#   where the original would);
+# - a preset made from a rung gets `model` from the first file with role "model" and `mmproj` from the one with role
+#   "mmproj"; args may name any other file as {file:<its name>} or {file:<its key>};
+# - args are a template: {ctx} and the -ctk / -ctv / -fitt values come from the suggestion when it is adopted;
 # - `measured` only when the local file's sha256 equals the hub file;
 # - no network / model-fetch flags in `args` (-hf --hf-repo -hff --hf-file -hft --hf-token -mu --model-url
 #   -dr --docker-repo, and their draft / vocoder / mmproj-url forms), no secret flags (--api-key), no env
 #   templates, no unknown keys;
 # - no personal data (paths, hostnames, LAN addresses).
 #
-# Entry shape (one [[recommendation]] table per model):
+# Memory estimate of an LLM rung at a context and KV type:
+#   weights (sum of the file sizes) + KV + overhead_mib, where
+#   KV = (f16_mib_per_1k x ctx / 1024 + fixed_mib) x factor + state_mib, factor 1.0 for f16 and 0.53 for q8_0;
+#   fixed_mib = cache cells that do not grow with the context (sliding windows), state_mib = recurrent state (F32).
+# The KV numbers come from each model's config.json and llama.cpp's cache layout (n_seq 1, ubatch 512); the comment
+# above each `kv` shows the arithmetic. Image rungs carry their own estimates: `min_vram_gib` (everything on the
+# GPU, 1024x1024) and `offload_vram_gib` + `offload_ram_gib` (with --offload-to-cpu).
 #
-# [[recommendation]]
-# id = "example-id"                      # [a-z0-9][a-z0-9_-]*
-# kind = "llm"                           # llm | image | tts | stt | video
-# class = "fast"                         # llm only, optional: fast | deep | max (System 1 / 2 / 3)
-# name = "Example Model 8B"
-# adapter = "llama.cpp"                  # llama.cpp | sd.cpp | vllm | openai | generic
-# hf_repo = "org/repo"
-# revision = "<40-hex commit sha>"
-# quant = "Q4_K_M"
-# license = "apache-2.0"
-# hardware_class = "16 GB VRAM"
-# min_vram_gib = 8.0
-# args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}"]
-# ctx = 16384
-# files = [
-#   { name = "model-Q4_K_M.gguf", role = "model", sha256 = "<64 hex>", size = 0 },
-#   # optional, from another repo: role model | mmproj | other
-#   # { name = "encoder.gguf", role = "other", repo = "org/other-repo", revision = "<40-hex commit sha>", sha256 = "<64 hex>", size = 0 },
-# ]
-# measured = { decode_tps = 0.0, prefill_tps = 0.0, hardware = "", backend = "", date = "YYYY-MM-DD" }
-# notes = ""
+# quality is about the effective bits of the rung (Q8_0 8, UD-Q6_K_XL 6.5, UD-Q5_K_XL 5.5, UD-Q4_K_XL 4.5,
+# UD-Q3_K_XL 3.5, UD-Q2_K_XL 2.5, UD-IQ2_XXS 2.2, UD-IQ1_* 1.7); Gemma's QAT 4-bit rung is 6.6, just above
+# UD-Q6_K_XL, because quantization-aware training keeps it near full precision. bits = the file's real bits per
+# weight.
+#
+# Choice per tier ([tiers]): walk the list in order; a model's best option is the rung of the highest quality up to
+# [choice] quality_first that fits at the floor context with q8_0 KV (the smallest wins a tie), then the longest
+# context up to ctx_max, then the highest quality again at that context, then f16 KV if it still fits. The first
+# model with an option wins, preferring one that a lower tier did not already take. Image tiers: the highest quality
+# that fits the largest GPU, else the highest that fits with --offload-to-cpu.
 
-schema = 1
+schema = 2
 
-# ---------------------------------------------------------------------------------------------- System 1 (fast)
-[[recommendation]]
-id = "gemma-4-26b-a4b-qat-q4-0"
+[tiers]
+fast = ["gemma-4-26b-a4b", "gemma-4-12b", "gemma-4-e4b", "gemma-4-e2b"]
+deep = ["glm-5.3-flash", "deepseek-v4-flash", "qwen3.8-27b", "gemma-4-31b", "gemma-4-12b", "gemma-4-e4b"]
+max = ["glm-5.3", "deepseek-v4-pro", "glm-5.3-flash", "deepseek-v4-flash", "qwen3.8-flash-next", "qwen3.8-27b", "gemma-4-31b"]
+image = ["krea-2-turbo", "qwen-image-2.1", "flux2-klein-9b", "flux2-klein-4b", "flux1-schnell", "sdxl-lightning-4step", "sdxl-base"]
+tts = ["voxcpm2", "qwen3-tts-1.7b-base", "chatterbox", "kokoro-82m"]
+stt = ["whisper-large-v3-turbo"]
+video = ["minimax-h3-fl2va"]   # its license grants no rights in the EU, UK, South Korea or the USA (see notes)
+
+# Memory each tier may use (GiB). The VRAM pool is every counted GPU (integrated ones only without a discrete GPU);
+# gpu_margin_gib is left free on each counted GPU.
+# - fast (System 1): leaves more than vram_free_frac of the pool and ram_free_frac of the RAM free; dense models
+#   stay in VRAM, MoE experts may go to RAM.
+# - deep (System 2): the whole pool, nothing in RAM.
+# - max (System 3): the pool plus the RAM minus max(ram_reserve_gib, ram_reserve_frac x RAM) for the OS.
+# - image / tts / stt / video: the largest single counted GPU (these runtimes do not split across cards), plus the
+#   max RAM budget with --offload-to-cpu.
+[budget]
+gpu_margin_gib = 1.0
+fast = { vram_free_frac = 0.3333, ram_free_frac = 0.25 }
+max = { ram_reserve_gib = 8.0, ram_reserve_frac = 0.10 }
+
+[floors]
+ctx = { fast = 32768, deep = 65536, max = 131072 }   # capped by the model's ctx_max
+kv_min = "q8_0"
+dense_min_quality = 3.0
+moe_min_quality = 2.0
+moe_floor_from_b = 100   # MoE models below 100B total parameters keep the dense floor
+
+[choice]
+quality_first = 5.5   # the Q5 class: quality up to here first, then context, then quality again
+
+# -------------------------------------------------------------------------------------------------------- LLM
+
+[[model]]
+id = "gemma-4-e2b"
 kind = "llm"
-class = "fast"
-name = "Gemma 4 26B-A4B it (QAT Q4_0)"
+name = "Gemma 4 E2B"
 adapter = "llama.cpp"
-hf_repo = "google/gemma-4-26B-A4B-it-qat-q4_0-gguf"
-revision = "d1c082be9cf3c8a514acf63b8761f4b41935842e"
-quant = "Q4_0 (QAT)"
 license = "apache-2.0"
-hardware_class = "16 GB VRAM"
-min_vram_gib = 14.0
-ctx = 32768
+family = "gemma-4"
+params_total_b = 4.65
+params_active_b = 2.3
+moe = false
+vision = true
+ctx_max = 131072
+hf_repo = "unsloth/gemma-4-E2B-it-GGUF"
+revision = "0314792d7f1f7e229411f620751375812bb9faf2"
 port = 7030
-args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--metrics"]
-files = [
-  { name = "gemma-4-26B_q4_0-it.gguf", role = "model", sha256 = "3eca3b8f6d7baf218a7dd6bba5fb59a56ee25fe2d567b6f5f589b4f697eca51d", size = 14439363584 },
-]
-measured = { decode_tps = 91.8, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), llama.cpp build of 2026-08", date = "2026-08-20" }
-notes = "MoE, 4B active. Decode measured at 32k context, q8_0 KV, auto layer fit with a 1024 MiB VRAM margin (-fitt is the margin to leave free, not a budget); 76.4 tok/s at 128k. Prefill was not measured with a long prompt. The 26B-A4B is the large Gemma that fits a 16 GB card; the dense 31B does not."
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+notes = "Edge model: 2.3B effective parameters (4.65B with the per-layer embeddings); text, image and audio input (the mmproj file). Sampling as Google recommends (temperature 1.0, top-p 0.95, top-k 64)."
+# KV global_attention: 3 layers x 1 KV heads x 512 dim x 2 (K, V) x 2 B x 1024 tokens = 6 MiB per 1k
+# KV sliding_attention: 12 layers x 1024 cells (window 512 + ubatch 512, padded to 256) x 1 KV heads x 256 dim x 2 (K, V) x 2 B = 12 MiB fixed
+kv = { f16_mib_per_1k = 6, fixed_mib = 12 }
+overhead_mib = 768
 
-# ---------------------------------------------------------------------------------------------- System 2 (deep)
-[[recommendation]]
-id = "qwen3-8-27b-gsq-rco-iq3-s-mtp"
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.69
+files = [
+  { name = "gemma-4-E2B-it-Q8_0.gguf", role = "model", sha256 = "605d3c2647d7c58c1e4b5375ccb5702acf94c2611b4c8d4877812f8fdd32d053", size = 5048352864 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 8.11
+files = [
+  { name = "gemma-4-E2B-it-UD-Q6_K_XL.gguf", role = "model", sha256 = "ae15474bc78f68c6a44bd17cad32f672b9501d90c4a0eed2fceeb6878ed530c5", size = 4710088800 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model.quant]]
+id = "qat-ud-q4-k-xl"
+label = "UD-Q4_K_XL (QAT)"
+quality = 6.6
+bits = 4.53
+hf_repo = "unsloth/gemma-4-E2B-it-qat-GGUF"
+revision = "66a399f68ddd113b06dff02fca9523e55465d11d"
+notes = "Google's quantization-aware-trained 4-bit weights (unsloth/gemma-4-E2B-it-qat-GGUF): close to full precision at a 4-bit size."
+files = [
+  { name = "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf", role = "model", sha256 = "e531007218dfab990486a5de7676a6932d6ea8dea233d1f698d7c21cf8a16889", size = 2620370976 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "13c8966d1635d02e6727f27402880614906fa291850c07feda18dbcddf2291b6", size = 985654080 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 7.39
+files = [
+  { name = "gemma-4-E2B-it-UD-Q5_K_XL.gguf", role = "model", sha256 = "47c7dd43f7223dd4cf8bfa5fe73b4eaaa9e91f286d7b29e7a60e9b747e7a2b63", size = 4294176864 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 5.48
+files = [
+  { name = "gemma-4-E2B-it-UD-Q4_K_XL.gguf", role = "model", sha256 = "b52f438017efaec5debf1c0d8be690571e212a07c312f1102bbce927258cfc32", size = 3184496736 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 5.03
+files = [
+  { name = "gemma-4-E2B-it-UD-Q3_K_XL.gguf", role = "model", sha256 = "5b31419a03610fb8d8e80b3cd1e27e2898c601c71ca7d2637076b870d0e6dfd1", size = 2923782240 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 4.14
+files = [
+  { name = "gemma-4-E2B-it-UD-Q2_K_XL.gguf", role = "model", sha256 = "2bfeb49803da8db274b3fbac3c1d471903be64d382c237c6f509ccaa9cc141a2", size = 2403614816 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "140be8d7849741f88c50757d529b84373ee8e27052cc2236855b537f4a8215fa", size = 985654080 },
+]
+
+[[model]]
+id = "gemma-4-e4b"
 kind = "llm"
-class = "deep"
-name = "Qwen 3.8 27B GSQ-RCO IQ3_S (with MTP head)"
+name = "Gemma 4 E4B"
 adapter = "llama.cpp"
-hf_repo = "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF"
-revision = "d562806dbafae37109975e970aae91b43e73b440"
-quant = "GSQ-RCO IQ3_S (mixed precision)"
 license = "apache-2.0"
-hardware_class = "16 GB VRAM"
-min_vram_gib = 15.0
-ctx = 98304
+family = "gemma-4"
+params_total_b = 7.52
+params_active_b = 4.5
+moe = false
+vision = true
+ctx_max = 131072
+hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+revision = "bfc15c382204943c3a8fff0c750b94ae2364d7a3"
 port = 7030
-args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-cram", "16384", "-n", "16384", "-b", "1024", "-ub", "256", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-fit", "off", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-preserve", "--reasoning-effort", "xhigh", "--jinja", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0", "-np", "1", "--metrics", "--spec-type", "draft-mtp,ngram-mod", "--spec-draft-n-max", "2", "-ctkd", "f16", "-ctvd", "f16", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "48", "--spec-ngram-mod-n-max", "64"]
-files = [
-  { name = "Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf", role = "model", sha256 = "58fd826723939933dc86f45b7fe04545cbc2de1c70f6fe2cdd3858c87a98c12f", size = 12120016960 },
-]
-measured = { decode_tps = 34.3, prefill_tps = 382.5, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), llama.cpp b714 (7fe450e19)", date = "2026-09-24" }
-notes = "Daily dense agent model on the measuring machine: 96k context with q8_0 KV fits the 16 GB card's dedicated VRAM; MTP (in-GGUF head) + n-gram drafts. Measured as one session's aggregate over 43 real agent requests (87.5k generated tokens; prefill aggregate over 17 prompts of 2k-42k tokens, median 557 tok/s). Text only here: the repo's mmproj-Qwen3.8-27B-BF16.gguf adds vision (keep it in RAM with --no-mmproj-offload above 64k context)."
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+notes = "Edge model: 4.5B effective parameters (7.5B with the per-layer embeddings); text, image and audio input (the mmproj file). Sampling as Google recommends (temperature 1.0, top-p 0.95, top-k 64)."
+# KV global_attention: 4 layers x 2 KV heads x 512 dim x 2 (K, V) x 2 B x 1024 tokens = 16 MiB per 1k
+# KV sliding_attention: 20 layers x 1024 cells (window 512 + ubatch 512, padded to 256) x 2 KV heads x 256 dim x 2 (K, V) x 2 B = 40 MiB fixed
+kv = { f16_mib_per_1k = 16, fixed_mib = 40 }
+overhead_mib = 768
 
-[[recommendation]]
-id = "qwen3-8-27b-ud-q3-k-xl"
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.72
+files = [
+  { name = "gemma-4-E4B-it-Q8_0.gguf", role = "model", sha256 = "f8854aa4480df62585a279e7ca0a881554fc18a41c59c4f62642d16a2ae47012", size = 8192953472 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.94
+files = [
+  { name = "gemma-4-E4B-it-UD-Q6_K_XL.gguf", role = "model", sha256 = "17b9c459b28b420ce20d75bcfc329db4fac1343792a964c3ae2e2680ce768932", size = 7457762432 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model.quant]]
+id = "qat-ud-q4-k-xl"
+label = "UD-Q4_K_XL (QAT)"
+quality = 6.6
+bits = 4.52
+hf_repo = "unsloth/gemma-4-E4B-it-qat-GGUF"
+revision = "8c5a9e4fd5482e2be20fe0bf013b4c262a8f4265"
+notes = "Google's quantization-aware-trained 4-bit weights (unsloth/gemma-4-E4B-it-qat-GGUF): close to full precision at a 4-bit size."
+files = [
+  { name = "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf", role = "model", sha256 = "df0fd4ee07072c607c29a0a1cb4f98918426cca12f45a2776bdd6ee6d09a4de3", size = 4215695776 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6a255159ee4b01b304f633a57f017dd7d5a69d30fff52abb2614bf0813cef034", size = 990372672 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 7.08
+files = [
+  { name = "gemma-4-E4B-it-UD-Q5_K_XL.gguf", role = "model", sha256 = "9940a3eedd3dca186b09b1586006dafb1cc408c3fc53e73c313e48c0e3267825", size = 6656154752 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 5.46
+files = [
+  { name = "gemma-4-E4B-it-UD-Q4_K_XL.gguf", role = "model", sha256 = "3cf61de12daa015ee0f7b68e7b7c541405bf220e1e942bad8b47cab827d7df80", size = 5126306944 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 4.88
+files = [
+  { name = "gemma-4-E4B-it-UD-Q3_K_XL.gguf", role = "model", sha256 = "7558880ee42b79ab732481bd7250e85c41d9ef044b22634b8a912eb184224009", size = 4588440704 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 4
+files = [
+  { name = "gemma-4-E4B-it-UD-Q2_K_XL.gguf", role = "model", sha256 = "cc92186419be169e992a1df01978828a0d4cf3a5962379ff403c8d55f6faff78", size = 3757419648 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51", size = 990372672 },
+]
+
+[[model]]
+id = "gemma-4-12b"
 kind = "llm"
-class = "deep"
-name = "Qwen 3.8 27B UD-Q3_K_XL + vision"
+name = "Gemma 4 12B"
 adapter = "llama.cpp"
+license = "apache-2.0"
+family = "gemma-4"
+params_total_b = 11.91
+params_active_b = 11.95
+moe = false
+vision = true
+ctx_max = 262144
+hf_repo = "unsloth/gemma-4-12b-it-GGUF"
+revision = "fc034cfff751157913579611efad8462ac1be606"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+notes = "Dense 12B \"Unified\" model: text, image and audio input through linear projections (the small mmproj file). Sampling as Google recommends (temperature 1.0, top-p 0.95, top-k 64)."
+# KV global_attention: 8 layers x 1 KV heads x 512 dim x 2 (K, V) x 2 B x 1024 tokens = 16 MiB per 1k
+# KV sliding_attention: 40 layers x 1536 cells (window 1024 + ubatch 512, padded to 256) x 8 KV heads x 256 dim x 2 (K, V) x 2 B = 480 MiB fixed
+kv = { f16_mib_per_1k = 16, fixed_mib = 480 }
+overhead_mib = 1024
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.51
+files = [
+  { name = "gemma-4-12b-it-Q8_0.gguf", role = "model", sha256 = "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72", size = 12669647680 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.18
+files = [
+  { name = "gemma-4-12b-it-UD-Q6_K_XL.gguf", role = "model", sha256 = "70d04059c74be85c5e709921f05acac412b8b8f24f3ee7dd07e91ddc5f4d4de8", size = 10685012800 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model.quant]]
+id = "qat-ud-q4-k-xl"
+label = "UD-Q4_K_XL (QAT)"
+quality = 6.6
+bits = 4.51
+hf_repo = "unsloth/gemma-4-12B-it-qat-GGUF"
+revision = "980b060c40a8539ac159e0501a3e0f66a6365af3"
+notes = "Google's quantization-aware-trained 4-bit weights (unsloth/gemma-4-12B-it-qat-GGUF): close to full precision at a 4-bit size."
+files = [
+  { name = "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf", role = "model", sha256 = "90fd44e29e0d7cffeb0fd00dc73cfdab9ed0b0e95306ecf7821ea634c940c370", size = 6716356800 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "ecc4e93128da8363b7dbf2193eab98cf1142353f52ceaa0c95c0872997aaadd3", size = 175115840 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 5.78
+files = [
+  { name = "gemma-4-12b-it-UD-Q5_K_XL.gguf", role = "model", sha256 = "d9d55dbb17c73cf274cc1e701a1564a5b35ec03ffde474e7c6c93c3562d8d825", size = 8606021440 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.95
+files = [
+  { name = "gemma-4-12b-it-UD-Q4_K_XL.gguf", role = "model", sha256 = "90fd944d227e9d9b68e7e2c7d5b57b79d4c66ed521b0919fbbd932cf834f6f8e", size = 7366423360 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 4.05
+files = [
+  { name = "gemma-4-12b-it-UD-Q3_K_XL.gguf", role = "model", sha256 = "30adc491834f9e57625331b5ae2a51d59a817458d6d9406eca4fd71ff88b9295", size = 6022684480 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 3.13
+files = [
+  { name = "gemma-4-12b-it-UD-Q2_K_XL.gguf", role = "model", sha256 = "aa6e1ccf5cd1c5340c4786f0bda2478181327f14aba2359e51e455d02c90bff3", size = 4661419840 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e", size = 175115840 },
+]
+
+[[model]]
+id = "gemma-4-26b-a4b"
+kind = "llm"
+name = "Gemma 4 26B-A4B"
+adapter = "llama.cpp"
+license = "apache-2.0"
+family = "gemma-4"
+params_total_b = 25.23
+params_active_b = 3.8
+moe = true
+vision = true
+ctx_max = 262144
+hf_repo = "unsloth/gemma-4-26B-A4B-it-GGUF"
+revision = "c099eb48e663fd284577b04978a94ffccb261841"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+notes = "MoE: 3.8B of 25.2B parameters active per token (128 experts, 8 + 1 shared); image input. When it does not fit the GPUs, llama.cpp -fit keeps experts in RAM. Sampling as Google recommends."
+# KV global_attention: 5 layers x 2 KV heads x 512 dim x 2 (K, V) x 2 B x 1024 tokens = 20 MiB per 1k
+# KV sliding_attention: 25 layers x 1536 cells (window 1024 + ubatch 512, padded to 256) x 8 KV heads x 256 dim x 2 (K, V) x 2 B = 300 MiB fixed
+kv = { f16_mib_per_1k = 20, fixed_mib = 300 }
+overhead_mib = 1024
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.52
+files = [
+  { name = "gemma-4-26B-A4B-it-Q8_0.gguf", role = "model", sha256 = "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c", size = 26859861728 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.39
+files = [
+  { name = "gemma-4-26B-A4B-it-UD-Q6_K_XL.gguf", role = "model", sha256 = "b01ee10a1423c17f9c4384f1fc569726b8782c5403557ff138ceb9468ca49d6b", size = 23295391456 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "qat-ud-q4-k-xl"
+label = "UD-Q4_K_XL (QAT)"
+quality = 6.6
+bits = 4.52
+hf_repo = "unsloth/gemma-4-26B-A4B-it-qat-GGUF"
+revision = "7b92b5b28818151e8669af2e45e88d6086f490dd"
+notes = "Google's quantization-aware-trained 4-bit weights (unsloth/gemma-4-26B-A4B-it-qat-GGUF): close to full precision at a 4-bit size."
+files = [
+  { name = "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf", role = "model", sha256 = "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891", size = 14249047104 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "d00f211a7d4f7fb19bd9b75d8e9342eccffb5920b08fd9562167560fdfcc5dd1", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 6.73
+files = [
+  { name = "gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf", role = "model", sha256 = "d7553b64566bcb0b8b7d712e12e80213f3f02e756ab17099628925ce2e39e597", size = 21217769184 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 5.39
+files = [
+  { name = "gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf", role = "model", sha256 = "ef728c8e0c337fd1067b947af006e38a9ef2419e56feced4fd29b4bf0636e30c", size = 17010980576 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 4.09
+files = [
+  { name = "gemma-4-26B-A4B-it-UD-Q3_K_XL.gguf", role = "model", sha256 = "90a918830420e6a36e01c0d219e563f1d0ca7f223dffd90ad4e02ef4f3253fde", size = 12907280096 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 3.34
+files = [
+  { name = "gemma-4-26B-A4B-it-UD-Q2_K_XL.gguf", role = "model", sha256 = "2a1d26dfe6ea00a467940a5728316af6edb366bbdba950d65b85d232392fb658", size = 10546934240 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f", size = 1193058784 },
+]
+
+[[model]]
+id = "gemma-4-31b"
+kind = "llm"
+name = "Gemma 4 31B"
+adapter = "llama.cpp"
+license = "apache-2.0"
+family = "gemma-4"
+params_total_b = 30.7
+params_active_b = 30.7
+moe = false
+vision = true
+ctx_max = 262144
+hf_repo = "unsloth/gemma-4-31B-it-GGUF"
+revision = "c1ac76e99d5513b141e8adde7288b85c3f9c32ec"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+notes = "Dense 31B with image input; its 10 global attention layers make long context expensive (about 20 GiB of f16 KV at 256k). Sampling as Google recommends."
+# KV global_attention: 10 layers x 4 KV heads x 512 dim x 2 (K, V) x 2 B x 1024 tokens = 80 MiB per 1k
+# KV sliding_attention: 50 layers x 1536 cells (window 1024 + ubatch 512, padded to 256) x 16 KV heads x 256 dim x 2 (K, V) x 2 B = 1200 MiB fixed
+kv = { f16_mib_per_1k = 80, fixed_mib = 1200 }
+overhead_mib = 1280
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.51
+files = [
+  { name = "gemma-4-31B-it-Q8_0.gguf", role = "model", sha256 = "d5808e5874e660a85ab45b2da00c9e3b4a003621249a333772232d1a703e4d67", size = 32635677632 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.17
+files = [
+  { name = "gemma-4-31B-it-UD-Q6_K_XL.gguf", role = "model", sha256 = "7f56eb37d53b0435ed154cbd647704b920488b38cd0684882766cf9a0cf0517f", size = 27521338304 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "qat-ud-q4-k-xl"
+label = "UD-Q4_K_XL (QAT)"
+quality = 6.6
+bits = 4.5
+hf_repo = "unsloth/gemma-4-31B-it-qat-GGUF"
+revision = "43cc1aeb31adf47ec06a854507ce552cd9862e6f"
+notes = "Google's quantization-aware-trained 4-bit weights (unsloth/gemma-4-31B-it-qat-GGUF): close to full precision at a 4-bit size."
+files = [
+  { name = "gemma-4-31B-it-qat-UD-Q4_K_XL.gguf", role = "model", sha256 = "00b5a7c497f0c8934033088c10a7fa9a4c015e46ee6d89e9c6890650ba5d0e71", size = 17287670048 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "4775e1bf6ef6f8df94caed2d672c74432f0722565e5225a170c72949ebe4cf23", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 5.71
+files = [
+  { name = "gemma-4-31B-it-UD-Q5_K_XL.gguf", role = "model", sha256 = "abd37a1692ed4a6e7387a886cce871a8d4205359ce098de43f144146cf6455a3", size = 21890429888 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.91
+files = [
+  { name = "gemma-4-31B-it-UD-Q4_K_XL.gguf", role = "model", sha256 = "9e92cb6236044c6a9870af406029c74a76e0571c157a6f95df724dcc8c7a1575", size = 18822970304 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 4.01
+files = [
+  { name = "gemma-4-31B-it-UD-Q3_K_XL.gguf", role = "model", sha256 = "73f1de2bde15da19362e5760febc01cd31e4e72f5c29561b7ead63ee2a28c716", size = 15380222912 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 3.07
+files = [
+  { name = "gemma-4-31B-it-UD-Q2_K_XL.gguf", role = "model", sha256 = "3c0f374d3bc5d3d8c26adf27535354404f144922cecb8c57d7967647d56f17f3", size = 11774991296 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb", size = 1198957024 },
+]
+
+[[model]]
+id = "qwen3.8-27b"
+kind = "llm"
+name = "Qwen 3.8 27B"
+adapter = "llama.cpp"
+license = "apache-2.0"
+family = "qwen3.8"
+params_total_b = 27.32
+params_active_b = 27.32
+moe = false
+vision = true
+ctx_max = 262144
 hf_repo = "unsloth/Qwen3.8-27B-GGUF"
 revision = "4ca720788d1e01f1bff70c033e0d0028fd02e502"
-quant = "UD-Q3_K_XL"
-license = "apache-2.0"
-hardware_class = "16 GB VRAM"
-min_vram_gib = 15.5
-ctx = 131072
 port = 7030
-args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-n", "16384", "-b", "1024", "-ub", "256", "-fa", "on", "-ctk", "q4_0", "-ctv", "q4_0", "-fit", "off", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-preserve", "--jinja", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0", "-np", "1", "--metrics", "--spec-type", "ngram-mod", "--spec-draft-n-max", "2", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "48", "--spec-ngram-mod-n-max", "64", "--mmproj", "{mmproj}", "--image-min-tokens", "1024", "--no-mmproj-offload"]
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0"]
+notes = "Dense 27B with image input; Gated DeltaNet hybrid (full attention every 4th layer), thinking on by default (sampling for thinking mode). The MTP head in the repo's MTP/ folder is not included."
+# KV full_attention: 16 layers x 4 KV heads x 256 dim x 2 (K, V) x 2 B x 1024 tokens = 64 MiB per 1k
+# KV gated_deltanet_recurrent_state: 48 layers, F32, 149.6 MiB per sequence (never quantized)
+# KV f16 = 64 MiB x ctx / 1024 + 0 MiB (windows) + 149.6 MiB (state); q8_0 = 0.53 x the first two
+kv = { f16_mib_per_1k = 64, state_mib = 149.6 }
+overhead_mib = 1024
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.51
+files = [
+  { name = "Qwen3.8-27B-Q8_0.gguf", role = "model", sha256 = "a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348", size = 29047086048 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.41
+files = [
+  { name = "Qwen3.8-27B-UD-Q6_K_XL.gguf", role = "model", sha256 = "701d8fa9ed214ab21bfc130cd2a7df19ca89bbef7713e2dfb19f3c63696aa917", size = 25299061664 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 6.11
+files = [
+  { name = "Qwen3.8-27B-UD-Q5_K_XL.gguf", role = "model", sha256 = "8601193d3d5760c37fb8ce1b43afebc69df5fb24e1fbc5a547c32e2200305276", size = 20876938144 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 5.14
+files = [
+  { name = "Qwen3.8-27B-UD-Q4_K_XL.gguf", role = "model", sha256 = "3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e", size = 17559178144 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 3.85
 files = [
   { name = "Qwen3.8-27B-UD-Q3_K_XL.gguf", role = "model", sha256 = "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e", size = 13146393504 },
   { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
 ]
-notes = "Former dense default on the measuring machine (128k context with q4_0 KV stays resident; the vision projector lives in host RAM). No MTP head in this file, so drafts are n-gram only. Not measured on the current llama.cpp build."
 
-# ----------------------------------------------------------------------------------------------- System 3 (max)
-[[recommendation]]
-id = "qwen3-8-flash-next-gsq-rco-coder"
-kind = "llm"
-class = "max"
-name = "Qwen 3.8 Flash-Next GSQ-RCO Coder (256 of 512 experts)"
-adapter = "llama.cpp"
-hf_repo = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF"
-revision = "5348543e0147355ac9cbcb031184a3546350988e"
-quant = "GSQ-RCO IQ1_M (pruned experts)"
-license = "apache-2.0"
-hardware_class = "16 GB VRAM + 96 GB RAM"
-min_vram_gib = 16.0
-ctx = 131072
-port = 7030
-args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-sm", "none", "-ngl", "99", "-ncmoe", "42", "-n", "16384", "-b", "8192", "-ub", "4096", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-fit", "off", "-np", "1", "--cache-prompt", "-cram", "2048", "--metrics", "--temp", "1", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0", "--repeat-penalty", "1", "--reasoning", "auto", "--reasoning-format", "deepseek", "--reasoning-effort", "xhigh", "--reasoning-preserve", "--jinja", "--spec-type", "ngram-mod", "--spec-draft-n-max", "2", "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "4", "--spec-ngram-mod-n-max", "16", "--lazy-mode", "auto"]
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 2.88
 files = [
-  { name = "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf", role = "model", sha256 = "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad", size = 29608446496 },
-  { name = "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf", role = "other", sha256 = "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113", size = 28800138432 },
+  { name = "Qwen3.8-27B-UD-Q2_K_XL.gguf", role = "model", sha256 = "fd4730dd8aad070517978752b63d530aeb1740d2283cab9fa24f1e404032ddb0", size = 9828981664 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e", size = 927607488 },
 ]
-measured = { decode_tps = 8.97, prefill_tps = 406.7, hardware = "RX 9070 XT 16 GB, Ryzen 9 9950X3D, 96 GB DDR5, Windows", backend = "HIP (ROCm 7.2), llama.cpp b714 (7fe450e19)", date = "2026-09-29" }
-notes = "Experts stay in host RAM (-ncmoe 42), dense layers and KV on the card; split GGUF (2 shards, 58.4 GB), {model} is shard 1. Measured on ONE 66.9k-token request at 128k context: prefill 406.7 tok/s, decode 8.97 tok/s at that depth. At 128k this build is about 0.8 GiB over the 16 GB card's budget, which likely depresses decode; try -ub 2048 or 64k context (-ncmoe 41) first. CPU threads were tuned to -t 8 -tb 32 on a 16-core Zen 5 (add them for your CPU). --lazy-mode needs a llama.cpp with lazy tensor reads (v0.5.0)."
 
-# --------------------------------------------------------------------------------------------- image (held back)
-# Held back until its repos, revisions and sha256 are verified on the hub (it needs files from 3 repos: per-file
-# repo + revision). Written in the current schema, so enabling it is uncommenting it.
-# [[recommendation]]
-# id = "qwen-image-2-1-q4-0"
-# kind = "image"
-# name = "Qwen Image 2.1 (Q4_0 DiT, Qwen3-VL 8B encoder)"
-# adapter = "sd.cpp"
-# hf_repo = "leejet/Qwen-Image-2.1-GGUF"
-# revision = "cc11433936a06e9765f7c0c0b1f0436cfd2b9856"
-# quant = "Q4_0"
-# license = "other (Qwen Research License; encoder apache-2.0)"
-# hardware_class = "16 GB VRAM"
-# min_vram_gib = 12.0
-# port = 1235
-# args = ["--diffusion-model", "{model}", "--llm", "{file:Qwen3VL-8B-Instruct-Q4_K_M.gguf}", "--llm_vision", "{mmproj}", "--vae", "{file:vae/qwen_image_2.1_vae_bf16.safetensors}", "--max-vram", "ROCm0=15", "--offload-to-cpu", "--fa", "--width", "512", "--height", "768", "--steps", "20", "--cfg-scale", "6.0", "--sampling-method", "euler", "--listen-ip", "{host}", "--listen-port", "{port}"]
-# files = [
-#   { name = "qwen_image_2.1-Q4_0.gguf", role = "model", sha256 = "8d992dc95dcbf13196a4aca893697fb56a5c9263e19e7b40c898be2cf29e9147", size = 4197494816 },
-#   # Qwen3-VL 8B encoder + its projector (apache-2.0):
-#   { name = "Qwen3VL-8B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2", size = 5027784800 },
-#   { name = "mmproj-Qwen3VL-8B-Instruct-F16.gguf", role = "mmproj", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", sha256 = "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38", size = 1159029824 },
-#   # VAE (qwen-research):
-#   { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
-# ]
-# measured = { seconds_per_image = 53.9, hardware = "RX 9070 XT 16 GB, Windows", backend = "HIP (ROCm 7.2), sd.cpp (qwen21 build of 2026-09-22)", date = "2026-09-22" }
-# notes = "20 steps, cfg 6, euler, text encoder offloaded to the CPU, --max-vram 15 GiB. 768x1024: 53.9 s/image (median of 4 in one session: 55.5, 52.4, 51.9, 122.1 s); 512x768: 29.2 s (one image, 2026-09-24)."
+[[model]]
+id = "qwen3.8-flash-next"
+kind = "llm"
+name = "Qwen 3.8 Flash-Next"
+adapter = "llama.cpp"
+license = "qwen-community-1.0"
+family = "qwen3.8"
+params_total_b = 176.94
+params_active_b = 6
+moe = true
+vision = true
+ctx_max = 262144
+hf_repo = "unsloth/Qwen3.8-Flash-Next-GGUF"
+revision = "38bb39ee97821de2c9009abb7e93950eec396e66"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.0", "--presence-penalty", "0.0", "--repeat-penalty", "1.0", "--lazy-mode", "auto"]
+notes = "125B MoE (6B active) plus a 51B n-gram embedding that --lazy-mode auto reads from disk on demand (about 27 GiB less resident memory than the file size; this estimate counts the whole file). Needs a llama.cpp with the qwen4exp architecture and lazy tensor reads. Thinking on by default. unsloth's MTP heads do not load on mainline llama.cpp yet, so none is included. License: Qwen Community License 1.0 (read LICENSE in the repo)."
+# KV full_attention: 12 layers x 2 KV heads x 256 dim x 2 (K, V) x 2 B x 1024 tokens = 24 MiB per 1k
+# KV qsa_indexer_k_cache: 12 layers x 256 K elements (no V) x 2 B x 1024 tokens = 6 MiB per 1k
+# KV gated_deltanet_recurrent_state: 36 layers, F32, 112.2 MiB per sequence (never quantized)
+# KV f16 = 30 MiB x ctx / 1024 + 0 MiB (windows) + 112.2 MiB (state); q8_0 = 0.53 x the first two
+kv = { f16_mib_per_1k = 30, state_mib = 112.2 }
+overhead_mib = 1536
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.51
+files = [
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf", role = "model", sha256 = "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2", size = 10946624 },
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf", role = "other", sha256 = "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e", size = 682434912 },
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf", role = "other", sha256 = "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20", size = 54400261312 },
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf", role = "other", sha256 = "bfa634025fabbd2658bf7694bc80b90e571699c768723f844c934c7ef06c691a", size = 49446841216 },
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf", role = "other", sha256 = "232a8f14cc0fa4262e7efe8593774b136fe40909e39c7a020342ddaa27259a97", size = 49668930400 },
+  { name = "Q8_0/Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf", role = "other", sha256 = "538a93bca918064983409a41187ad4c68640f9aced6f29564da8f551bf86d7a5", size = 34015618784 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.65
+files = [
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00001-of-00006.gguf", role = "model", sha256 = "8bdc6bad55b6699f46f60708829932ff4018d7ac9bd309c388534fa31753bdb7", size = 10946624 },
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00002-of-00006.gguf", role = "other", sha256 = "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e", size = 682434912 },
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00003-of-00006.gguf", role = "other", sha256 = "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20", size = 54400261312 },
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00004-of-00006.gguf", role = "other", sha256 = "0ea4b599880a5a52fcd9c188ba1443f646c69c96571904ddbd6a79246a01a997", size = 49814108512 },
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00005-of-00006.gguf", role = "other", sha256 = "9948e81ae8368144b135a7403d8c0f2cf9a6c2f9f692313865855b2832e696c9", size = 49419317344 },
+  { name = "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00006-of-00006.gguf", role = "other", sha256 = "e4ae255234f42b18012f6d6eec5bf615b57479b7e0a0233c47436a321ffeec3f", size = 14838313984 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 7.16
+files = [
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf", role = "model", sha256 = "610922cdb1afe1094e95d7a3e86b12ee33317ebbf7320ac9344e21b6ae4bb69f", size = 10946618 },
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00002-of-00006.gguf", role = "other", sha256 = "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e", size = 682434912 },
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00003-of-00006.gguf", role = "other", sha256 = "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20", size = 54400261312 },
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00004-of-00006.gguf", role = "other", sha256 = "9ee6bbe462e6830864382d629101490625b1c95afa15492b7ad550c7bed2dd13", size = 49990245824 },
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00005-of-00006.gguf", role = "other", sha256 = "0b2437f661f584030cb5aeb8fb1bb70f6422518a6746bfcc0304167c7b6b8beb", size = 49882416192 },
+  { name = "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00006-of-00006.gguf", role = "other", sha256 = "55dd96c5ad0863b06b6393151b9ad0ac727b8d58a62e02a296ca5d5ddbfee4a3", size = 3320101792 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 5.03
+files = [
+  { name = "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf", role = "model", sha256 = "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082", size = 10946624 },
+  { name = "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf", role = "other", sha256 = "3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9", size = 49859583136 },
+  { name = "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf", role = "other", sha256 = "56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3", size = 49376141504 },
+  { name = "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf", role = "other", sha256 = "753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a", size = 12087983520 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 4.07
+files = [
+  { name = "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf", role = "model", sha256 = "f2ef4328929d8b8c8930e2856eef52128dd4ce3425302f04bc3c657431cc4c49", size = 10946624 },
+  { name = "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf", role = "other", sha256 = "7d230e7c9421d868b89eebaf23033af0ea1a4e046956df00fb156814fb62346e", size = 49983253824 },
+  { name = "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf", role = "other", sha256 = "21d4f90f9cd7b7c3a1582667c20cb22f7b03de895b88a23bb20aaeaa44f2c199", size = 39992153376 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 3.57
+files = [
+  { name = "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf", role = "model", sha256 = "a4f3b21e77353999829f2f767e9ac21ce9c71d29a74f2cc9eda48c9bf23c8b86", size = 10946624 },
+  { name = "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00002-of-00003.gguf", role = "other", sha256 = "2e3bf1ee7d2a04e261e9f342a2d968f696cce5941d082b0e434deb9b1edc12c6", size = 49979779296 },
+  { name = "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00003-of-00003.gguf", role = "other", sha256 = "ec8c106759fdf4f463039c34c0707718d7d8908d53d892bd4f002e71620803f9", size = 28878402944 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-iq1-m"
+label = "UD-IQ1_M"
+quality = 1.7
+bits = 3.37
+files = [
+  { name = "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00001-of-00003.gguf", role = "model", sha256 = "6584f289c808a486ac33aef20906774bcf6616785535c03b842072951e5112d2", size = 10946624 },
+  { name = "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00002-of-00003.gguf", role = "other", sha256 = "a7cbafba2cbc1ccde484ed05e1bbeaef4d67e0924ef51cc8b8de18e62edb5586", size = 49988981792 },
+  { name = "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00003-of-00003.gguf", role = "other", sha256 = "ae757ff9347651adacc7746f137d8c29b51f25cf6bb27cd49086ef45bd8cc203", size = 24538827360 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model.quant]]
+id = "ud-iq1-s"
+label = "UD-IQ1_S"
+quality = 1.7
+bits = 3.28
+files = [
+  { name = "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf", role = "model", sha256 = "88a1420825a9304063e882ada29d438263617f51ac8923d438d927496693bafd", size = 10946624 },
+  { name = "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00002-of-00003.gguf", role = "other", sha256 = "3a62e35bbf9add4733bd1438ebd3a67649d5edd6cb0e72bb78e33c913992b2b6", size = 49990818368 },
+  { name = "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00003-of-00003.gguf", role = "other", sha256 = "0e25ceaeb89b8a80aa973c6c0c7448943682f7408c2855b2ebd016b7643a861a", size = 22544696352 },
+  { name = "mmproj-F16.gguf", role = "mmproj", sha256 = "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980", size = 904004000 },
+]
+
+[[model]]
+id = "deepseek-v4-flash"
+kind = "llm"
+name = "DeepSeek V4 Flash (0731)"
+adapter = "llama.cpp"
+license = "mit"
+family = "deepseek-v4"
+params_total_b = 284.33
+params_active_b = 13
+moe = true
+vision = false
+ctx_max = 1048576
+hf_repo = "unsloth/DeepSeek-V4-Flash-0731-GGUF"
+revision = "fbbb5b93fb787c21338159b0af3318bb3f4d9768"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--temp", "1.0", "--top-p", "0.95"]
+notes = "284B MoE, about 13B active; text only. Compressed attention keeps even 1M context under 7 GiB of f16 KV. Needs a llama.cpp with the deepseek4 architecture. unsloth publishes no Q8_0; UD-Q8_K_XL is the 8-bit rung and barely larger than UD-Q4_K_XL. The DSpark drafter is not included."
+# KV raw_sliding_window_k_cache: 43 layers x 768 cells (window 128 + ubatch 512, padded to 256) x 512 K elements (no V) x 2 B = 32.25 MiB fixed
+# KV csa_compressed_k_cache: 21 layers x 512 K elements / 4 tokens x 2 B x 1024 tokens = 5.25 MiB per 1k
+# KV hca_compressed_k_cache: 20 layers x 512 K elements / 128 tokens x 2 B x 1024 tokens = 0.1562 MiB per 1k
+# KV csa_lightning_indexer_k_cache: 21 layers x 128 K elements / 4 tokens x 2 B x 1024 tokens = 1.3125 MiB per 1k
+kv = { f16_mib_per_1k = 6.7188, fixed_mib = 32.2 }
+overhead_mib = 1536
+
+[[model.quant]]
+id = "ud-q8-k-xl"
+label = "UD-Q8_K_XL"
+quality = 8
+bits = 4.55
+files = [
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf", role = "model", sha256 = "d13ce8f90855547bdaebe7312f531a1f2c4f822178d3103951f27fe884395cfa", size = 5257408 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00002-of-00005.gguf", role = "other", sha256 = "3da2f2443063f83635986f9b67fa7e8e3d03c53b81a9a08d2007936612423610", size = 49215492960 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00003-of-00005.gguf", role = "other", sha256 = "7d622a7760d359ec9257b3493ad531e3bf0bfbe6f6533267e16e6dde8153ddce", size = 49700372160 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00004-of-00005.gguf", role = "other", sha256 = "6ed2bce452214f156b85e7c5f7d4fc242a3052f409d1b90a61422f60669c2de3", size = 49466495968 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00005-of-00005.gguf", role = "other", sha256 = "ea4727af4888fdca0fff796ec81ac2f3ebb43c310b2feb4798f41d82744b42ea", size = 13481997024 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.36
+files = [
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00001-of-00005.gguf", role = "model", sha256 = "d13ce8f90855547bdaebe7312f531a1f2c4f822178d3103951f27fe884395cfa", size = 5257408 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00002-of-00005.gguf", role = "other", sha256 = "d5b61668950f4743aacd677675d7fcf7507dbe1db6d304e8ff97ed1f00827bee", size = 48935523072 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00003-of-00005.gguf", role = "other", sha256 = "9705db7e589f360685ca7bd48100b270d78d228d4f5aa980508f3b2778af5494", size = 48980787136 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00004-of-00005.gguf", role = "other", sha256 = "7f13a68e3ca64208454c4ba32cc2757c0cbe78e3e5576c3142bf7007ca97da42", size = 49999168416 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Flash-0731-UD-Q4_K_XL-00005-of-00005.gguf", role = "other", sha256 = "ed0d93164d3784968d6ce40d6d201ba98337f16e7db1b31fe495b2b0f334cc09", size = 7174505088 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 3.61
+files = [
+  { name = "UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00001-of-00004.gguf", role = "model", sha256 = "36e02d6d87c9fbfe0dd4e8fd0d03cef2aa2c509248802a9d1772159112db3734", size = 5257664 },
+  { name = "UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00002-of-00004.gguf", role = "other", sha256 = "2e21e08c13fce1e2f5403f1571a0a1abc8b85469f011eaebad7b8f9ea9d10f84", size = 49350774208 },
+  { name = "UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00003-of-00004.gguf", role = "other", sha256 = "ac71bc6fd30c0af3eb702cea5bc94be570b9fed4857d63bf7180ec668683612c", size = 49533038144 },
+  { name = "UD-Q3_K_XL/DeepSeek-V4-Flash-0731-UD-Q3_K_XL-00004-of-00004.gguf", role = "other", sha256 = "28b764750db8c4539df530292cd5950c6d161d81b20673b736ff4f8ca4ffa7ae", size = 29317659776 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 2.72
+files = [
+  { name = "UD-Q2_K_XL/DeepSeek-V4-Flash-0731-UD-Q2_K_XL-00001-of-00003.gguf", role = "model", sha256 = "de65c5bb660817b95cc281bf54935f9d1bcc3b22535f2eae63b35a14c7c5724b", size = 5257664 },
+  { name = "UD-Q2_K_XL/DeepSeek-V4-Flash-0731-UD-Q2_K_XL-00002-of-00003.gguf", role = "other", sha256 = "c8728a298862cd8736782e2e4056e5e3e03c415ba552a38173264494e41ef327", size = 49437013568 },
+  { name = "UD-Q2_K_XL/DeepSeek-V4-Flash-0731-UD-Q2_K_XL-00003-of-00003.gguf", role = "other", sha256 = "a4bae0788c025c1b2388754592c98fefa1372981748ac9875039bf6a30e6eeb4", size = 47390237120 },
+]
+
+[[model.quant]]
+id = "ud-iq2-xxs"
+label = "UD-IQ2_XXS"
+quality = 2.2
+bits = 2.56
+files = [
+  { name = "UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00001-of-00003.gguf", role = "model", sha256 = "c58c9d62eac7b62e9578b52613f425e48313d7212ab8d1d76caed8ea8de26595", size = 5257664 },
+  { name = "UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00002-of-00003.gguf", role = "other", sha256 = "65a113df6d4469f16db6882b6919e153c464c3c78c833f5e1b41a33803cdbd52", size = 49890588800 },
+  { name = "UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00003-of-00003.gguf", role = "other", sha256 = "a69102ddfaf4a84426e11fdb66716654f4260dc3a1de3ade9fd50e006b8691d3", size = 40964890464 },
+]
+
+[[model.quant]]
+id = "ud-iq1-m"
+label = "UD-IQ1_M"
+quality = 1.7
+bits = 2.44
+files = [
+  { name = "UD-IQ1_M/DeepSeek-V4-Flash-0731-UD-IQ1_M-00001-of-00003.gguf", role = "model", sha256 = "b99fa246a10808146e00a7e908c6852098a4f08394eabf8b37c9263993980a69", size = 5257664 },
+  { name = "UD-IQ1_M/DeepSeek-V4-Flash-0731-UD-IQ1_M-00002-of-00003.gguf", role = "other", sha256 = "c8536187b0e5dbe71e6bbf6086e0d3b491cd31d60da6522dfef074133c0ee2ee", size = 49448084864 },
+  { name = "UD-IQ1_M/DeepSeek-V4-Flash-0731-UD-IQ1_M-00003-of-00003.gguf", role = "other", sha256 = "80a4eb4eebc57598d9559c2924054d40d69f51773ae873538939382e120b3e3f", size = 37447971424 },
+]
+
+[[model.quant]]
+id = "ud-iq1-s"
+label = "UD-IQ1_S"
+quality = 1.7
+bits = 2.32
+files = [
+  { name = "UD-IQ1_S/DeepSeek-V4-Flash-0731-UD-IQ1_S-00001-of-00003.gguf", role = "model", sha256 = "2fa152e25a14500e42e6d98f20d200eec1e945f34dc1cfb981b651b9c86b97be", size = 5257664 },
+  { name = "UD-IQ1_S/DeepSeek-V4-Flash-0731-UD-IQ1_S-00002-of-00003.gguf", role = "other", sha256 = "e9fc77544cd48aa0c31fbf32fdf5432f2b560b92a9aeffd9f690d99867cf0e5f", size = 49093726624 },
+  { name = "UD-IQ1_S/DeepSeek-V4-Flash-0731-UD-IQ1_S-00003-of-00003.gguf", role = "other", sha256 = "fd99d5cd0503d668b6febc2eedcc9db68e264cfb79dd355efc88c15eabe4248d", size = 33440253504 },
+]
+
+[[model]]
+id = "glm-5.3-flash"
+kind = "llm"
+name = "GLM-5.3-Flash"
+adapter = "llama.cpp"
+license = "mit"
+family = "glm-5.3"
+params_total_b = 320.76
+params_active_b = 18
+moe = true
+vision = true
+ctx_max = 1048576
+hf_repo = "unsloth/GLM-5.3-Flash-GGUF"
+revision = "621d456e93e926e4b52f85cff5f634358c1828f9"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--mmproj", "{mmproj}", "--temp", "1.0", "--top-p", "0.95"]
+notes = "320B MoE, 18B active, image input, 1M context with a small KV cache. Needs a llama.cpp with the glm5-next architecture (mainline PR #27773, 2026-09-30): the unsloth GGUF says glm5next, so KLIF downloads the rewritten first shard and projector from Shard_Rewrite/ in their place (the community fix; a report says that projector is still one key behind mainline)."
+# KV dsa_mla_latent_k_cache: 11 layers x 512 K elements (no V) x 2 B x 1024 tokens = 11 MiB per 1k
+# KV dsa_indexer_cache: 11 layers x 384 K elements (no V) x 2 B x 1024 tokens = 8.25 MiB per 1k
+# KV kda_recurrent_state: 34 layers, F32, 145.6 MiB per sequence (never quantized)
+# KV f16 = 19.25 MiB x ctx / 1024 + 0 MiB (windows) + 145.6 MiB (state); q8_0 = 0.53 x the first two
+kv = { f16_mib_per_1k = 19.25, state_mib = 145.6 }
+overhead_mib = 2048
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-Q8_0-00001-of-00008.gguf_file", role = "model", save_as = "Q8_0/GLM-5.3-Flash-Q8_0-00001-of-00008.gguf", sha256 = "5dc239a59cbd2d3b9d90b647cf697b80c0f4101bfaa2280b3102156e94a24ccf", size = 9429984 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00002-of-00008.gguf", role = "other", sha256 = "8aabbbc0a92c551894f62a0737b433c9fad60a94baaa61e669f96329bb1d88a6", size = 49665857344 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00003-of-00008.gguf", role = "other", sha256 = "7b50941b404fed3413be4e0ca52af43e79113e4b3e2c940d1f4cdf74e95ebb39", size = 49822821280 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00004-of-00008.gguf", role = "other", sha256 = "ff27fb4536d524cae687c4fb88dfa1b43a8ee0b4256e55304f95dc1aa38e8b81", size = 49849652064 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00005-of-00008.gguf", role = "other", sha256 = "c088636854c5da312e44a7be4195cd765dd9eb6339d7b014d1da4192851a9b5b", size = 49974608352 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00006-of-00008.gguf", role = "other", sha256 = "4bece55cb9e98720f3ef2e1e9683983aeced77434dbcd54584c0b7c80a2e95cb", size = 49840638624 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00007-of-00008.gguf", role = "other", sha256 = "a9f792204b0b58155e6092f9a4160a0659fcdc98a1c126e563ecc3cd02ad68ad", size = 49831834720 },
+  { name = "Q8_0/GLM-5.3-Flash-Q8_0-00008-of-00008.gguf", role = "other", sha256 = "a6cb6887c0047653f08c0ab6e564972451d9511322202970f7052e36052aefd6", size = 41987123840 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.28
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-Q6_K_XL-00001-of-00007.gguf_file", role = "model", save_as = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00001-of-00007.gguf", sha256 = "7d7bd899640a594a32b1c7577c41fc00e56143e3b5731d3b9056bdc988f80f1c", size = 9429984 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00002-of-00007.gguf", role = "other", sha256 = "c65caeffd822aab9810bf1049369f56e7b61c38217fa3c12f3dab2d21c0fd855", size = 49354106688 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00003-of-00007.gguf", role = "other", sha256 = "491f13fb641ecf27c30107e34a045b8cd00306b43559f3d0273687c47a154559", size = 48109732704 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00004-of-00007.gguf", role = "other", sha256 = "1db71efa40ba5f9ea017d12d744a8addf4025d3fd256f09e253967327a156270", size = 49515348992 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00005-of-00007.gguf", role = "other", sha256 = "41acb75b5105d49d89a21c3760d14c458f1e0c2b4e4fff08310c7cb2d5c3fff5", size = 48930700352 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00006-of-00007.gguf", role = "other", sha256 = "3f669d880bfce522063c677ddddd19f8b066f0d71701d2e123131f239b7fbf6b", size = 49077752288 },
+  { name = "UD-Q6_K_XL/GLM-5.3-Flash-UD-Q6_K_XL-00007-of-00007.gguf", role = "other", sha256 = "3623f4af825ea01d7cd65706c496ac2c11cb585dfa1a27189320b5790a535b00", size = 46836040800 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 5.99
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf_file", role = "model", save_as = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf", sha256 = "cb792ba9c8dbcd7a45aede04ffc16c80b9f3b290423585e06835e0acf7081e17", size = 9429984 },
+  { name = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00002-of-00006.gguf", role = "other", sha256 = "fd2a37a8d00ad2ab9b8e8691f8d16f4e9991d1eab2aaca14ec4b97568803aa87", size = 48806959328 },
+  { name = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00003-of-00006.gguf", role = "other", sha256 = "298edf5776b962f63643654bd85ed3ed91777b9a592dc3950b9002b08e320892", size = 48557435712 },
+  { name = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00004-of-00006.gguf", role = "other", sha256 = "97b097efd8c135246eb620d22438d17c57ad1fff19a0e5340ca9c9232f5f1de9", size = 49317045120 },
+  { name = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00005-of-00006.gguf", role = "other", sha256 = "17a5ef81a355d1cc4e771bedc7e2d688dab25892cf05bf26c2ddb5ae8230ffab", size = 49317045120 },
+  { name = "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00006-of-00006.gguf", role = "other", sha256 = "47435d0287b2f5f023715ceff78b036d0ab63698708f0be54e3a8f30b76bc57d", size = 44298171744 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.98
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf_file", role = "model", save_as = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf", sha256 = "b59c030090f012b38213bc8c4f78ce10767f2693d730d0dbcd3dc16a5f69e2bc", size = 9429984 },
+  { name = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf", role = "other", sha256 = "d3ecb6ff3957a99878f9a0352676a0913748a431a9a4a1b1ffa5ade9b8947a74", size = 49198039200 },
+  { name = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf", role = "other", sha256 = "328073c004e7c5395b208247feed26089db247b94dd8fa4ab0f2569d86c1d770", size = 49988626304 },
+  { name = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf", role = "other", sha256 = "6803ab7effa6da4a0b02c9c7865952fdd6c5b2e10e53903348da369e90bd13f9", size = 48700701344 },
+  { name = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf", role = "other", sha256 = "852f3df9dacde3d196796f9fe738468e80c8701555ff0a8c30bc010fb8974dd8", size = 49026026752 },
+  { name = "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf", role = "other", sha256 = "c6ba510fafc1e12cc0addbc361a329c0c592ab96980098e7e25e107d8faa983e", size = 2784497888 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 3.68
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf_file", role = "model", save_as = "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf", sha256 = "be89305a221c1449cf9a5a84b5c492520a7fb23a3af1b2178a20ecf0b6ecae76", size = 9429984 },
+  { name = "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00002-of-00004.gguf", role = "other", sha256 = "310b5bef056c5cc61d98e1845feac97e35d0a5aa412fca354b6cd597d66b486e", size = 49609243584 },
+  { name = "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00003-of-00004.gguf", role = "other", sha256 = "eacaab11505a25f00e78b4dce64795cc38bc25839372ec586745af0261673a0c", size = 49623486016 },
+  { name = "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00004-of-00004.gguf", role = "other", sha256 = "c650640c9f94f5f1662ac84b803405db3265ee9fc24ffe56670bb0eafd632d00", size = 48293762496 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 2.71
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-Q2_K_XL-00001-of-00004.gguf_file", role = "model", save_as = "UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00001-of-00004.gguf", sha256 = "2f32eba33ebc75a715e9c85a010faac4c67542e38e8970bd961d544bfe815f9e", size = 9429984 },
+  { name = "UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00002-of-00004.gguf", role = "other", sha256 = "f4a9e1ab13d5d9620f5590c9a4aba4c169e6707a1554f3be3fe3112f80a66825", size = 49294975936 },
+  { name = "UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00003-of-00004.gguf", role = "other", sha256 = "330a8ad76c787b3ab6df062dd30abea7aafe6a0e3d5860e8720dfa4abb2434a5", size = 49949266048 },
+  { name = "UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00004-of-00004.gguf", role = "other", sha256 = "5c294f42edc5d69cf00a79ab444e61f0742e9933105fc5c85f97da54dab8946f", size = 9466399584 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-iq2-xxs"
+label = "UD-IQ2_XXS"
+quality = 2.2
+bits = 2.54
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf_file", role = "model", save_as = "UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf", sha256 = "337870cefce5fb34b2aa3ade54a0fbf61676697f7f9a906670c20edde74561f4", size = 9429984 },
+  { name = "UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00002-of-00004.gguf", role = "other", sha256 = "d51a3d9ca05022d53e71753df75ee64ed5fd4e47655650ae023e9717b3ec158d", size = 49896298080 },
+  { name = "UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00003-of-00004.gguf", role = "other", sha256 = "89180f13784dc1128586b98adf1ca876279881a20bc4f01747703ce352563372", size = 49248507840 },
+  { name = "UD-IQ2_XXS/GLM-5.3-Flash-UD-IQ2_XXS-00004-of-00004.gguf", role = "other", sha256 = "9e0ef47daa1fdffce3cf2ac1594ce4634d176ad018be6e692729757f38d5fbf6", size = 2690716000 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-iq1-m"
+label = "UD-IQ1_M"
+quality = 1.7
+bits = 2.43
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-IQ1_M-00001-of-00003.gguf_file", role = "model", save_as = "UD-IQ1_M/GLM-5.3-Flash-UD-IQ1_M-00001-of-00003.gguf", sha256 = "a3f31b5ba1ecc620a7c2088c30eb830c488453932f3e9e530777efb5980b0ef7", size = 9429984 },
+  { name = "UD-IQ1_M/GLM-5.3-Flash-UD-IQ1_M-00002-of-00003.gguf", role = "other", sha256 = "6bcfc2210cced11cede6cd6ce4ac3368c0b1ab52d6fc3e40f2a3f310f0614001", size = 49996246592 },
+  { name = "UD-IQ1_M/GLM-5.3-Flash-UD-IQ1_M-00003-of-00003.gguf", role = "other", sha256 = "07e252723e988154340414ebd6857051179f69eb25112ad75122d4230ccfc6f7", size = 47573668096 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model.quant]]
+id = "ud-iq1-s"
+label = "UD-IQ1_S"
+quality = 1.7
+bits = 2.32
+files = [
+  { name = "Shard_Rewrite/GLM-5.3-Flash-UD-IQ1_S-00001-of-00003.gguf_file", role = "model", save_as = "UD-IQ1_S/GLM-5.3-Flash-UD-IQ1_S-00001-of-00003.gguf", sha256 = "909a8a2dedb493c5a694facfd1e0e9a3309ac66fbb9d270c024ff5d12e0d565f", size = 9429984 },
+  { name = "UD-IQ1_S/GLM-5.3-Flash-UD-IQ1_S-00002-of-00003.gguf", role = "other", sha256 = "b99c4dd929601884ff95d9ddeb581a5ef93fd281c37c162e48b2981bf23c0830", size = 49621122496 },
+  { name = "UD-IQ1_S/GLM-5.3-Flash-UD-IQ1_S-00003-of-00003.gguf", role = "other", sha256 = "9bb0ff754968d588793d795c715cc2a7d5292280ff9d0df46b7e1edd57da34a1", size = 43456692608 },
+  { name = "Shard_Rewrite/mmproj-F16.gguf_file", role = "mmproj", save_as = "mmproj-F16.gguf", sha256 = "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947", size = 1128047296 },
+]
+
+[[model]]
+id = "glm-5.3"
+kind = "llm"
+name = "GLM-5.3"
+adapter = "llama.cpp"
+license = "glm-5.3 (custom)"
+family = "glm-5.3"
+params_total_b = 753.86
+params_active_b = 40
+moe = true
+vision = false
+ctx_max = 1048576
+hf_repo = "unsloth/GLM-5.3-GGUF"
+revision = "346b3591c7f28d1a23716f97a065ecf12ec14771"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--temp", "1.0", "--top-p", "0.95"]
+notes = "754B MoE (about 40B active, inferred from GLM-5); text only, 1M context. Needs a llama.cpp with the glm-dsa architecture. License: the GLM-5.3 license (custom; read LICENSE in the repo)."
+# KV mla_latent_k_cache: 78 layers x 576 K elements (no V) x 2 B x 1024 tokens = 87.75 MiB per 1k
+# KV dsa_indexer_k_cache: 21 layers x 128 K elements (no V) x 2 B x 1024 tokens = 5.25 MiB per 1k
+kv = { f16_mib_per_1k = 93 }
+overhead_mib = 2048
+
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+files = [
+  { name = "Q8_0/GLM-5.3-Q8_0-00001-of-00017.gguf", role = "model", sha256 = "7fe0aacb07c33f113aed536300da6fb7fb1cf09e6202d67b6c178a2b878f4644", size = 48305489632 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00002-of-00017.gguf", role = "other", sha256 = "ccc253748f43c3167a3801ab2178cead3042f2248c4624297b95c5aa62180873", size = 49105526048 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00003-of-00017.gguf", role = "other", sha256 = "4829543a4bd76e7fe82c87a188a83bcdf012ccd5f6ba22e328f0c06ed46165d3", size = 49299773536 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00004-of-00017.gguf", role = "other", sha256 = "7a16851636b4e0fbbd59399b5231f5c84793d588091431b3801f11cd76589c41", size = 49065113632 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00005-of-00017.gguf", role = "other", sha256 = "f901d41f1c57d921d90dfb9860e3a2ab236558379a07fd3ca2e06e779b3e7003", size = 49065113600 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00006-of-00017.gguf", role = "other", sha256 = "5f8b0c68a93415868cd3b61e3d23c96370ce1269a0c6658750fe5833347acf55", size = 48843319392 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00007-of-00017.gguf", role = "other", sha256 = "f9a43526c53ab912da0ac54372dfd5c71e0e0064ad2a7177031bc1ee697d1cbf", size = 49065113600 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00008-of-00017.gguf", role = "other", sha256 = "90ef2b86ae70ee0f4ff8f04e4be041d8707f427c7329eda80b36bb61679bf1da", size = 49065113632 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00009-of-00017.gguf", role = "other", sha256 = "8be38eb8deecb6f01c858b06d13bf2be3515ed4eb036cfc6fce589e1b1c45d9d", size = 48843319392 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00010-of-00017.gguf", role = "other", sha256 = "3aafa3a4e42506356bafb16ce54ad13a344a42445f1f11421787747e5ebc6b5d", size = 49065113600 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00011-of-00017.gguf", role = "other", sha256 = "a57b126586a31baee6463df66b006c54359892954021272c2191c25743d41d0d", size = 49065113632 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00012-of-00017.gguf", role = "other", sha256 = "bbd9238c813c90d9a1645e22e38be5231ca1c056498569486eeb9566f7906ffa", size = 48883731776 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00013-of-00017.gguf", role = "other", sha256 = "54089f96058c3f058227121a93cdd978d03601205c4893ec2f96d4c1f38924a7", size = 49065113632 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00014-of-00017.gguf", role = "other", sha256 = "28157088d398e3564442985c2183f617b1bc4979420ce8767ea883ba803f6d68", size = 49065113600 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00015-of-00017.gguf", role = "other", sha256 = "f8601930e67ca579556041f59356ae1ba66d8c9cae11252c3a60048038d7e2e6", size = 48843319392 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00016-of-00017.gguf", role = "other", sha256 = "6c9b48a9d49082fa8fc329edf59a1db4eb90ef58f7e9cfcc6d06ac204cf023a7", size = 49155939904 },
+  { name = "Q8_0/GLM-5.3-Q8_0-00017-of-00017.gguf", role = "other", sha256 = "79cd14a05a4c1b867e7d56bf1faaea2f7a88b1063fd992e4f9983a6168f42cdd", size = 17556349216 },
+]
+
+[[model.quant]]
+id = "ud-q6-k-xl"
+label = "UD-Q6_K_XL"
+quality = 6.5
+bits = 7.26
+files = [
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00001-of-00016.gguf", role = "model", sha256 = "d7f982efbb767fe9ce8d9e61e908d16c6c5f9eb470ee354273010b3aae734fea", size = 9428677 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00002-of-00016.gguf", role = "other", sha256 = "710a95e0b38573ba205873caa3b7511b8f0b2a7b4c121698e4f251584087e62e", size = 48175770944 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00003-of-00016.gguf", role = "other", sha256 = "bc5ba47c593594bcc0d8f3dc504c70661b6659bade502d4fc78ee780ec7ec672", size = 49694731776 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00004-of-00016.gguf", role = "other", sha256 = "e766dfbb18e0dc27bd45196fad1bd70634664ef6bb61f0d0625c8df76b38eb36", size = 47360626336 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00005-of-00016.gguf", role = "other", sha256 = "a74c1184952552a66234af849aee8e8720ec8c4beb4605a0482d090fa5366d22", size = 47540216288 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00006-of-00016.gguf", role = "other", sha256 = "e28dcb4b00c4d3d2b850cba8252ae030017a33d5f283bc87a891d3d49f66e0ed", size = 48134450720 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00007-of-00016.gguf", role = "other", sha256 = "cd60331983b19c5456fba9da439b4ea1dcdabe84e10239c404a43b25fbb76206", size = 47360626336 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00008-of-00016.gguf", role = "other", sha256 = "a5042fdb3764e52ab717d6a8ebe5a8e06abff8f4cebe3c9c0dd51cba32722133", size = 47540216288 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00009-of-00016.gguf", role = "other", sha256 = "5bc47574214ef4dfe89ac1c5623dcc29e81056aed9d5fd3cbe16d5e8d93d42db", size = 48134450720 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00010-of-00016.gguf", role = "other", sha256 = "294b62b307ef8c8e39e233a977ed1c34c5f7191c1d69c098c0997b4bfa24bfcb", size = 47360626336 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00011-of-00016.gguf", role = "other", sha256 = "40b23e5b14423cfc20bd47e1ce77a434bd51beb428c123f421b4bf7d377e052f", size = 47540216288 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00012-of-00016.gguf", role = "other", sha256 = "3833e99de0ffd1673daf306c2a27a67ed0d3b252aec9f0ca8a7f18e7122501f0", size = 48134450720 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00013-of-00016.gguf", role = "other", sha256 = "87f0b9630eabf16cf64fe3003b177bb620a917ff1dff5d1b7d63041ea626b5ff", size = 47360626336 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00014-of-00016.gguf", role = "other", sha256 = "e598ca6d9a61adae5a339bcaf0ecda8443665cc2f3972daa0c909a9ecf45352a", size = 47540216288 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00015-of-00016.gguf", role = "other", sha256 = "e3430564ded510ab658d44bd6b412220ab91eadeb0f7e295a3f3360bfa1f4249", size = 48134450720 },
+  { name = "UD-Q6_K_XL/GLM-5.3-UD-Q6_K_XL-00016-of-00016.gguf", role = "other", sha256 = "79af2211278ac07dfe4c789751d7de7d7caf0a4516486f8a9b6eedb1f3fb6e9b", size = 14348410400 },
+]
+
+[[model.quant]]
+id = "ud-q5-k-xl"
+label = "UD-Q5_K_XL"
+quality = 5.5
+bits = 5.97
+files = [
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00001-of-00013.gguf", role = "model", sha256 = "ce32dd6c1f6b19b0455b5cfe0adac18e7504cca7f25648a7be57ac7cbc816eb4", size = 9428677 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00002-of-00013.gguf", role = "other", sha256 = "63454b4f5a798fd175890725fb728e130aed99ded5cc2b5ff120bede74e4cddf", size = 48936583936 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00003-of-00013.gguf", role = "other", sha256 = "65cf779a7b9d76c5016a9d45d31eaa9ed6455c358a2627131e061ec8c3d4b052", size = 48713622784 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00004-of-00013.gguf", role = "other", sha256 = "c8785f9b830a6ad4140e9372c6bd4371cc8ea45672bb3af8a3df54c60db24364", size = 48893212736 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00005-of-00013.gguf", role = "other", sha256 = "3366775add4dba2e8884333b5bb4e054bd27125580f5e879d0e0281eb260df0b", size = 48471709888 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00006-of-00013.gguf", role = "other", sha256 = "723b4c5a52a7fed80f063f75013aaf363d25e365aad9f81a8035bcf2275c0371", size = 48713622784 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00007-of-00013.gguf", role = "other", sha256 = "f8e6ff5d36734905f25d94b497a8ba524176d846b87c346887ecf60d8557fb9f", size = 48893212736 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00008-of-00013.gguf", role = "other", sha256 = "dcc515113ba68c03b6252e2731e46804b29d816903c039ca584fbe7a06ee2d9f", size = 48471709888 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00009-of-00013.gguf", role = "other", sha256 = "248c13e893c2747ae6815507c5935a66acee47de92525196163fc15b228d5464", size = 48713622784 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00010-of-00013.gguf", role = "other", sha256 = "7f8319493d2f69fbdfc63f03a4b2a191b68242e0d1b06acd0304f2685671df34", size = 48893212736 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00011-of-00013.gguf", role = "other", sha256 = "9982315c607c305a6b7da90d98451044083151c2d23edaf35535fe394a347fb5", size = 48471709888 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00012-of-00013.gguf", role = "other", sha256 = "4e44b0b8281ac370307c13c1e04db6e947498659be8b0cc1a822633fd0fbefac", size = 49493763328 },
+  { name = "UD-Q5_K_XL/GLM-5.3-UD-Q5_K_XL-00013-of-00013.gguf", role = "other", sha256 = "30060d21594d94af92cebcb305c81a353c090d53a5f1c4e20bdcb32017af6054", size = 25790851264 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.96
+files = [
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-00011.gguf", role = "model", sha256 = "02a3e367e8b5f5ee3341d556211faa2cc956c3e77ad0e298c6805323bfaeb02d", size = 9428677 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00002-of-00011.gguf", role = "other", sha256 = "374daff9e093b362a12ca89904fd0511df38b2a9794029e272c8639587a13402", size = 49433942336 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00003-of-00011.gguf", role = "other", sha256 = "9a13948a0c7747e374766ab32272e8bf5ee2ac260ed581419cc980c00df1bb9c", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00004-of-00011.gguf", role = "other", sha256 = "1fee29db6ab247f97e42cc7dd4132ce35f15f41fb42ba9110b73c25471171f9b", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00005-of-00011.gguf", role = "other", sha256 = "7d38557e09934a3f6cf4eb7aa7ea8c04929bf2d40db8ba8494529d51be04bb4e", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00006-of-00011.gguf", role = "other", sha256 = "3f6c47e4e32f7b1f9b844124622cc8d506facdb58e3304b9b4429b6c3af4f53d", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00007-of-00011.gguf", role = "other", sha256 = "03114618ca505e4dbd63e0c8fb478cb54db86ff32ddd3681160589d8a958db8e", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00008-of-00011.gguf", role = "other", sha256 = "e202e8679571572ae5ab490d021e3f0d0ada4794521464e6735e62516bedff96", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00009-of-00011.gguf", role = "other", sha256 = "05d81908bc8ffd1e2ff6bb6a4e7a347c455ce87d7d6c473415d37f1749f0a337", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00010-of-00011.gguf", role = "other", sha256 = "252eac782187e63ffdbf0650eb79538a53626991f7dfd06106cfbbd5eb1a0bb3", size = 48566415136 },
+  { name = "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00011-of-00011.gguf", role = "other", sha256 = "d69bc418b2a08103d1b42340e803e1a98582d3766e4593c4a490475ac5bb811b", size = 29314424736 },
+]
+
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL"
+quality = 3.5
+bits = 3.64
+files = [
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00001-of-00009.gguf", role = "model", sha256 = "56d6d59fc554a84c503c2f786e6978d55681e42b8c01370afd923a6286d05e0a", size = 9428677 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00002-of-00009.gguf", role = "other", sha256 = "4a66db8d7f441a948d435e7559a4080a58cc57a8cb35ce9104103ea4039cf34f", size = 48804973120 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00003-of-00009.gguf", role = "other", sha256 = "03c626e0fe1cb5e9f245afa092df6c25fa1f55b1072ec65f143f804cec04b710", size = 48508432544 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00004-of-00009.gguf", role = "other", sha256 = "d391c041f80c0fdf6cf92777528f642a1e6882562e5f0727cf35e00be7c8f686", size = 48508432544 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00005-of-00009.gguf", role = "other", sha256 = "34f022b34bc4be26bec87e3ffb7b832a4a357f550c748c9a0013afbf0ce01918", size = 48508432544 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00006-of-00009.gguf", role = "other", sha256 = "6961dbf52a18a6806ac3e399617fb3a6faeaca8d7264241f38cf972ef94bb5b7", size = 48508432544 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00007-of-00009.gguf", role = "other", sha256 = "0b70151675f930eed91c83e51aa8c977657c4fe371af1a02951dd1b4e7258a68", size = 48508432544 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00008-of-00009.gguf", role = "other", sha256 = "04eaa6d2cb5a548854c719994816a791a4e3d7783f38979e95b389f8f840badf", size = 48717290336 },
+  { name = "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00009-of-00009.gguf", role = "other", sha256 = "6227252600ff83f185b6ad149266fbd0cb1c1f57ae0bfb71c247ee49faa3c31b", size = 2892122176 },
+]
+
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL"
+quality = 2.5
+bits = 2.69
+files = [
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00001-of-00007.gguf", role = "model", sha256 = "4f902dd0ad1458056d156cbfe226d159ef9f68786bcdbfd4fe1d04dca76fca41", size = 9428677 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00002-of-00007.gguf", role = "other", sha256 = "979122459ed09d9d895b85e340ddc9c93a7e82f525e20bf5c03e36da19a41b04", size = 49172427136 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00003-of-00007.gguf", role = "other", sha256 = "f7c9df5efffa2c1eb9b35e061f24f4d8b4a7edbd141e97455673e3e093e803db", size = 49091626976 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00004-of-00007.gguf", role = "other", sha256 = "8892cc45af116660fb0d6d568814e49b2e6bf173b10d5107a6ab0495c851dbd0", size = 49091626976 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00005-of-00007.gguf", role = "other", sha256 = "99fff6a71cd659807196e9b624aff72771e79a0cd153f04efd6f8344c82ca489", size = 49091626976 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00006-of-00007.gguf", role = "other", sha256 = "2e7c0cefe90a2cf54e7831331febd9c8c10beb1fa00437297f153f220aa258d3", size = 49994703552 },
+  { name = "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00007-of-00007.gguf", role = "other", sha256 = "1c17315acbe0cd8e79faa81426412da58da960f85e5db3246e038a058f62339b", size = 7426966496 },
+]
+
+[[model.quant]]
+id = "ud-iq1-m"
+label = "UD-IQ1_M"
+quality = 1.7
+bits = 2.42
+files = [
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00001-of-00006.gguf", role = "model", sha256 = "1cdc8ea27cebfa6600b204df36276cb1f1ed1625cc5039d311c6cd6c9f6be1ae", size = 9428677 },
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00002-of-00006.gguf", role = "other", sha256 = "b4039f6d95399358a9454bc63ac14377bbe4c259f2a8155ff5cc2d114b9e1d89", size = 49257241920 },
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00003-of-00006.gguf", role = "other", sha256 = "c2ba8233dffea8840f6ad3bf60a1bbcdea10f48bb37327e91bd4b839791b86db", size = 49431540768 },
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00004-of-00006.gguf", role = "other", sha256 = "c022db140ed66cfcf26ac41ddf57351349214ed569b693fc9c1b8dd6fc33d761", size = 49485299392 },
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00005-of-00006.gguf", role = "other", sha256 = "3c3bdbdef1cc3c6ff5f2c86455c431b83359e7d9024fc1ea56b27656ea51393e", size = 49698042752 },
+  { name = "UD-IQ1_M/GLM-5.3-UD-IQ1_M-00006-of-00006.gguf", role = "other", sha256 = "aaedac64b05cf37fa9dc091f2777989e7d1fe6ece52b351799fd53151867433a", size = 30611418048 },
+]
+
+[[model.quant]]
+id = "ud-iq1-s"
+label = "UD-IQ1_S"
+quality = 1.7
+bits = 2.3
+files = [
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00001-of-00006.gguf", role = "model", sha256 = "ff3adab0853dfb00bdf3889ec3f5556196f56b65783115720d57767bbd760dd9", size = 9428677 },
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00002-of-00006.gguf", role = "other", sha256 = "659d04cf4fc0b6026944f34c0b590a635803bff06c1775361e28490db7b168f8", size = 49968868928 },
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00003-of-00006.gguf", role = "other", sha256 = "433302bac0e2d54da64c7c2f28509fa1b235aeccdf5b215a8a446ebaad1b5b27", size = 49728982688 },
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00004-of-00006.gguf", role = "other", sha256 = "d0a6f19452d5b5cd498e1eb8fbe856e00aed7da1f80c27c095301eabe81e9bc1", size = 49210788064 },
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00005-of-00006.gguf", role = "other", sha256 = "2ea1537ffab40fa8b8584a8647ec10fbaa6199dfed45e4019b822da2b319db37", size = 49471673632 },
+  { name = "UD-IQ1_S/GLM-5.3-UD-IQ1_S-00006-of-00006.gguf", role = "other", sha256 = "42a76ef04ffc5e321e1240f4e572b6fa6fc3315da5bea22fb598d7460db210fe", size = 18325623904 },
+]
+
+[[model]]
+id = "deepseek-v4-pro"
+kind = "llm"
+name = "DeepSeek V4 Pro (0813)"
+adapter = "llama.cpp"
+license = "mit"
+family = "deepseek-v4"
+params_total_b = 1573
+params_active_b = 48
+moe = true
+vision = false
+ctx_max = 1048576
+hf_repo = "unsloth/DeepSeek-V4-Pro-0813-GGUF"
+revision = "6d053616d152293da72569f56b861466f10ace7d"
+port = 7030
+args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}", "-ngl", "auto", "-fit", "on", "-fitt", "1024", "-fitc", "{ctx}", "-b", "2048", "-ub", "512", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "--jinja", "--metrics", "--temp", "1.0", "--top-p", "0.95"]
+notes = "1.57T MoE, 48B active; text only. unsloth publishes only UD-Q4_K_XL and UD-Q8_K_XL (about 0.8 TB each). Needs a llama.cpp with the deepseek4 architecture."
+# KV raw_sliding_window_k_cache: 61 layers x 768 cells (window 128 + ubatch 512, padded to 256) x 512 K elements (no V) x 2 B = 45.75 MiB fixed
+# KV csa_compressed_k_cache: 30 layers x 512 K elements / 4 tokens x 2 B x 1024 tokens = 7.5 MiB per 1k
+# KV hca_compressed_k_cache: 31 layers x 512 K elements / 128 tokens x 2 B x 1024 tokens = 0.2422 MiB per 1k
+# KV csa_lightning_indexer_k_cache: 30 layers x 128 K elements / 4 tokens x 2 B x 1024 tokens = 1.875 MiB per 1k
+kv = { f16_mib_per_1k = 9.6172, fixed_mib = 45.8 }
+overhead_mib = 2048
+
+[[model.quant]]
+id = "ud-q8-k-xl"
+label = "UD-Q8_K_XL"
+quality = 8
+bits = 4.44
+files = [
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00001-of-00020.gguf", role = "model", sha256 = "0c6e411bf23282b5f149b3f0d7e0ae37f26bd23c6a3fbe52841437a4016736be", size = 5257647 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00002-of-00020.gguf", role = "other", sha256 = "0340e8996404fea1085ae6594b6e3059b4339a366928b592ef359ab07c0b1997", size = 47081826048 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00003-of-00020.gguf", role = "other", sha256 = "d5b9b42b4c024a86381c1de0d0940cb8ebf0676b857d419dfee9512af31af638", size = 47301123168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00004-of-00020.gguf", role = "other", sha256 = "ada82c0eb161174a85c50279cdcf706f1da85ef6a89a7b18a1ff9db9dd99a555", size = 47325651072 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00005-of-00020.gguf", role = "other", sha256 = "468fc891b72094fd29c7b9fcd0108d6ae4eb992b57628e73b5f619ed7d409129", size = 47954826816 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00006-of-00020.gguf", role = "other", sha256 = "09304d3a2a5ac990f20c6f392926954ee097e73d5983ac549bb3d47f587a2f57", size = 47301123264 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00007-of-00020.gguf", role = "other", sha256 = "fcda5952163f3e4a9875278ea179a6adb9339393539c5a8df4a7711f6d5023c8", size = 47325651168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00008-of-00020.gguf", role = "other", sha256 = "b83774a2b39538ff9151d3453959c6a8ef87de3a2f2bcc0b1c65607492109a09", size = 47954826816 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00009-of-00020.gguf", role = "other", sha256 = "7c117ae8eb07fd84743f9bf7741d0d8fd9a3b8012ac4a0c808b706e1034b4a87", size = 47301123264 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00010-of-00020.gguf", role = "other", sha256 = "8e563420aa3bc13d9747ed8271d779834284fe14427656ed7324f79f8401aac0", size = 47325651168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00011-of-00020.gguf", role = "other", sha256 = "c64c9c2762c930ff1dc81183ba8120c88f4ee1a8717cc14b4a123feba03b67cc", size = 47954826816 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00012-of-00020.gguf", role = "other", sha256 = "f8774b0d4c3d873a326ae78eff52be2c5995ef95ea22d4c5a25fc46c0be74f9e", size = 47301123264 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00013-of-00020.gguf", role = "other", sha256 = "ce419c237ec9b5e05584bfe2e34be51ab4e9e8fe934718d64beec3bf147d31ca", size = 47325651168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00014-of-00020.gguf", role = "other", sha256 = "3126d42e4c42d53b7f746293934547280b7f7301e15509070a5de9820d41b8ac", size = 47954826816 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00015-of-00020.gguf", role = "other", sha256 = "a5317d1fc6f71f78e437dd1207dabc9fac5c637ef6deadc7c3ba190a8f8f0489", size = 47301123264 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00016-of-00020.gguf", role = "other", sha256 = "69222448646f9e2db0e8c2bf9024fa778b36f946e9c004a0882adeb983e53bea", size = 47325651168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00017-of-00020.gguf", role = "other", sha256 = "f7e6281fec2a3748dc2c2521d491694f72402385398a58ceef5b336d78fb07ec", size = 47954826816 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00018-of-00020.gguf", role = "other", sha256 = "40a9e70899072dc0e1763229eeaf8015bec9ed62f579df3b494e1dc842f30f1e", size = 47301123264 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00019-of-00020.gguf", role = "other", sha256 = "4db8ee212ba02b7ce9ede251a1855b8666f8290acd8335beb1e1be2737c3dedc", size = 47325651168 },
+  { name = "UD-Q8_K_XL/DeepSeek-V4-Pro-0813-UD-Q8_K_XL-00020-of-00020.gguf", role = "other", sha256 = "27fbe4c1ab2928bb63a8871273255891277653f4fbba37f16383f3a6712ebedc", size = 18823737120 },
+]
+
+[[model.quant]]
+id = "ud-q4-k-xl"
+label = "UD-Q4_K_XL"
+quality = 4.5
+bits = 4.32
+files = [
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00001-of-00020.gguf", role = "model", sha256 = "0c6e411bf23282b5f149b3f0d7e0ae37f26bd23c6a3fbe52841437a4016736be", size = 5257647 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00002-of-00020.gguf", role = "other", sha256 = "aeb64ef378a3632ef938a32995b744e4935bcb2a73a6f4d4ac5a1dd8ed6fb467", size = 48499332992 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00003-of-00020.gguf", role = "other", sha256 = "440d5d735679f120baac875242c1a353cc37b87ecc41502052609c2bc90e725d", size = 46206696672 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00004-of-00020.gguf", role = "other", sha256 = "140fb3dc53d6bd908799044c8e83a71fa72b092c0232648837ab99bfbd60b6a8", size = 46551168480 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00005-of-00020.gguf", role = "other", sha256 = "82a295f7d1e5198cf004ac2ed2251a3f1eab76a99f1c17cebae3b5a2020d373e", size = 46211371104 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00006-of-00020.gguf", role = "other", sha256 = "f4ae46e760ad3b73ed2f99c8cf1f7e1f45d9013609ac7e8e5d8d040a6dec7f98", size = 46206696768 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00007-of-00020.gguf", role = "other", sha256 = "9bd015cbe215ae720f6e4a1708924da10fbc55bff5c9039b044f815abcf9aa77", size = 46551168576 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00008-of-00020.gguf", role = "other", sha256 = "f4534f1618f970b21e0585155c6fe3b432be3a54c604edb4bafff8198a161475", size = 46211371104 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00009-of-00020.gguf", role = "other", sha256 = "88a0868c24cff08ddb236fd10bba28916604a214d40a9d5c3038bfc61cf3fe21", size = 46206696768 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00010-of-00020.gguf", role = "other", sha256 = "ea34c36b38d90fe53d323e76f720ca8de8bd5c9e67ca4490499653b65ffe37fc", size = 46551168576 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00011-of-00020.gguf", role = "other", sha256 = "31eea9aebe4dd925cabad9a323813f164bc4728f653fadb7529c3ae350efda0b", size = 46211371104 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00012-of-00020.gguf", role = "other", sha256 = "d2cd296b4722733671669b0647d0b034353392fe62cfde819e3fc694cbf683d7", size = 46206696768 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00013-of-00020.gguf", role = "other", sha256 = "dd0f7c98b34f1a873ad61c22e0c78f8b85da56b2e2fe6a92016cfc5587bbf317", size = 46551168576 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00014-of-00020.gguf", role = "other", sha256 = "9a530b4ceb6231b5fe9a52f9cfd89caece00244089f94125c1081e41be134253", size = 46211371104 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00015-of-00020.gguf", role = "other", sha256 = "4983ff25d96c5bc89b111ac6560bef3cdbc6823c19ae3b48a2beef0e0fb90e39", size = 46206696768 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00016-of-00020.gguf", role = "other", sha256 = "b466c173037d16dd6e8bdd66cdcd5f0fefa22fa19d73b09a8271340ff8da0274", size = 46551168576 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00017-of-00020.gguf", role = "other", sha256 = "a3d408224bae3102de30d66c06efcf4f2ad1d9e6cf7c0f96e8f923e46b581d49", size = 46211371104 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00018-of-00020.gguf", role = "other", sha256 = "e8d837147dfc345a56de32f70575d5db708350894dac344a94adc85e4839f291", size = 46206696768 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00019-of-00020.gguf", role = "other", sha256 = "bd14f611c85332e42ab737167aefa0034f757b4e5c163fe4134395a585633661", size = 46551168576 },
+  { name = "UD-Q4_K_XL/DeepSeek-V4-Pro-0813-UD-Q4_K_XL-00020-of-00020.gguf", role = "other", sha256 = "5978999836fd1fe7ad7da6232a70981bd7f98274ed71d3b06652ba42c7b46031", size = 13575289024 },
+]
+
+# ------------------------------------------------------------------------------------------------------ image
+
+[[model]]
+id = "krea-2-turbo"
+kind = "image"
+name = "Krea 2 Turbo"
+adapter = "sd.cpp"
+license = "krea-2-community-license"
+family = "krea2"
+params_total_b = 12
+hf_repo = "realrebelai/KREA-2_GGUFs"
+revision = "9721c3ec932c43dff6dbb5793a816d9ad105277f"
+port = 1234
+args = ["--diffusion-model", "{model}", "--llm", "{file:te}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "1.0", "--steps", "8", "--sampling-method", "euler", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "12B DiT with the Qwen3-VL-4B text encoder and the Wan 2.1 VAE; 8 steps, cfg 1.0 (0 makes sd.cpp ignore the prompt), euler, 1024x1024. GGUFs from realrebelai (the ones sd.cpp's docs link; no unsloth GGUF exists). License: Krea 2 Community License, commercial use only while company revenue is under USD 1M a year."
+
+# Turbo Q8_0 + Qwen3-VL-4B Q8_0 (max quality); weights 16.91 GiB, resident [18.9, 21.9] GiB, with --offload-to-cpu [14.7, 16.7] GiB VRAM + 17.9 GiB RAM (estimates)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + Qwen3-VL-4B Q8_0"
+quality = 8
+min_vram_gib = 21.9
+offload_vram_gib = 16.7
+offload_ram_gib = 17.9
+files = [
+  { name = "TURBO/Krea-2-Turbo-Q8_0.gguf", role = "model", sha256 = "b98b339068e1e26a9bd01f987d9dcae3f4a4913b8c0d571f5ddb068194e8e500", size = 13625717856 },
+  { name = "Qwen3VL-4B-Instruct-Q8_0.gguf", role = "other", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266", key = "te", sha256 = "054721f478bc5fa6beffb7f38eae575d45298f88cbb8d2f83ef675a727863eb1", size = 4280406144 },
+  { name = "split_files/vae/wan_2.1_vae.safetensors", role = "other", repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged", revision = "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d", key = "vae", sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b", size = 253815318 },
+]
+
+# Turbo Q6_K + Qwen3-VL-4B Q4_K_M; weights 12.36 GiB, resident [14.4, 17.4] GiB, with --offload-to-cpu [11.8, 13.8] GiB VRAM + 13.4 GiB RAM (estimates)
+[[model.quant]]
+id = "q6-k"
+label = "Q6_K + Qwen3-VL-4B Q4_K_M"
+quality = 6.5
+min_vram_gib = 17.4
+offload_vram_gib = 13.8
+offload_ram_gib = 13.4
+files = [
+  { name = "TURBO/Krea-2-Turbo-Q6_K.gguf", role = "model", sha256 = "d95c232c7835d5fc2b35b8f0ddef0606cc59e0162754ef7e4047327f64ca67a9", size = 10521682016 },
+  { name = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266", key = "te", sha256 = "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a", size = 2497281664 },
+  { name = "split_files/vae/wan_2.1_vae.safetensors", role = "other", repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged", revision = "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d", key = "vae", sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b", size = 253815318 },
+]
+
+# Turbo Q5_K_S + Qwen3-VL-4B Q4_K_M; weights 10.78 GiB, resident [12.8, 15.8] GiB, with --offload-to-cpu [10.2, 12.2] GiB VRAM + 11.8 GiB RAM (estimates)
+[[model.quant]]
+id = "q5-k-s"
+label = "Q5_K_S + Qwen3-VL-4B Q4_K_M"
+quality = 5.5
+min_vram_gib = 15.8
+offload_vram_gib = 12.2
+offload_ram_gib = 11.8
+files = [
+  { name = "TURBO/Krea-2-Turbo-Q5_K_S.gguf", role = "model", sha256 = "2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd", size = 8819266656 },
+  { name = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266", key = "te", sha256 = "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a", size = 2497281664 },
+  { name = "split_files/vae/wan_2.1_vae.safetensors", role = "other", repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged", revision = "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d", key = "vae", sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b", size = 253815318 },
+]
+
+# Turbo Q4_K_M + Qwen3-VL-4B Q4_K_M (sd.cpp doc-style, balanced); weights 9.28 GiB, resident [11.3, 14.3] GiB, with --offload-to-cpu [8.7, 10.7] GiB VRAM + 10.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q4-k-m"
+label = "Q4_K_M + Qwen3-VL-4B Q4_K_M"
+quality = 4.5
+min_vram_gib = 14.3
+offload_vram_gib = 10.7
+offload_ram_gib = 10.3
+files = [
+  { name = "TURBO/Krea-2-Turbo-Q4_K_M.gguf", role = "model", sha256 = "273a98be1afe317bc7228403b6434647eaf866cebe6aff1980c401b950473807", size = 7216993376 },
+  { name = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266", key = "te", sha256 = "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a", size = 2497281664 },
+  { name = "split_files/vae/wan_2.1_vae.safetensors", role = "other", repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged", revision = "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d", key = "vae", sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b", size = 253815318 },
+]
+
+# Turbo Q3_K_M + Qwen3-VL-4B Q4_K_M (low VRAM); weights 7.70 GiB, resident [9.7, 12.7] GiB, with --offload-to-cpu [7.1, 9.1] GiB VRAM + 8.7 GiB RAM (estimates)
+[[model.quant]]
+id = "q3-k-m"
+label = "Q3_K_M + Qwen3-VL-4B Q4_K_M"
+quality = 3.5
+min_vram_gib = 12.7
+offload_vram_gib = 9.1
+offload_ram_gib = 8.7
+files = [
+  { name = "TURBO/Krea-2-Turbo-Q3_K_M.gguf", role = "model", sha256 = "9a8917ac175e0287d86f43da7d520ee0efe4a24f5250d9cd7ae0b0abf4ef5f62", size = 5514578016 },
+  { name = "Qwen3VL-4B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-4B-Instruct-GGUF", revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266", key = "te", sha256 = "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a", size = 2497281664 },
+  { name = "split_files/vae/wan_2.1_vae.safetensors", role = "other", repo = "Comfy-Org/Wan_2.1_ComfyUI_repackaged", revision = "123acf1cc74bccbb9bfff8ac1ee72edc08c2341d", key = "vae", sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b", size = 253815318 },
+]
+
+[[model]]
+id = "qwen-image-2.1"
+kind = "image"
+name = "Qwen Image 2.1"
+adapter = "sd.cpp"
+license = "qwen-research"
+family = "qwen_image_2_1"
+params_total_b = 20
+hf_repo = "unsloth/Qwen-Image-2.1-GGUF"
+revision = "2c31ccd392b367a6637841a143813320a02dff55"
+port = 1234
+args = ["--diffusion-model", "{model}", "--llm", "{file:te}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "6.0", "--steps", "20", "--sampling-method", "euler", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "Text to image and editing in one model (editing needs --llm_vision with the Qwen3-VL-8B projector, not included); 20 steps, cfg 6.0, euler, 1024x1024. Non-commercial: the Qwen Research License allows research and evaluation only."
+
+# Q8_0 + Qwen3-VL-8B Q8_0; weights 15.86 GiB, resident [17.9, 20.9] GiB, with --offload-to-cpu [10.1, 12.1] GiB VRAM + 16.9 GiB RAM (estimates)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + Qwen3-VL-8B Q8_0"
+quality = 8
+min_vram_gib = 20.9
+offload_vram_gib = 12.1
+offload_ram_gib = 16.9
+files = [
+  { name = "qwen-image-2.1-Q8_0.gguf", role = "model", sha256 = "c0ed4b2ffd56cbe9c3df1e4a4098045256484ebe94ba5a7e4338d35ec046baa5", size = 7640860384 },
+  { name = "Qwen3VL-8B-Instruct-Q8_0.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", key = "te", sha256 = "0d264b3941185d00a74f75c4245521dae088ff1efc90ab8d1754e83f5844adb0", size = 8709519456 },
+  { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", key = "vae", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+]
+
+# Q6_K + Qwen3-VL-8B Q4_K_M; weights 11.15 GiB, resident [13.2, 16.2] GiB, with --offload-to-cpu [7.8, 9.8] GiB VRAM + 12.2 GiB RAM (estimates)
+[[model.quant]]
+id = "q6-k"
+label = "Q6_K + Qwen3-VL-8B Q4_K_M"
+quality = 6.5
+min_vram_gib = 16.2
+offload_vram_gib = 9.8
+offload_ram_gib = 12.2
+files = [
+  { name = "qwen-image-2.1-Q6_K.gguf", role = "model", sha256 = "2ead1ee665e8ebc5fec517d287a167f5c6a7e985acbf3b1b93143437a04616ac", size = 6271551200 },
+  { name = "Qwen3VL-8B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", key = "te", sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2", size = 5027784800 },
+  { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", key = "vae", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+]
+
+# Q5_K_M + Qwen3-VL-8B Q4_K_M; weights 10.33 GiB, resident [12.3, 15.3] GiB, with --offload-to-cpu [7.0, 9.0] GiB VRAM + 11.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q5-k-m"
+label = "Q5_K_M + Qwen3-VL-8B Q4_K_M"
+quality = 5.5
+min_vram_gib = 15.3
+offload_vram_gib = 9
+offload_ram_gib = 11.3
+files = [
+  { name = "qwen-image-2.1-Q5_K_M.gguf", role = "model", sha256 = "4b53321654dd3bf0aa8dd6bb821fdcb1c9053ca735070e359a23cbb9f97268ce", size = 5390223072 },
+  { name = "Qwen3VL-8B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", key = "te", sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2", size = 5027784800 },
+  { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", key = "vae", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+]
+
+# Q4_K_M + Qwen3-VL-8B UD-Q4_K_XL (unsloth recommended); weights 9.34 GiB, resident [11.3, 14.3] GiB, with --offload-to-cpu [6.8, 8.8] GiB VRAM + 10.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q4-k-m"
+label = "Q4_K_M + Qwen3-VL-8B UD-Q4_K_XL"
+quality = 4.5
+min_vram_gib = 14.3
+offload_vram_gib = 8.8
+offload_ram_gib = 10.3
+files = [
+  { name = "qwen-image-2.1-Q4_K_M.gguf", role = "model", sha256 = "631d532e7ca71e8d90a87c71d3699761a812039d22e3370e87498d87754660fe", size = 4199565024 },
+  { name = "Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf", role = "other", repo = "unsloth/Qwen3-VL-8B-Instruct-GGUF", revision = "b93a7ee713758252c555be4210c00540df954dc2", key = "te", sha256 = "e3d1a6e87c5cb31e054f2c3bc0dd82ffde052f613de5eef3665b7bd33c9b703e", size = 5148699488 },
+  { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", key = "vae", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+]
+
+# Q3_K_M + Qwen3-VL-8B Q4_K_M; weights 8.26 GiB, resident [10.3, 13.3] GiB, with --offload-to-cpu [6.7, 8.7] GiB VRAM + 9.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q3-k-m"
+label = "Q3_K_M + Qwen3-VL-8B Q4_K_M"
+quality = 3.5
+min_vram_gib = 13.3
+offload_vram_gib = 8.7
+offload_ram_gib = 9.3
+files = [
+  { name = "qwen-image-2.1-Q3_K_M.gguf", role = "model", sha256 = "f688e47c32c033aa8d059c6b7e27d668b2cef0f1dd3d667f97f544954d541238", size = 3168290528 },
+  { name = "Qwen3VL-8B-Instruct-Q4_K_M.gguf", role = "other", repo = "Qwen/Qwen3-VL-8B-Instruct-GGUF", revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96", key = "te", sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2", size = 5027784800 },
+  { name = "vae/qwen_image_2.1_vae_bf16.safetensors", role = "other", repo = "Comfy-Org/Qwen-Image-2.1", revision = "cb504a4090723e43f17ad01cec0359490e2de613", key = "vae", sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9", size = 675509688 },
+]
+
+[[model]]
+id = "flux2-klein-9b"
+kind = "image"
+name = "FLUX.2 [klein] 9B"
+adapter = "sd.cpp"
+license = "flux-non-commercial-license"
+family = "flux2"
+params_total_b = 9
+hf_repo = "unsloth/FLUX.2-klein-9B-GGUF"
+revision = "fde8634245fe6b749a221c25b34672b5b8fbd079"
+port = 1234
+args = ["--diffusion-model", "{model}", "--llm", "{file:te}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "1.0", "--steps", "4", "--sampling-method", "euler", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "Distilled to 4 steps, cfg 1.0, euler, 1024x1024; editing with -r <image>. Non-commercial: FLUX Non-Commercial License (a commercial license comes from Black Forest Labs)."
+
+# 9B Q8_0 + Qwen3 Q8_0; weights 17.72 GiB, resident [19.7, 22.7] GiB, with --offload-to-cpu [11.3, 13.3] GiB VRAM + 18.7 GiB RAM (estimates)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + Qwen3-8B Q8_0"
+quality = 8
+min_vram_gib = 22.7
+offload_vram_gib = 13.3
+offload_ram_gib = 18.7
+files = [
+  { name = "flux-2-klein-9b-Q8_0.gguf", role = "model", sha256 = "dfa8908dd58c5af6479b944f80558e226ee40a8fe0903729309e8d1b98fe5297", size = 9978304800 },
+  { name = "Qwen3-8B-Q8_0.gguf", role = "other", repo = "unsloth/Qwen3-8B-GGUF", revision = "a6adef130ffb23ddaf1a62fec9dced968c9bc482", key = "te", sha256 = "0cfbf745760f07a76ddeb358dd025a27f2e11d1ca9c9a4169a373d52990fe86e", size = 8709519168 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 9B Q6_K + Qwen3 Q4_K_M; weights 12.32 GiB, resident [14.3, 17.3] GiB, with --offload-to-cpu [9.3, 11.3] GiB VRAM + 13.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q6-k"
+label = "Q6_K + Qwen3-8B Q4_K_M"
+quality = 6.5
+min_vram_gib = 17.3
+offload_vram_gib = 11.3
+offload_ram_gib = 13.3
+files = [
+  { name = "flux-2-klein-9b-Q6_K.gguf", role = "model", sha256 = "1cd667293607431e79c9e7e01ecf5c602bd00539c2c0f49d4817a62998b5fe98", size = 7865424160 },
+  { name = "Qwen3-8B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-8B-GGUF", revision = "a6adef130ffb23ddaf1a62fec9dced968c9bc482", key = "te", sha256 = "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4", size = 5027784512 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 9B Q5_K_M + Qwen3 Q4_K_M; weights 11.53 GiB, resident [13.5, 16.5] GiB, with --offload-to-cpu [8.5, 10.5] GiB VRAM + 12.5 GiB RAM (estimates)
+[[model.quant]]
+id = "q5-k-m"
+label = "Q5_K_M + Qwen3-8B Q4_K_M"
+quality = 5.5
+min_vram_gib = 16.5
+offload_vram_gib = 10.5
+offload_ram_gib = 12.5
+files = [
+  { name = "flux-2-klein-9b-Q5_K_M.gguf", role = "model", sha256 = "ad0ace013fb401560ba4a7ff2b2bb3235795f07c19dffebf411806b424700503", size = 7018699040 },
+  { name = "Qwen3-8B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-8B-GGUF", revision = "a6adef130ffb23ddaf1a62fec9dced968c9bc482", key = "te", sha256 = "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4", size = 5027784512 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 9B Q4_K_M + Qwen3 Q4_K_M (balanced); weights 10.50 GiB, resident [12.5, 15.5] GiB, with --offload-to-cpu [7.5, 9.5] GiB VRAM + 11.5 GiB RAM (estimates)
+[[model.quant]]
+id = "q4-k-m"
+label = "Q4_K_M + Qwen3-8B Q4_K_M"
+quality = 4.5
+min_vram_gib = 15.5
+offload_vram_gib = 9.5
+offload_ram_gib = 11.5
+files = [
+  { name = "flux-2-klein-9b-Q4_K_M.gguf", role = "model", sha256 = "5489463ed96056b0bb5472abb5d1bba7055e48d574e37877acb43b407465e26f", size = 5909829920 },
+  { name = "Qwen3-8B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-8B-GGUF", revision = "a6adef130ffb23ddaf1a62fec9dced968c9bc482", key = "te", sha256 = "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4", size = 5027784512 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 9B Q3_K_M + Qwen3 Q4_K_M; weights 9.44 GiB, resident [11.4, 14.4] GiB, with --offload-to-cpu [6.7, 8.7] GiB VRAM + 10.4 GiB RAM (estimates)
+[[model.quant]]
+id = "q3-k-m"
+label = "Q3_K_M + Qwen3-8B Q4_K_M"
+quality = 3.5
+min_vram_gib = 14.4
+offload_vram_gib = 8.7
+offload_ram_gib = 10.4
+files = [
+  { name = "flux-2-klein-9b-Q3_K_M.gguf", role = "model", sha256 = "26d7d982f88aaed665252c5ac6c8c06e0b6b68c66eab077ceb593b8575c86901", size = 4769503520 },
+  { name = "Qwen3-8B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-8B-GGUF", revision = "a6adef130ffb23ddaf1a62fec9dced968c9bc482", key = "te", sha256 = "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4", size = 5027784512 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+[[model]]
+id = "flux2-klein-4b"
+kind = "image"
+name = "FLUX.2 [klein] 4B"
+adapter = "sd.cpp"
+license = "apache-2.0"
+family = "flux2"
+params_total_b = 4
+hf_repo = "unsloth/FLUX.2-klein-4B-GGUF"
+revision = "0084d1df98e2e2137fe776d55170bc4792ec1d66"
+port = 1234
+args = ["--diffusion-model", "{model}", "--llm", "{file:te}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "1.0", "--steps", "4", "--sampling-method", "euler", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "Distilled to 4 steps, cfg 1.0, euler, 1024x1024; editing with -r <image>. Apache-2.0."
+
+# 4B Q8_0 + Qwen3 Q8_0; weights 8.30 GiB, resident [10.3, 13.3] GiB, with --offload-to-cpu [6.0, 8.0] GiB VRAM + 9.3 GiB RAM (estimates)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + Qwen3-4B Q8_0"
+quality = 8
+min_vram_gib = 13.3
+offload_vram_gib = 8
+offload_ram_gib = 9.3
+files = [
+  { name = "flux-2-klein-4b-Q8_0.gguf", role = "model", sha256 = "24a812e8f9b640e21c784164ea48571d8017ca22873696f4badeeabb006d509c", size = 4300644928 },
+  { name = "Qwen3-4B-Q8_0.gguf", role = "other", repo = "unsloth/Qwen3-4B-GGUF", revision = "22c9fc8a8c7700b76a1789366280a6a5a1ad1120", key = "te", sha256 = "eed555233267a33c7e8ee31682762cc7751b3f6d224039086e0e846f05fffa5d", size = 4280405792 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 4B Q6_K + Qwen3 Q4_K_M; weights 5.81 GiB, resident [7.8, 10.8] GiB, with --offload-to-cpu [5.2, 7.2] GiB VRAM + 6.8 GiB RAM (estimates)
+[[model.quant]]
+id = "q6-k"
+label = "Q6_K + Qwen3-4B Q4_K_M"
+quality = 6.5
+min_vram_gib = 10.8
+offload_vram_gib = 7.2
+offload_ram_gib = 6.8
+files = [
+  { name = "flux-2-klein-4b-Q6_K.gguf", role = "model", sha256 = "fb3b5430d9229f982616c7db084deff1db5035d0cb6558f2d4f704cfe5e609e2", size = 3409273408 },
+  { name = "Qwen3-4B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-4B-GGUF", revision = "22c9fc8a8c7700b76a1789366280a6a5a1ad1120", key = "te", sha256 = "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a", size = 2497281312 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 4B Q5_K_M + Qwen3 Q4_K_M; weights 5.50 GiB, resident [7.5, 10.5] GiB, with --offload-to-cpu [4.9, 6.9] GiB VRAM + 6.5 GiB RAM (estimates)
+[[model.quant]]
+id = "q5-k-m"
+label = "Q5_K_M + Qwen3-4B Q4_K_M"
+quality = 5.5
+min_vram_gib = 10.5
+offload_vram_gib = 6.9
+offload_ram_gib = 6.5
+files = [
+  { name = "flux-2-klein-4b-Q5_K_M.gguf", role = "model", sha256 = "58c01c75fee2272eadb127f53e26dd05a5a8e7f812e37c36fa44603301f91e54", size = 3073368640 },
+  { name = "Qwen3-4B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-4B-GGUF", revision = "22c9fc8a8c7700b76a1789366280a6a5a1ad1120", key = "te", sha256 = "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a", size = 2497281312 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 4B Q4_K_M + Qwen3 Q4_K_M (balanced); weights 5.06 GiB, resident [7.1, 10.1] GiB, with --offload-to-cpu [4.4, 6.4] GiB VRAM + 6.1 GiB RAM (estimates)
+[[model.quant]]
+id = "q4-k-m"
+label = "Q4_K_M + Qwen3-4B Q4_K_M"
+quality = 4.5
+min_vram_gib = 10.1
+offload_vram_gib = 6.4
+offload_ram_gib = 6.1
+files = [
+  { name = "flux-2-klein-4b-Q4_K_M.gguf", role = "model", sha256 = "0b25d143c8469b342bc5af3bce92b783bf6b0636d285f7b2f75e38af63af9a15", size = 2604311104 },
+  { name = "Qwen3-4B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-4B-GGUF", revision = "22c9fc8a8c7700b76a1789366280a6a5a1ad1120", key = "te", sha256 = "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a", size = 2497281312 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+# 4B Q3_K_M + Qwen3 Q4_K_M; weights 4.62 GiB, resident [6.6, 9.6] GiB, with --offload-to-cpu [4.3, 6.3] GiB VRAM + 5.6 GiB RAM (estimates)
+[[model.quant]]
+id = "q3-k-m"
+label = "Q3_K_M + Qwen3-4B Q4_K_M"
+quality = 3.5
+min_vram_gib = 9.6
+offload_vram_gib = 6.3
+offload_ram_gib = 5.6
+files = [
+  { name = "flux-2-klein-4b-Q3_K_M.gguf", role = "model", sha256 = "0f27104f7b5842b7bfd5909645c60208cbb6b8d43f5d65f58b085f45ed18c9e1", size = 2124489280 },
+  { name = "Qwen3-4B-Q4_K_M.gguf", role = "other", repo = "unsloth/Qwen3-4B-GGUF", revision = "22c9fc8a8c7700b76a1789366280a6a5a1ad1120", key = "te", sha256 = "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a", size = 2497281312 },
+  { name = "split_files/vae/flux2-vae.safetensors", role = "other", repo = "Comfy-Org/flux2-dev", revision = "ed33133cd56476eac818c0943b6f9419b3e4a3a1", key = "vae", sha256 = "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5", size = 336213556 },
+]
+
+[[model]]
+id = "flux1-schnell"
+kind = "image"
+name = "FLUX.1 [schnell]"
+adapter = "sd.cpp"
+license = "apache-2.0"
+family = "flux1"
+params_total_b = 12
+hf_repo = "unsloth/FLUX.1-schnell-GGUF"
+revision = "65b3e21589c5dc66402b02a079208201ae9fcfc3"
+port = 1234
+args = ["--diffusion-model", "{model}", "--clip_l", "{file:clip_l}", "--t5xxl", "{file:t5xxl}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "1.0", "--steps", "4", "--sampling-method", "euler", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "4 steps, cfg 1.0, euler, 1024x1024; CLIP-L and the T5-XXL GGUF (city96) as text encoders, the FLUX ae VAE. Apache-2.0."
+
+# Q8_0 + CLIP-L + T5-XXL GGUF Q8_0; weights 17.08 GiB, resident [18.6, 21.1] GiB, with --offload-to-cpu [13.3, 15.3] GiB VRAM + 18.1 GiB RAM (estimates)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + CLIP-L + T5-XXL Q8_0"
+quality = 8
+min_vram_gib = 21.1
+offload_vram_gib = 15.3
+offload_ram_gib = 18.1
+files = [
+  { name = "flux1-schnell-Q8_0.gguf", role = "model", sha256 = "d397213d520384e2839342d6d057c367f49d197af65d742d502206e5c8f03921", size = 12693980192 },
+  { name = "clip_l.safetensors", role = "other", repo = "comfyanonymous/flux_text_encoders", revision = "6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5", key = "clip_l", sha256 = "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd", size = 246144152 },
+  { name = "t5-v1_1-xxl-encoder-Q8_0.gguf", role = "other", repo = "city96/t5-v1_1-xxl-encoder-gguf", revision = "005a6ea51a7d0b84d677b3e633bb52a8c85a83d9", key = "t5xxl", sha256 = "9ec60f6028534b7fe5af439fcb535d75a68592a9ca3fcdeb175ef89e3ee99825", size = 5061584064 },
+  { name = "split_files/vae/ae.safetensors", role = "other", repo = "Comfy-Org/Lumina_Image_2.0_Repackaged", revision = "5b072540ef86570fecb8249c505f23d5bdeb88cd", key = "vae", sha256 = "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38", size = 335304388 },
+]
+
+# Q5_K_M + CLIP-L + T5-XXL GGUF Q8_0; weights 13.08 GiB, resident [14.6, 17.1] GiB, with --offload-to-cpu [9.3, 11.3] GiB VRAM + 14.1 GiB RAM (estimates)
+[[model.quant]]
+id = "q5-k-m"
+label = "Q5_K_M + CLIP-L + T5-XXL Q8_0"
+quality = 5.5
+min_vram_gib = 17.1
+offload_vram_gib = 11.3
+offload_ram_gib = 14.1
+files = [
+  { name = "flux1-schnell-Q5_K_M.gguf", role = "model", sha256 = "702b1e0130a1b1c7669f7f4fed01afdaaa896ee20608b8f09a6e619d66df561d", size = 8399029280 },
+  { name = "clip_l.safetensors", role = "other", repo = "comfyanonymous/flux_text_encoders", revision = "6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5", key = "clip_l", sha256 = "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd", size = 246144152 },
+  { name = "t5-v1_1-xxl-encoder-Q8_0.gguf", role = "other", repo = "city96/t5-v1_1-xxl-encoder-gguf", revision = "005a6ea51a7d0b84d677b3e633bb52a8c85a83d9", key = "t5xxl", sha256 = "9ec60f6028534b7fe5af439fcb535d75a68592a9ca3fcdeb175ef89e3ee99825", size = 5061584064 },
+  { name = "split_files/vae/ae.safetensors", role = "other", repo = "Comfy-Org/Lumina_Image_2.0_Repackaged", revision = "5b072540ef86570fecb8249c505f23d5bdeb88cd", key = "vae", sha256 = "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38", size = 335304388 },
+]
+
+# Q4_K_M + CLIP-L + T5-XXL GGUF Q4_K_M (balanced); weights 9.68 GiB, resident [11.2, 13.7] GiB, with --offload-to-cpu [7.9, 9.9] GiB VRAM + 10.7 GiB RAM (estimates)
+[[model.quant]]
+id = "q4-k-m"
+label = "Q4_K_M + CLIP-L + T5-XXL Q4_K_M"
+quality = 4.5
+min_vram_gib = 13.7
+offload_vram_gib = 9.9
+offload_ram_gib = 10.7
+files = [
+  { name = "flux1-schnell-Q4_K_M.gguf", role = "model", sha256 = "09f32f18619f6bdb8f199c6bb107f8389429e1711312c36022c452af6866d9fa", size = 6911345696 },
+  { name = "clip_l.safetensors", role = "other", repo = "comfyanonymous/flux_text_encoders", revision = "6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5", key = "clip_l", sha256 = "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd", size = 246144152 },
+  { name = "t5-v1_1-xxl-encoder-Q4_K_M.gguf", role = "other", repo = "city96/t5-v1_1-xxl-encoder-gguf", revision = "005a6ea51a7d0b84d677b3e633bb52a8c85a83d9", key = "t5xxl", sha256 = "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4", size = 2896123072 },
+  { name = "split_files/vae/ae.safetensors", role = "other", repo = "Comfy-Org/Lumina_Image_2.0_Repackaged", revision = "5b072540ef86570fecb8249c505f23d5bdeb88cd", key = "vae", sha256 = "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38", size = 335304388 },
+]
+
+# Q3_K_M + CLIP-L + T5-XXL GGUF Q4_K_M; weights 8.22 GiB, resident [9.7, 12.2] GiB, with --offload-to-cpu [6.5, 8.5] GiB VRAM + 9.2 GiB RAM (estimates)
+[[model.quant]]
+id = "q3-k-m"
+label = "Q3_K_M + CLIP-L + T5-XXL Q4_K_M"
+quality = 3.5
+min_vram_gib = 12.2
+offload_vram_gib = 8.5
+offload_ram_gib = 9.2
+files = [
+  { name = "flux1-schnell-Q3_K_M.gguf", role = "model", sha256 = "902449c98f64b3007f8afdbee21c16b6392803d92594a139f9ec14d5ee4aff0a", size = 5348017184 },
+  { name = "clip_l.safetensors", role = "other", repo = "comfyanonymous/flux_text_encoders", revision = "6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5", key = "clip_l", sha256 = "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd", size = 246144152 },
+  { name = "t5-v1_1-xxl-encoder-Q4_K_M.gguf", role = "other", repo = "city96/t5-v1_1-xxl-encoder-gguf", revision = "005a6ea51a7d0b84d677b3e633bb52a8c85a83d9", key = "t5xxl", sha256 = "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4", size = 2896123072 },
+  { name = "split_files/vae/ae.safetensors", role = "other", repo = "Comfy-Org/Lumina_Image_2.0_Repackaged", revision = "5b072540ef86570fecb8249c505f23d5bdeb88cd", key = "vae", sha256 = "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38", size = 335304388 },
+]
+
+[[model]]
+id = "sdxl-lightning-4step"
+kind = "image"
+name = "SDXL-Lightning 4-step"
+adapter = "sd.cpp"
+license = "openrail++"
+family = "sdxl"
+params_total_b = 3.5
+hf_repo = "ByteDance/SDXL-Lightning"
+revision = "c9a24f48e1c025556787b0c58dd67a091ece2e44"
+port = 1234
+args = ["-m", "{model}", "--vae", "{file:vae}", "--cfg-scale", "1.0", "--steps", "4", "--sampling-method", "euler", "--scheduler", "sgm_uniform", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "Full SDXL checkpoint distilled to 4 steps: cfg 1.0, euler with the sgm_uniform scheduler (settings from the model card; sd.cpp has no doc for them). CreativeML Open RAIL++-M (use restrictions apply)."
+
+# sdxl_lightning_4step fp16 + fp16-fix VAE; weights 6.77 GiB, resident [7.8, 10.8] GiB, with --offload-to-cpu [7.5, 10.0] GiB VRAM + 7.8 GiB RAM (estimates)
+[[model.quant]]
+id = "fp16"
+label = "fp16 + fp16-fix VAE"
+quality = 16
+min_vram_gib = 10.8
+offload_vram_gib = 10
+offload_ram_gib = 7.8
+files = [
+  { name = "sdxl_lightning_4step.safetensors", role = "model", sha256 = "e0d996ee0013e79d9d3561f50fcafb9a17e3ff07b780358e3b66d67932c4d490", size = 6938040682 },
+  { name = "sdxl_vae.safetensors", role = "other", repo = "madebyollin/sdxl-vae-fp16-fix", revision = "207b116dae70ace3637169f1ddd2434b91b3a8cd", key = "vae", sha256 = "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1", size = 334641162 },
+]
+
+[[model]]
+id = "sdxl-base"
+kind = "image"
+name = "SDXL Base 1.0"
+adapter = "sd.cpp"
+license = "openrail++"
+family = "sdxl"
+params_total_b = 3.5
+hf_repo = "stabilityai/stable-diffusion-xl-base-1.0"
+revision = "462165984030d82259a11f4367a4eed129e94a7b"
+port = 1234
+args = ["-m", "{model}", "--vae", "{file:vae}", "--diffusion-fa", "--cfg-scale", "7.0", "--steps", "30", "--sampling-method", "euler_a", "-W", "1024", "-H", "1024", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "30 steps, cfg 7.0, euler_a, 1024x1024, with the fp16-fix VAE. CreativeML Open RAIL++-M (use restrictions apply)."
+
+# sd_xl_base_1.0 fp16 (full ckpt) + fp16-fix VAE; weights 6.77 GiB, resident [7.8, 10.8] GiB, with --offload-to-cpu [7.5, 10.0] GiB VRAM + 7.8 GiB RAM (estimates)
+[[model.quant]]
+id = "fp16"
+label = "fp16 + fp16-fix VAE"
+quality = 16
+min_vram_gib = 10.8
+offload_vram_gib = 10
+offload_ram_gib = 7.8
+files = [
+  { name = "sd_xl_base_1.0.safetensors", role = "model", sha256 = "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b", size = 6938078334 },
+  { name = "sdxl_vae.safetensors", role = "other", repo = "madebyollin/sdxl-vae-fp16-fix", revision = "207b116dae70ace3637169f1ddd2434b91b3a8cd", key = "vae", sha256 = "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1", size = 334641162 },
+]
+
+# ---------------------------------------------------------------------------------------------------- tts
+
+[[model]]
+id = "voxcpm2"
+kind = "tts"
+name = "VoxCPM2"
+adapter = "audiocpp"
+license = "apache-2.0"
+family = "voxcpm2"
+params_total_b = 2
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7060
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\voxcpm2.server.json", "--backend", "vulkan", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "OpenBMB VoxCPM2 (2B, 48 kHz, 30 languages) on audio.cpp's audiocpp_server (Vulkan zip; HIP builds for RDNA3/4 are community zips). Voice cloning per request (voice_ref + reference_text) or from --voice-dir; voice design with a (description) prefix. Defaults: 10 steps, CFG 2.0. Needs a server JSON (see the file header)."
+
+# Q8_0; weights 2.75 GiB, ESTIMATE resident 3.8 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 3.8
+files = [
+  { name = "VoxCPM2-GGUF/voxcpm2-q8_0.gguf", role = "model", sha256 = "c8e01ab4416011e12a28f24ede298a1aa5ce64b43f8e8aaad53b1e2fe7c96432", size = 2955000480 },
+]
+
+# BF16; weights 4.44 GiB, ESTIMATE resident 5.4 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "bf16"
+label = "BF16"
+quality = 16
+bits = 16
+min_vram_gib = 5.4
+files = [
+  { name = "VoxCPM2-GGUF/voxcpm2-bf16.gguf", role = "model", sha256 = "0c0cd2515c7a1145c0ddba06c871724656c36cb53ee3b0118116b34cb4153699", size = 4772288288 },
+]
+
+[[model]]
+id = "qwen3-tts-1.7b-base"
+kind = "tts"
+name = "Qwen3-TTS 1.7B Base"
+adapter = "audiocpp"
+license = "apache-2.0"
+family = "qwen3_tts"
+params_total_b = 1.7
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7060
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\qwen3-tts-1.7b-base.server.json", "--backend", "vulkan", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "Alibaba Qwen3-TTS 12 Hz 1.7B Base (10 languages) on audiocpp_server; cloning with voice_ref + reference_text. Defaults: temperature 0.9, top_k 50. Needs a server JSON (see the file header)."
+
+# Q8_0 (v2); weights 2.51 GiB, ESTIMATE resident 3.5 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 (v2)"
+quality = 8
+bits = 8.5
+min_vram_gib = 3.5
+files = [
+  { name = "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf", role = "model", sha256 = "b55e06c7890d43c208d15aed8b4ed3f18215f295e47d5960e061b15bff338ab0", size = 2695175104 },
+]
+
+# BF16; weights 3.91 GiB, ESTIMATE resident 4.9 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "bf16"
+label = "BF16"
+quality = 16
+bits = 16
+min_vram_gib = 4.9
+files = [
+  { name = "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-bf16.gguf", role = "model", sha256 = "f5cf4c37b969335e0ffb657119e52025e26192553119590d59fa17b8d36e8b29", size = 4203158464 },
+]
+
+[[model]]
+id = "chatterbox"
+kind = "tts"
+name = "Chatterbox"
+adapter = "audiocpp"
+license = "mit"
+family = "chatterbox"
+params_total_b = 0.5
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7060
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\chatterbox.server.json", "--backend", "vulkan", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "Resemble AI Chatterbox (0.5B, English) on audiocpp_server: no built-in voice, a reference wav is required (voice_ref per request, --voice-dir, or a default_voice_preset in the server JSON)."
+
+# Q8_0; weights 1.94 GiB, ESTIMATE resident 2.9 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 2.9
+files = [
+  { name = "Chatterbox-GGUF/chatterbox-q8_0.gguf", role = "model", sha256 = "d586dd1aa59613cab8046176fb7ca5ba191c02a9b10ffa5b0d892ed22b470656", size = 2088393668 },
+]
+
+# F16; weights 3.49 GiB, ESTIMATE resident 4.5 GiB (weights + 1.0 GiB compute, unmeasured)
+[[model.quant]]
+id = "f16"
+label = "F16"
+quality = 16
+bits = 16
+min_vram_gib = 4.5
+files = [
+  { name = "Chatterbox-GGUF/chatterbox-f16.gguf", role = "model", sha256 = "b872f908605f5ccbdd8eaa9e9c92a521c602b70cbec635d46e86eb70a3f8e713", size = 3744360386 },
+]
+
+[[model]]
+id = "kokoro-82m"
+kind = "tts"
+name = "Kokoro 82M"
+adapter = "audiocpp"
+license = "apache-2.0"
+family = "kokoro_tts"
+params_total_b = 0.082
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7060
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\kokoro-82m.server.json", "--backend", "vulkan", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "Kokoro 82M (54 preset voices, no cloning; af_heart by default) on audiocpp_server; small enough for the CPU (--backend cpu). Needs eSpeak-ng data next to the exe (unverified whether the release zips ship it)."
+
+# Q8_0; weights 0.18 GiB, ESTIMATE resident 0.5 GiB (weights + 0.3 GiB compute, unmeasured)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 0.5
+files = [
+  { name = "Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf", role = "model", sha256 = "5d800fd204029302c10313daeafdb31c875c7c29ae31974d0d156cc7f512d1d0", size = 189549408 },
+]
+
+# BF16; weights 0.20 GiB, ESTIMATE resident 0.5 GiB (weights + 0.3 GiB compute, unmeasured)
+[[model.quant]]
+id = "bf16"
+label = "BF16"
+quality = 16
+bits = 16
+min_vram_gib = 0.5
+files = [
+  { name = "Kokoro-82M-GGUF/kokoro-82m-bf16.gguf", role = "model", sha256 = "51d10c63557d21f70ef5d607e91c11023cf408dbc3af24c283b18106778e1e67", size = 211954816 },
+]
+
+# ---------------------------------------------------------------------------------------------------- stt
+
+[[model]]
+id = "whisper-large-v3-turbo"
+kind = "stt"
+name = "Whisper large-v3 turbo"
+adapter = "generic"
+license = "mit"
+family = "whisper"
+params_total_b = 0.809
+hf_repo = "ggerganov/whisper.cpp"
+revision = "5359861c739e955e79d9a303bcbc70fb988958b1"
+port = 7070
+args = ["-m", "{model}", "-t", "4", "-fa", "-l", "auto", "--inference-path", "/v1/audio/transcriptions", "--host", "{host}", "--port", "{port}"]
+health = "/health"
+notes = "whisper.cpp whisper-server (MIT). Official Windows zips stop at v1.8.4 and are CPU / CUDA only: on AMD use a Vulkan or HIP build. --inference-path makes it OpenAI-compatible (/v1/audio/transcriptions). Health: GET /health (503 while loading). Records come from klif-cli bench <system> --audio <file.wav>."
+
+# Q5_0; weights 0.53 GiB, ESTIMATE resident 1.1 GiB (weights + 0.6 GiB compute, unmeasured)
+[[model.quant]]
+id = "q5-0"
+label = "Q5_0"
+quality = 5.0
+bits = 5.5
+min_vram_gib = 1.1
+files = [
+  { name = "ggml-large-v3-turbo-q5_0.bin", role = "model", sha256 = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", size = 574041195 },
+]
+
+# Q8_0; weights 0.81 GiB, ESTIMATE resident 1.4 GiB (weights + 0.6 GiB compute, unmeasured)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 1.4
+files = [
+  { name = "ggml-large-v3-turbo-q8_0.bin", role = "model", sha256 = "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1", size = 874188075 },
+]
+
+# F16; weights 1.51 GiB, ESTIMATE resident 2.1 GiB (weights + 0.6 GiB compute, unmeasured)
+[[model.quant]]
+id = "f16"
+label = "F16"
+quality = 16
+bits = 16
+min_vram_gib = 2.1
+files = [
+  { name = "ggml-large-v3-turbo.bin", role = "model", sha256 = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69", size = 1624555275 },
+]
+
+# -------------------------------------------------------------------------------------------------- video
+
+[[model]]
+id = "minimax-h3-fl2va"
+kind = "video"
+name = "MiniMax H3 (FL2VA)"
+adapter = "sd.cpp"
+license = "minimax-h3-community"
+family = "minimax_h3"
+params_total_b = 33
+hf_repo = "unsloth/MiniMax-H3-GGUF"
+revision = "d629413c2e5b51b38c453668b75ca3b06ca92703"
+port = 1235
+args = ["--diffusion-model", "{model}", "--llm", "{file:te}", "--vae", "{file:vae}", "--audio-vae", "{file:avae}", "--cfg-scale", "1.0", "--diffusion-fa", "--backend", "te=cpu", "--listen-ip", "{host}", "--listen-port", "{port}"]
+notes = "LICENSE: the MiniMax H3 Community License grants no rights in the European Union, the United Kingdom, South Korea or the United States (apply to MiniMax for a license there); commercial use above USD 20M yearly revenue needs written authorization. Video with its own stereo audio (24 fps, 4-15 s) on sd.cpp sd-server (POST /sdcpp/v1/vid_gen). Distilled: --cfg-scale must be 1.0. The 32B Qwen3-VL text encoder always runs on the CPU (--backend te=cpu); --offload-to-cpu (added when the GPU is too small) keeps the other weights in RAM between stages. FL2VA = text plus 0-2 frames; reference conditioning (ref2va) is CLI-only."
+
+# Q8_0 + Qwen3-VL Q4_K_M; weights 42.35 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 28.4 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 23.0 GiB VRAM and 42.3 GiB RAM
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + Qwen3-VL Q4_K_M"
+quality = 8
+bits = 8.5
+min_vram_gib = 28.4
+offload_vram_gib = 23.0
+offload_ram_gib = 42.3
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q8_0.gguf", role = "model", sha256 = "1c77759fd30e4b41dd4fb341d684518177f544428c6186fd9f5fd96f8ebf55d4", size = 21437786208 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# Q6_K + Qwen3-VL Q4_K_M; weights 37.83 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 23.9 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 18.4 GiB VRAM and 37.8 GiB RAM
+[[model.quant]]
+id = "q6-k"
+label = "Q6_K + Qwen3-VL Q4_K_M"
+quality = 6.5
+bits = 6.56
+min_vram_gib = 23.9
+offload_vram_gib = 18.4
+offload_ram_gib = 37.8
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q6_K.gguf", role = "model", sha256 = "cf9453a5654833fbf4e432d71ae53ad2f58ff8f735aa64d4770f1e182c0a5868", size = 16586784864 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# Q5_0 + Qwen3-VL Q4_K_M; weights 35.35 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 21.4 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 16.0 GiB VRAM and 35.3 GiB RAM
+[[model.quant]]
+id = "q5-0"
+label = "Q5_0 + Qwen3-VL Q4_K_M"
+quality = 5.0
+bits = 5.5
+min_vram_gib = 21.4
+offload_vram_gib = 16.0
+offload_ram_gib = 35.3
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q5_0.gguf", role = "model", sha256 = "e7e7d16af6fe7cbb832441ce8b517155fa32c7ba03d8d1aab086ea64e82104dc", size = 13923170400 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# Q4_K + Qwen3-VL Q4_K_M; weights 33.02 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 19.1 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 13.6 GiB VRAM and 33.0 GiB RAM
+[[model.quant]]
+id = "q4-k"
+label = "Q4_K + Qwen3-VL Q4_K_M"
+quality = 4.5
+bits = 4.5
+min_vram_gib = 19.1
+offload_vram_gib = 13.6
+offload_ram_gib = 33.0
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q4_K.gguf", role = "model", sha256 = "dd948e08ad0ba3c71bd42f368e283dd82e790f5122a63b276e22a3e0283d0c10", size = 11420663904 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# UD-Q3_K_XL + Qwen3-VL Q4_K_M; weights 31.28 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 17.3 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 11.9 GiB VRAM and 31.3 GiB RAM
+[[model.quant]]
+id = "ud-q3-k-xl"
+label = "UD-Q3_K_XL + Qwen3-VL Q4_K_M"
+quality = 3.5
+bits = 3.5
+min_vram_gib = 17.3
+offload_vram_gib = 11.9
+offload_ram_gib = 31.3
+files = [
+  { name = "minimax_h3_fl2va_pruned-UD-Q3_K_XL.gguf", role = "model", sha256 = "aee15137d31131b35448fad820ff757b6c137df44fdc0758b4a4636792d2b913", size = 9558675552 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# Q3_K + Qwen3-VL Q4_K_M; weights 30.54 GiB. ESTIMATES (unmeasured), text encoder on the CPU (16.97 GiB RAM): denoiser + VAEs + 3 GiB activations = 16.6 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 11.2 GiB VRAM and 30.5 GiB RAM
+[[model.quant]]
+id = "q3-k"
+label = "Q3_K + Qwen3-VL Q4_K_M"
+quality = 3.4
+bits = 3.44
+min_vram_gib = 16.6
+offload_vram_gib = 11.2
+offload_ram_gib = 30.5
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q3_K.gguf", role = "model", sha256 = "2c3cadbcc87ce2ed550b9be1e3b099198ba31a33a83f051411254c5149f6f59f", size = 8759328864 },
+  { name = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", role = "other", key = "te", sha256 = "11e6efe70a57ce7f4838c47bdbd1a1c4b8ce10e2b7747f1b065990b70f4b05fc", size = 18218065024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# UD-Q2_K_XL + Qwen3-VL Q2_K_M; weights 25.13 GiB. ESTIMATES (unmeasured), text encoder on the CPU (12.20 GiB RAM): denoiser + VAEs + 3 GiB activations = 15.9 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 10.5 GiB VRAM and 25.1 GiB RAM
+[[model.quant]]
+id = "ud-q2-k-xl"
+label = "UD-Q2_K_XL + Qwen3-VL Q2_K_M"
+quality = 2.5
+bits = 2.5
+min_vram_gib = 15.9
+offload_vram_gib = 10.5
+offload_ram_gib = 25.1
+files = [
+  { name = "minimax_h3_fl2va_pruned-UD-Q2_K_XL.gguf", role = "model", sha256 = "cfe0795c00ab6e6ebf8c64fe4574f45a828e8a93e0876bca704e055662a9d7b8", size = 8063029344 },
+  { name = "qwen3vl_32b_minimax_h3-Q2_K_M.gguf", role = "other", key = "te", sha256 = "a8ccadccd57ef34c838ffb8a7da8368bb554721b2760274a1d3b0df63960b997", size = 13102161024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]
+
+# Q2_K + Qwen3-VL Q2_K_M; weights 23.88 GiB. ESTIMATES (unmeasured), text encoder on the CPU (12.20 GiB RAM): denoiser + VAEs + 3 GiB activations = 14.7 GiB VRAM; with --offload-to-cpu the largest stage (the denoiser) + activations = 9.3 GiB VRAM and 23.9 GiB RAM
+[[model.quant]]
+id = "q2-k"
+label = "Q2_K + Qwen3-VL Q2_K_M"
+quality = 2.4
+bits = 2.63
+min_vram_gib = 14.7
+offload_vram_gib = 9.3
+offload_ram_gib = 23.9
+files = [
+  { name = "minimax_h3_fl2va_pruned-Q2_K.gguf", role = "model", sha256 = "696866a3c98ea0bb7e96b8a273aafb7c588ca8e6fb669303956eb270cedb68aa", size = 6724190304 },
+  { name = "qwen3vl_32b_minimax_h3-Q2_K_M.gguf", role = "other", key = "te", sha256 = "a8ccadccd57ef34c838ffb8a7da8368bb554721b2760274a1d3b0df63960b997", size = 13102161024 },
+  { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
+  { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
+]

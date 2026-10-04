@@ -1,8 +1,9 @@
 //! Win32 measurement primitives: DXGI adapters, PDH queries, device power state, the AMD ULPS value of one
-//! device's driver key, RAM, and (feature `smbios`) the RAM type. Private: the rest of the crate reaches these
-//! through `platform` (non-Windows targets compile without them). No HKLM ProcessorNameString read (the CPU
-//! name comes from CPUID, see `platform::cpu_brand`) and no display-class key scan.
+//! device's driver key, RAM, the processor topology and base clock, and (feature `smbios`) the RAM type. Private:
+//! the rest of the crate reaches these through `platform` (non-Windows targets compile without them). No HKLM
+//! ProcessorNameString read (the CPU name comes from CPUID, see `platform::cpu_brand`) and no display-class key scan.
 
+use crate::cpu::CoreClass;
 use crate::Adapter;
 use windows::core::{GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
@@ -18,10 +19,12 @@ use windows::Win32::System::Performance::{
     PdhOpenQueryW, PdhRemoveCounter, PDH_FMT, PDH_FMT_COUNTERVALUE, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER,
     PDH_HQUERY, PDH_MORE_DATA,
 };
-use windows::Win32::System::Registry::{RegCloseKey, RegGetValueW, HKEY, KEY_READ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+use windows::Win32::System::Registry::{RegCloseKey, RegGetValueW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 #[cfg(feature = "smbios")]
 use windows::Win32::System::SystemInformation::{GetSystemFirmwareTable, RSMB};
-use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use windows::Win32::System::SystemInformation::{
+    GetLogicalProcessorInformationEx, GlobalMemoryStatusEx, RelationProcessorCore, MEMORYSTATUSEX, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+};
 
 fn wstr(buf: &[u16]) -> String {
     let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
@@ -53,6 +56,9 @@ pub fn dxgi_adapters() -> Vec<Adapter> {
             luid_high: d.AdapterLuid.HighPart,
             luid_low: d.AdapterLuid.LowPart,
             dedicated_bytes: d.DedicatedVideoMemory as u64,
+            revision: d.Revision,
+            subsys_id: d.SubSysId,
+            shared_bytes: d.SharedSystemMemory as u64,
         });
     }
     out
@@ -324,6 +330,80 @@ pub fn memory_status() -> Option<(u64, u64)> {
     let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
     unsafe { GlobalMemoryStatusEx(&mut m) }.ok()?;
     Some((m.ullTotalPhys, m.ullAvailPhys))
+}
+
+/// The CPU's base clock in MHz: the `~MHz` value of the first processor's key under HKLM\HARDWARE\DESCRIPTION
+/// (the OS writes it at boot from the processor's rated frequency; the boost clock is not in it).
+pub fn cpu_base_mhz() -> Option<u32> {
+    let mut v = 0u32;
+    let mut size = 4u32;
+    let s = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            &HSTRING::from(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"),
+            &HSTRING::from("~MHz"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut v as *mut u32 as *mut core::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    if s.0 == 0 && v > 0 { Some(v) } else { None }
+}
+
+/// Physical cores (and their hardware threads) per `EfficiencyClass`, the fastest class first
+/// (`GetLogicalProcessorInformationEx(RelationProcessorCore)`; every class is 0 on a CPU without hybrid cores).
+pub fn cpu_core_classes() -> Vec<CoreClass> {
+    let mut len = 0u32;
+    // The size query fails with ERROR_INSUFFICIENT_BUFFER and sets `len`.
+    let _ = unsafe { GetLogicalProcessorInformationEx(RelationProcessorCore, None, &mut len) };
+    if len < 32 || len > 4 * 1024 * 1024 {
+        return Vec::new();
+    }
+    // The records hold pointer-sized masks: an 8-byte aligned buffer.
+    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+    let ptr = buf.as_mut_ptr() as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+    if unsafe { GetLogicalProcessorInformationEx(RelationProcessorCore, Some(ptr), &mut len) }.is_err() {
+        return Vec::new();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, (len as usize).min(buf.len() * 8)) };
+    parse_core_records(bytes)
+}
+
+/// The variable-length SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX records of RelationProcessorCore: Relationship (u32),
+/// Size (u32), then PROCESSOR_RELATIONSHIP { Flags u8, EfficiencyClass u8, Reserved [u8; 20], GroupCount u16,
+/// GroupMask [GROUP_AFFINITY] } with GROUP_AFFINITY { Mask usize, Group u16, Reserved [u16; 3] }.
+fn parse_core_records(bytes: &[u8]) -> Vec<CoreClass> {
+    let group_affinity = std::mem::size_of::<usize>() + 8;
+    let mut by_class: std::collections::BTreeMap<u8, CoreClass> = std::collections::BTreeMap::new();
+    let mut at = 0usize;
+    while at + 8 <= bytes.len() {
+        let size = u32::from_le_bytes([bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]]) as usize;
+        if size < 32 || at + size > bytes.len() {
+            break;
+        }
+        let rec = &bytes[at..at + size];
+        let relationship = u32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]);
+        if relationship == RelationProcessorCore.0 as u32 {
+            let class = rec[9];
+            let groups = u16::from_le_bytes([rec[30], rec[31]]) as usize;
+            let mut threads = 0u32;
+            for g in 0..groups {
+                let m = 32 + g * group_affinity;
+                if m + std::mem::size_of::<usize>() > rec.len() {
+                    break;
+                }
+                let mut mask = [0u8; 8];
+                mask[..std::mem::size_of::<usize>()].copy_from_slice(&rec[m..m + std::mem::size_of::<usize>()]);
+                threads += u64::from_le_bytes(mask).count_ones();
+            }
+            let e = by_class.entry(class).or_insert(CoreClass { efficiency_class: class, cores: 0, threads: 0 });
+            e.cores += 1;
+            e.threads += threads;
+        }
+        at += size;
+    }
+    by_class.into_values().rev().collect()
 }
 
 /// Memory type from SMBIOS type 17 records (feature `smbios` only: klif-cli diag).

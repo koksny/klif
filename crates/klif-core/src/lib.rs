@@ -15,7 +15,8 @@
 //! The remote nodes' last-known Systems live in `<data_dir>\node-cache.json` (`nodes`).
 //!
 //! Layout: `engine` (state machine, tick thread, view model), `state` (state.json), `timefmt`, `narrate` (E1);
-//! `wire`, `control`, `link`, `nodes` (E3); `keys`, `bench`, `download` (E2).
+//! `wire`, `control`, `link`, `nodes` (E3); `keys`, `bench`, `download` (E2); `records` (0.3.1: best values per
+//! model file and backend).
 //! Frozen API: SPEC section 4 (klif-core).
 
 pub mod bench;
@@ -26,13 +27,14 @@ pub mod keys;
 pub mod link;
 pub mod narrate;
 pub mod nodes;
+pub mod records;
 mod state;
 mod timefmt;
 pub mod wire;
 
 use anyhow::Result;
 use klif_common::config::{LoadedConfig, PresetCfg};
-use klif_common::vm::{Action, CommandView, HostInfo, PresetDetail, SystemId, ViewModel};
+use klif_common::vm::{Action, CommandView, HostInfo, PresetDetail, RecordEvent, RecordMetric, SystemId, ViewModel};
 use klif_common::Secret;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -170,6 +172,18 @@ impl EngineHandle {
         self.inner.preset(id, node)
     }
 
+    /// The climb of one record key (a key of `ViewModel.records`; a node's `"<node>/<key>"` is asked of that node):
+    /// every broken record from `records-history.jsonl`, oldest first, optionally of one metric. Err: there is no
+    /// such record, or its node could not be asked.
+    pub fn records_history(&self, key: &str, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>> {
+        self.inner.records_history(key, metric, true)
+    }
+
+    /// [`EngineHandle::records_history`] for this machine's records only (what a network peer may ask).
+    pub(crate) fn records_history_local(&self, key: &str, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>> {
+        self.inner.records_history(key, metric, false)
+    }
+
     /// The command an unsaved preset spec would run for `system` (Tune preview), with issues.
     pub fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> CommandView {
         self.inner.command_preview(spec, system)
@@ -205,5 +219,11 @@ impl EngineHandle {
     /// Run one tick now (recompute and publish the view model). Tools use it to avoid waiting.
     pub fn refresh(&self) {
         self.inner.tick()
+    }
+
+    /// `klif-cli bench` on a local System: `start` opens its bench window (records captured meanwhile are bench
+    /// records); the end (`start` false) closes it and hands over `record` for servers whose log KLIF does not read.
+    pub fn bench_mark(&self, system: &SystemId, start: bool, record: Option<&bench::BenchRecord>) -> Result<()> {
+        self.inner.bench_mark(system, start, record)
     }
 }

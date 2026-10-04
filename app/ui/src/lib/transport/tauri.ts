@@ -10,6 +10,14 @@
 //   invoke  klif_open_endpoint | klif_copy_endpoint { system? } | klif_copy_api_key   (handled natively; the key
 //                                                         never reaches JS)
 //   invoke  klif_preset_get { id, node? } -> PresetDetail | null       (secrets masked)
+//   invoke  klif_records_history { key, metric? } -> RecordHistoryLine[]   (= RecordEvent[]: the climb of one record
+//                                                         key, oldest first; a node's "<node>/<key>" is asked of
+//                                                         that node)
+//   invoke  klif_save_image { name, data: base64 } -> string   (the Records export card: writes a PNG or GIF into
+//                                                         the user's Pictures folder, subfolder KLIF, never
+//                                                         overwriting ("-2", "-3"...); name is reduced to
+//                                                         [A-Za-z0-9._-] and must end in .png or .gif; resolves
+//                                                         with the full path of the file)
 //   invoke  klif_command_preview { spec, system? } -> CommandView      (an unsaved preset; Tune's debounced preview)
 //   invoke  klif_set_api_key { key: string | null }                    (native; never echoed back)
 //   invoke  klif_open_config | klif_open_logs
@@ -21,7 +29,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { CommandView, EngineAction, PresetDetail, PresetSpec, SystemId, ViewModel } from '../model/types';
+import type { CommandView, EngineAction, PresetDetail, PresetSpec, RecordHistoryLine, RecordMetric, SystemId, ViewModel } from '../model/types';
 import { SKINS } from '../../skins/registry';
 
 /** klif_common::vm::Action, internally tagged by "type" (declared in model/types.ts). */
@@ -48,6 +56,9 @@ export interface NativeLink {
   copyEndpoint(system?: SystemId): Promise<void>;
   copyApiKey(system?: SystemId): Promise<void>;
   presetGet(id: string, node?: string): Promise<PresetDetail | null>;
+  recordsHistory(key: string, metric?: RecordMetric): Promise<RecordHistoryLine[]>;
+  /** Writes the image into Pictures\KLIF; resolves with its full path. */
+  saveImage(fileName: string, data: Blob): Promise<string>;
   commandPreview(spec: PresetSpec, system?: SystemId): Promise<CommandView>;
   setApiKey(key: string | null): Promise<void>;
   openConfig(): Promise<void>;
@@ -75,6 +86,14 @@ export function errorText(e: unknown): string {
   } catch {
     return String(e);
   }
+}
+
+/** The bytes of a Blob as standard base64 (what klif_save_image takes). Chunked: spreading a big array overflows the stack. */
+async function toBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
 }
 
 export async function connect(h: NativeHandlers): Promise<NativeLink> {
@@ -122,6 +141,8 @@ export async function connect(h: NativeHandlers): Promise<NativeLink> {
     copyEndpoint: (system) => invoke('klif_copy_endpoint', { system: system ?? null }),
     copyApiKey: (system) => invoke('klif_copy_api_key', { system: system ?? null }),
     presetGet: (id, node) => invoke<PresetDetail | null>('klif_preset_get', { id, node: node ?? null }),
+    recordsHistory: (key, metric) => invoke<RecordHistoryLine[]>('klif_records_history', { key, metric: metric ?? null }),
+    saveImage: async (fileName, data) => invoke<string>('klif_save_image', { name: fileName, data: await toBase64(data) }),
     commandPreview: (spec, system) => invoke<CommandView>('klif_command_preview', { spec, system: system ?? null }),
     setApiKey: (key) => invoke('klif_set_api_key', { key }),
     openConfig: () => invoke('klif_open_config'),

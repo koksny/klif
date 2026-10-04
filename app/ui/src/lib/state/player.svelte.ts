@@ -12,7 +12,18 @@ import { browserHost } from '../mock/host';
 import { buildEngine, DEFAULT_SCENARIO, SCENARIOS, scenarioDef, SHOT_DEFAULT_SCENARIO } from '../mock/scenarios';
 import { classicWorld } from '../mock/world';
 import { SAMPLE_VM } from '../model/sample';
-import type { Actions, CallOpts, CommandView, ConfigApi, PresetDetail, PresetSpec, SystemId, ViewModel } from '../model/types';
+import type {
+  Actions,
+  CallOpts,
+  CommandView,
+  ConfigApi,
+  PresetDetail,
+  PresetSpec,
+  RecordHistoryLine,
+  RecordMetric,
+  SystemId,
+  ViewModel,
+} from '../model/types';
 import { getTier } from '../render/scheduler';
 import { IN_TAURI, loadNative, type EngineAction, type GpuReport, type NativeLink } from '../transport';
 import type { SizeClass } from '../../skins/contract';
@@ -42,6 +53,20 @@ async function writeClipboard(text: string): Promise<boolean> {
       return false;
     }
   }
+}
+
+/** Browser stand-in for "save to disk": a download through a temporary <a download>. */
+function downloadBlob(fileName: string, data: Blob) {
+  const url = URL.createObjectURL(data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // The download has started by the time the click returns; release the object URL a moment later.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /**
@@ -112,6 +137,7 @@ class Player {
     toggleConsole: (open) => ui.toggleConsole(open),
     togglePanel: () => ui.toggleSize(false),
     openTune: (system, opts) => ui.openTune(system, opts),
+    openRecords: () => ui.openRecords(),
     copy: (text, toastText) => {
       void writeClipboard(text).then((ok) => ui.toast(ok ? toastText : 'Clipboard is not available here.'));
     },
@@ -239,12 +265,26 @@ class Player {
       updateSystem: (system, patch, call) => this.act({ type: 'updateSystem', system, ...patch }, call),
       downloadRecommendation: (id, node, call) => this.act({ type: 'downloadRecommendation', id, ...(node ? { node } : {}) }, call),
       cancelDownload: (id, node, call) => this.act({ type: 'cancelDownload', id, ...(node ? { node } : {}) }, call),
-      adoptRecommendation: (id, system, call) => this.act({ type: 'adoptRecommendation', id, ...(system ? { system } : {}) }, call),
+      forgetRecord: (key, node, call) => this.act({ type: 'forgetRecord', key, ...(node ? { node } : {}) }, call),
+      adoptRecommendation: (id, system, opts) => {
+        const fit = opts?.fit;
+        return this.act(
+          {
+            type: 'adoptRecommendation',
+            id,
+            ...(system ? { system } : {}),
+            ...(fit?.ctx !== undefined ? { ctx: fit.ctx } : {}),
+            ...(fit?.kv ? { kv: fit.kv } : {}),
+          },
+          { quiet: opts?.quiet },
+        );
+      },
       openEndpoint: (system) => void this.call((l) => l.openEndpoint(system)).catch(() => {}),
       copyEndpoint: (system) => void this.call((l) => l.copyEndpoint(system), 'Endpoint copied').catch(() => {}),
       copyApiKey: () => void this.call((l) => l.copyApiKey(), 'API key copied').catch(() => {}),
       toggleConsole: (open) => ui.toggleConsole(open),
       openTune: (system, opts) => ui.openTune(system ?? this.vm.selected ?? undefined, opts),
+      openRecords: () => ui.openRecords(),
       minimize: () => void this.call((l) => l.minimize()).catch(() => {}),
       toggleMaximize: () => void this.call((l) => l.toggleMaximize()).catch(() => {}),
       closeWindow: () => void this.call((l) => l.close()).catch(() => {}),
@@ -266,6 +306,8 @@ class Player {
     };
     return {
       presetGet: (id, node) => wrap((l) => l.presetGet(id, node)),
+      recordsHistory: (key, metric) => wrap((l) => l.recordsHistory(key, metric)),
+      saveImage: (fileName, data) => wrap((l) => l.saveImage(fileName, data)),
       commandPreview: (spec, system) => wrap((l) => l.commandPreview(spec, system)),
       setApiKey: (key) => wrap((l) => l.setApiKey(key)),
       openConfig: () => wrap((l) => l.openConfig()),
@@ -317,7 +359,8 @@ class Player {
       updateSystem: (system, patch, call) => this.mock((e) => e.updateSystem(system, patch), call),
       downloadRecommendation: (id, node, call) => this.mock((e) => e.downloadRecommendation(id, node), call),
       cancelDownload: (id, node, call) => this.mock((e) => e.cancelDownload(id, node), call),
-      adoptRecommendation: (id, system, call) => this.mock((e) => e.adoptRecommendation(id, system), call),
+      adoptRecommendation: (id, system, opts) => this.mock((e) => e.adoptRecommendation(id, system, opts?.fit), { quiet: opts?.quiet }),
+      forgetRecord: (key, node, call) => this.mock((e) => e.forgetRecord(key, node), call),
       openEndpoint: (system) => this.shellMock((e) => e.openEndpoint(system)),
       copyEndpoint: (system) => this.shellMock((e) => e.copyEndpoint(system)),
       copyApiKey: () => {
@@ -326,6 +369,7 @@ class Player {
       },
       toggleConsole: (open) => ui.toggleConsole(open),
       openTune: (system, opts) => ui.openTune(system ?? this.vm.selected ?? undefined, opts),
+      openRecords: () => this.hooks.openRecords(),
       // Window chrome belongs to the desktop host (Tauri). In the browser there is no window to control.
       minimize: () => ui.toast('Window controls work in the desktop app.'),
       toggleMaximize: () => ui.toast('Window controls work in the desktop app.'),
@@ -350,6 +394,16 @@ class Player {
     };
     return {
       presetGet: (id: string, node?: string): Promise<PresetDetail | null> => later(() => read().presetGet(id, node)),
+      recordsHistory: (key: string, metric?: RecordMetric): Promise<RecordHistoryLine[]> => later(() => read().recordsHistory(key, metric)),
+      // A browser has no Pictures folder: the file is downloaded and there is no path to report.
+      saveImage: (fileName, data) => {
+        try {
+          downloadBlob(fileName, data);
+          return Promise.resolve(null);
+        } catch (e) {
+          return Promise.reject(new Error(sentence(e)));
+        }
+      },
       commandPreview: (spec: PresetSpec, system?: SystemId): Promise<CommandView> => later(() => read().commandPreview(spec, system)),
       // Tune shows the outcome inline (the native setApiKey does not toast either).
       setApiKey: (key) => this.mock((e) => e.setApiKey(key), { quiet: true }),

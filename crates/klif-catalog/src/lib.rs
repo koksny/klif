@@ -6,7 +6,8 @@
 //! - `Catalog::command_view`: the exact `CommandView` of a (possibly unsaved) preset spec for a System.
 //! - `Catalog::plan`: the `LaunchPlan` (a resolved `LaunchSpec` for the supervisor plus telemetry facts).
 //! - `store`: comment-preserving klif.toml writes (toml_edit). `facts`: per-adapter flag tables.
-//!   `recommend`: embedded `data/recommendations.toml`. `probe`: cached file checks.
+//!   `recommend`: the embedded model pool `data/recommendations.toml` and its recommendations. `suggest`: the
+//!   suggested model per slot for a machine (estimates). `probe`: cached file checks.
 //!
 //! Everything a preset runs comes from one resolver (`resolve.rs`): params → placeholders → program / cwd / env →
 //! port / host → facts → issues. `CommandView.display` is `klif_common::cmdline::render` of the same program and
@@ -19,6 +20,7 @@ pub mod probe;
 pub mod recommend;
 mod resolve;
 pub mod store;
+pub mod suggest;
 
 use anyhow::{anyhow, bail, Result};
 use klif_common::cmdline;
@@ -31,6 +33,7 @@ use klif_common::vm::{
 use klif_common::Secret;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub use recommend::Recommendation;
 pub use resolve::{external_port_clash, ports_overlap};
@@ -483,18 +486,23 @@ impl Catalog {
         hash_of(&r)
     }
 
-    /// Every recommendation with its install state for this config.
+    /// Every recommendation with its install state for this config. The pool has a hundred rungs, so the presets'
+    /// model files are resolved once per call, and a rung's files are probed only when its repo folder exists.
     pub fn recommendations(&self, cfg: &Config) -> Vec<RecommendationInfo> {
-        self.recs.iter().map(|rec| self.rec_info(cfg, rec)).collect()
+        let loaded = self.preset_models(cfg);
+        let dir_ok = recommend::models_dir(cfg).is_some_and(|d| self.probe.is_dir(&d));
+        self.recs.iter().map(|rec| self.rec_info(cfg, rec, dir_ok, &loaded)).collect()
     }
 
-    fn rec_info(&self, cfg: &Config, rec: &Recommendation) -> RecommendationInfo {
-        let present = rec.files.iter().all(|f| {
-            recommend::install_path(cfg, rec, &f.name)
-                .and_then(|p| self.probe.file_size(&p))
-                .is_some_and(|size| f.size.is_none_or(|want| want == size))
-        });
-        let existing = self.existing_preset(cfg, rec);
+    fn rec_info(&self, cfg: &Config, rec: &Recommendation, dir_ok: bool, loaded: &[(String, PathBuf)]) -> RecommendationInfo {
+        let present = dir_ok
+            && rec.files.iter().all(|f| {
+                recommend::install_path(cfg, rec, &f.name)
+                    .filter(|p| p.ancestors().nth(f.install_name().split('/').count()).is_none_or(|repo| self.probe.is_dir(repo)))
+                    .and_then(|p| self.probe.file_size(&p))
+                    .is_some_and(|size| f.size.is_none_or(|want| want == size))
+            });
+        let existing = self.existing_in(rec, loaded);
         RecommendationInfo {
             id: rec.id.clone(),
             kind: rec.kind,
@@ -515,22 +523,37 @@ impl Catalog {
         }
     }
 
+    /// Every preset's model file: `model` first (relative = under the server's working folder), else the model the
+    /// args load.
+    fn preset_models(&self, cfg: &Config) -> Vec<(String, PathBuf)> {
+        cfg.presets
+            .iter()
+            .filter_map(|(id, spec)| {
+                let r = self.resolve_plain(cfg, spec, &BTreeMap::new(), KeyInfo::Unknown, false);
+                let path = r.model_path.as_deref().map(|p| r.abs(&p.to_string_lossy())).or_else(|| r.loaded_model())?;
+                Some((id.clone(), path))
+            })
+            .collect()
+    }
+
     /// A preset that already references the recommendation's model file (same file name, and the same size
     /// when the recommendation knows it).
     fn existing_preset(&self, cfg: &Config, rec: &Recommendation) -> Option<String> {
+        self.existing_in(rec, &self.preset_models(cfg))
+    }
+
+    fn existing_in(&self, rec: &Recommendation, loaded: &[(String, PathBuf)]) -> Option<String> {
         let file = rec.model_file()?;
-        let want_name = file.name.rsplit('/').next().unwrap_or(&file.name);
-        cfg.presets.iter().find_map(|(id, spec)| {
-            let r = self.resolve_plain(cfg, spec, &BTreeMap::new(), KeyInfo::Unknown, false);
-            // `model` first (relative = under the server's working folder), else the model the args load.
-            let path = r.model_path.as_deref().map(|p| r.abs(&p.to_string_lossy())).or_else(|| r.loaded_model())?;
+        let want_name = file.install_name().rsplit('/').next().unwrap_or(file.install_name());
+        loaded.iter().find_map(|(id, path)| {
             let name = path.file_name()?.to_string_lossy().into_owned();
             let same_name = if cfg!(windows) { name.eq_ignore_ascii_case(want_name) } else { name == want_name };
-            let same_size = match file.size {
-                Some(want) => self.probe.file_size(&path) == Some(want),
-                None => true,
-            };
-            (same_name && same_size).then(|| id.clone())
+            let same_size = same_name
+                && match file.size {
+                    Some(want) => self.probe.file_size(path) == Some(want),
+                    None => true,
+                };
+            same_size.then(|| id.clone())
         })
     }
 
@@ -541,7 +564,9 @@ impl Catalog {
     /// A new preset (id, spec) from a recommendation, with the command/cwd/env/env_remove (and the gpu / backend
     /// display that belong to that program) copied from a preset of the same adapter (the target System's current
     /// one first, else the first by id that has a command). Without one the command stays empty (Invalid: Tune
-    /// focuses Program). The caller stores it.
+    /// focuses Program). The target System's current preset of the same adapter also gives its `port`. The id is the
+    /// recommendation's with '.' as '-' (plus "-2", "-3"... when taken). Context, KV type and fit margin are the
+    /// caller's (`suggest::apply_fit`). The caller stores it.
     pub fn preset_from_recommendation(&self, cfg: &Config, id: &str, system: Option<&SystemId>) -> Result<(String, PresetCfg)> {
         let rec = self.recommendation(id).ok_or_else(|| anyhow!("There is no recommendation \"{id}\"."))?;
         let sys = match system {
@@ -560,6 +585,13 @@ impl Catalog {
             }
             None => None,
         };
+        // Systems run side by side: a System keeps the port of its own preset (same adapter); the pool's port is
+        // only the default.
+        let own_port = sys
+            .and_then(|s| s.preset_id())
+            .and_then(|pid| cfg.presets.get(pid))
+            .filter(|p| p.adapter == rec.adapter && !p.is_external())
+            .and_then(|p| p.port);
         // Candidates: the System's own preset, the presets active on the Systems (file order), then every preset by
         // id; the first of the same adapter whose program resolves wins.
         let mut candidates: Vec<&str> = Vec::new();
@@ -601,10 +633,11 @@ impl Catalog {
             adapter: rec.adapter,
             kind: (rec.adapter.default_kind() != Some(rec.kind)).then_some(rec.kind),
             args,
-            port: rec.port,
+            port: own_port.or(rec.port),
             model,
             mmproj: path_of(rec.mmproj_file()),
             ctx: rec.ctx,
+            health: rec.health.clone(),
             quant: Some(rec.quant.clone()).filter(|q| !q.trim().is_empty()),
             recommended: Some(rec.id.clone()),
             notes: rec.notes.clone(),
@@ -619,10 +652,14 @@ impl Catalog {
             spec.backend = src.backend.clone();
             spec.device = src.device.clone();
         }
-        let mut new_id = rec.id.clone();
+        // A recommendation id is `<model>.<rung>`; a preset id has no dots ("qwen3.8-27b.ud-q4-k-xl" ->
+        // "qwen3-8-27b-ud-q4-k-xl"), leaving room for a "-N" suffix.
+        let base: String = rec.id.chars().map(|c| if c == '.' { '-' } else { c }).take(60).collect();
+        let base = base.trim_end_matches('-').to_string();
+        let mut new_id = base.clone();
         let mut n = 2;
         while cfg.presets.contains_key(&new_id) || cfg.bad_presets.contains_key(&new_id) {
-            new_id = format!("{}-{n}", rec.id);
+            new_id = format!("{base}-{n}");
             n += 1;
         }
         klif_common::config::validate_preset_id(&new_id).map_err(|e| anyhow!(e))?;
@@ -712,7 +749,7 @@ impl Catalog {
             name,
             quant,
             engine: spec.adapter.as_str().to_string(),
-            backend: nonempty(&spec.backend).unwrap_or_default(),
+            backend: nonempty(&spec.backend).or_else(|| r.facts.backend.clone()).unwrap_or_default(),
             device,
             ctx_tokens: r.facts.ctx.or(spec.ctx),
             kv_type: r.facts.kv_type.clone(),

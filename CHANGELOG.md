@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.1 (unreleased, branch `0.3.1`)
+
+KLIF now knows the machine it runs on: what it can compute, which models fit it, and the best each model file has
+reached on it.
+
+### Added
+
+- **Hardware and FP32 TFLOPS.** Every GPU and the CPU with its theoretical peak FP32 throughput: the vendor's figure
+  from an embedded table of 459 GPUs (AMD, NVIDIA, Intel), cores x FLOP per cycle x base clock for the CPU. Discrete
+  GPUs add up to one VRAM pool; an integrated GPU counts only on a machine without a discrete one (its unified
+  memory is then the pool). `[hardware] exclude`, `include` and `tflops` override what KLIF detects.
+  `klif-cli hardware`.
+- **Suggested models for this machine.** The embedded model pool (schema 2) lists models with their quant rungs and
+  KV cost; KLIF suggests one per slot (System 1, 2, 3, image, speech, transcription, video) with the context and KV
+  type it was sized for. System 1 leaves a third of the VRAM pool and a quarter of the RAM free and prefers a model
+  that fits entirely on the GPUs; System 2 may use the whole VRAM pool; System 3 the VRAM and the RAM minus a
+  reserve for the OS. Every number is an estimate. Pool: Gemma 4 (E2B to 31B), Qwen 3.8 27B and Flash-Next,
+  GLM-5.3 and GLM-5.3-Flash, DeepSeek-V4 Flash and Pro (unsloth GGUFs by default), Krea 2 Turbo, Qwen Image 2.1,
+  FLUX.2 klein, FLUX.1 schnell, SDXL, VoxCPM2, Qwen3-TTS, Chatterbox, Kokoro, Whisper large-v3 turbo and MiniMax H3
+  (its license grants no rights in the EU, the UK, South Korea or the USA). `klif-cli suggest`,
+  `klif-cli models adopt <rec> --ctx N --kv TYPE`, and the Tune drawer's "Models" section, suggestion first.
+- **Records.** The best decode and prefill speed, time to first token, time per image or video and speech or
+  transcription speed each model file reached on each backend, from everyday use and from `klif-cli bench`, with
+  the conditions it was reached under (context, prompt length, image size, KV type, GPUs, backend build). A model is
+  its file's SHA-256; HIP, Vulkan, CUDA and CPU keep separate records. Kept in `records.json` and
+  `records-history.jsonl` in the data folder; a node's records show with its name. `klif-cli records`,
+  `records history <key>`, `records forget <key> --yes`.
+- **Records screen** in the main window (the Records button, or R): the machine and its TFLOPS on top, metric tabs,
+  filters by machine and backend, search, cards or a ranked list, details with how each record climbed. A card
+  exports as a 1200x675 PNG in the skin's colours, to the clipboard or to Pictures\KLIF.
+- **"New record" moment** in every skin, in the full window and on the 960x640 panel.
+- **Speech, transcription and video runtimes.** An `audiocpp` adapter for audio.cpp's `audiocpp_server` (VoxCPM2,
+  Qwen3-TTS, Chatterbox, Kokoro; adopting one writes its server config next to the model), whisper.cpp's
+  `whisper-server` through `generic` with a `/health` check, and video on sd.cpp's `sd-server` (MiniMax H3).
+  `klif-cli bench` measures speech (x real time) and transcription (`--audio <file.wav>`).
+- **For agents.** `klif-cli logs <system> [--follow]`, `watch` (JSON lines of status changes, faults, launches, new
+  records and downloads, with `--until <system>=<status>`), `help --json` (the command catalog), `schema [<name>]`
+  (JSON Schema of every output), download progress as JSON lines on stderr, and an Agent Skill
+  (`skills/klif/SKILL.md`) in the repository and in the release folder.
+
+### Changed
+
+- The Stop button takes a colour from each skin's palette instead of one shared red.
+- The schema-1 recommendation list is replaced by the model pool; Tune's "Recommended" section is now "Models".
+
 ## 0.3.0 (unreleased, branch `0.3`)
 
 KLIF stops being a launcher for a fixed set of model "tiers" and becomes a manager for a whole local inference

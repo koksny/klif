@@ -17,6 +17,8 @@ export interface ScenarioDef {
   world?: () => World;
   /** Run the script, leaving the engine at t=0. */
   setup(e: MockEngine): void;
+  /** Runs once the engine has reached its first frame (after the pre-roll): for behaviour that must start then. */
+  ready?(e: MockEngine): void;
   /** Minimum simulated seconds before the first frame. */
   startT: number;
   /** Keep stepping from startT until this holds (bounded), for the first interactive frame. */
@@ -149,6 +151,21 @@ export const SCENARIOS: ScenarioDef[] = [
     },
     multiWorld,
   ),
+  {
+    name: 'record',
+    label: 'Records: a live System breaks its record',
+    blurb:
+      'System 2 live in the multi world; every ~12 s of simulated time it breaks its decode record (the entry, the recent events and the history move), for the new record moment of the Records screen.',
+    world: multiWorld,
+    setup: (e) => {
+      e.select('s2');
+      e.launch('s2');
+    },
+    ready: (e) => e.raiseRecords(12),
+    startT: 600,
+    startUntil: liveSession('s2', llmDecoding),
+    searchS: 3600,
+  },
   {
     name: 'kinds',
     label: 'Every kind of System',
@@ -377,6 +394,7 @@ export function buildEngine(def: ScenarioDef, ctx: BuildCtx): MockEngine {
   def.setup(e);
   if (ctx.t !== null) {
     e.fastForward(ctx.t);
+    def.ready?.(e);
     return e;
   }
   e.fastForward(def.startT);
@@ -386,5 +404,6 @@ export function buildEngine(def: ScenarioDef, ctx: BuildCtx): MockEngine {
     const step = def.searchStepS ?? 0.5;
     while (e.t < limit && !until(e.snapshot())) e.fastForward(e.t + step);
   }
+  def.ready?.(e);
   return e;
 }

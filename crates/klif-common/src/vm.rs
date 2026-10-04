@@ -1,6 +1,9 @@
 //! The KLIF view model, mirrored 1:1 in `app/ui/src/lib/model/types.ts`.
 //! Serialized with camelCase field names; optional fields are omitted when `None`.
 //! If you change anything here, change types.ts in the same change (and vice versa).
+//! Every type that klif-cli prints (or that one of them contains) also derives `schemars::JsonSchema` under the
+//! `schema` feature, which is what `klif-cli schema` is built from: give a new type
+//! `#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]` next to its serde derive.
 //!
 //! 0.3: KLIF manages N user-defined Systems (`[systems.<id>]`, tabs in file order) running concurrently, each
 //! with its own session, plus Systems on remote nodes (`"<node>/<id>"`) and external servers. A System runs a
@@ -19,6 +22,7 @@ use crate::config::{NodeRight, OnConflict, PresetCfg};
 /// A System's id: a local id from `[systems.<id>]` (`s1`, `cgi`, `tts`...) or, for a System on a remote node,
 /// `"<node>/<id>"`. Serialized as a plain string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct SystemId(pub String);
 
@@ -107,6 +111,7 @@ impl PartialEq<&str> for SystemId {
 
 /// What a System serves. TS: 'llm'|'image'|'tts'|'stt'|'video'.
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SystemKind {
     #[default]
@@ -158,6 +163,7 @@ impl fmt::Display for SystemKind {
 
 /// LLM System class (recommendation grouping, default labels). TS: 'fast'|'deep'|'max'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum LlmClass {
     /// System 1: fast, cheap, always on.
@@ -195,6 +201,7 @@ impl LlmClass {
 
 /// A System's tab status. TS: 'not-set'|'invalid'|'offline'|'starting'|'online'|'busy'|'stopping'|'fault'|'unreachable'.
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum SystemStatus {
     /// No preset selected.
@@ -237,6 +244,7 @@ impl SystemStatus {
 
 /// The server family a preset launches; selects telemetry, defaults and managed env (SPEC section 6).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum AdapterId {
     #[default]
     #[serde(rename = "llama.cpp")]
@@ -247,55 +255,63 @@ pub enum AdapterId {
     Vllm,
     #[serde(rename = "openai")]
     OpenAi,
+    /// audio.cpp `audiocpp_server` (text to speech; one `--config` JSON names its models).
+    #[serde(rename = "audiocpp")]
+    AudioCpp,
     /// Any other server (TTS/STT/video servers, ComfyUI...): kind required, port or health required.
     #[serde(rename = "generic")]
     Generic,
 }
 
 impl AdapterId {
-    pub const ALL: [AdapterId; 5] = [AdapterId::LlamaCpp, AdapterId::SdCpp, AdapterId::Vllm, AdapterId::OpenAi, AdapterId::Generic];
+    pub const ALL: [AdapterId; 6] =
+        [AdapterId::LlamaCpp, AdapterId::SdCpp, AdapterId::Vllm, AdapterId::OpenAi, AdapterId::AudioCpp, AdapterId::Generic];
 
-    /// The serde / klif.toml value, also the display label: "llama.cpp", "sd.cpp", "vllm", "openai", "generic".
+    /// The serde / klif.toml value, also the display label: "llama.cpp", "sd.cpp", "vllm", "openai", "audiocpp",
+    /// "generic".
     pub fn as_str(self) -> &'static str {
         match self {
             AdapterId::LlamaCpp => "llama.cpp",
             AdapterId::SdCpp => "sd.cpp",
             AdapterId::Vllm => "vllm",
             AdapterId::OpenAi => "openai",
+            AdapterId::AudioCpp => "audiocpp",
             AdapterId::Generic => "generic",
         }
     }
 
-    /// Parse the klif.toml / CLI value (case-insensitive; also "llamacpp", "sdcpp", "openai-compatible").
+    /// Parse the klif.toml / CLI value (case-insensitive; also "llamacpp", "sdcpp", "openai-compatible", "audio.cpp").
     pub fn parse(s: &str) -> Option<AdapterId> {
         Some(match s.trim().to_ascii_lowercase().as_str() {
             "llama.cpp" | "llamacpp" | "llama-cpp" => AdapterId::LlamaCpp,
             "sd.cpp" | "sdcpp" | "sd-cpp" => AdapterId::SdCpp,
             "vllm" => AdapterId::Vllm,
             "openai" | "openai-compatible" => AdapterId::OpenAi,
+            "audiocpp" | "audio.cpp" | "audio-cpp" => AdapterId::AudioCpp,
             "generic" => AdapterId::Generic,
             _ => return None,
         })
     }
 
     /// Port used when neither the preset nor its args name one (generic: none; that is an error unless the
-    /// preset gives `health`).
+    /// preset gives `health`). audio.cpp: its own default, 8080.
     pub fn default_port(self) -> Option<u16> {
         match self {
             AdapterId::LlamaCpp => Some(7030),
             AdapterId::SdCpp => Some(1234),
             AdapterId::Vllm => Some(8000),
-            AdapterId::OpenAi => Some(8080),
+            AdapterId::OpenAi | AdapterId::AudioCpp => Some(8080),
             AdapterId::Generic => None,
         }
     }
 
-    /// Kind when the preset does not say: image for sd.cpp, llm for llama.cpp/vllm/openai, none for generic
-    /// (required there).
+    /// Kind when the preset does not say: image for sd.cpp (`kind = "video"` for sd.cpp video), llm for
+    /// llama.cpp/vllm/openai, tts for audiocpp, none for generic (required there).
     pub fn default_kind(self) -> Option<SystemKind> {
         match self {
             AdapterId::SdCpp => Some(SystemKind::Image),
             AdapterId::LlamaCpp | AdapterId::Vllm | AdapterId::OpenAi => Some(SystemKind::Llm),
+            AdapterId::AudioCpp => Some(SystemKind::Tts),
             AdapterId::Generic => None,
         }
     }
@@ -305,7 +321,7 @@ impl AdapterId {
         match self {
             AdapterId::LlamaCpp => Some("LLAMA_API_KEY"),
             AdapterId::Vllm => Some("VLLM_API_KEY"),
-            AdapterId::SdCpp | AdapterId::OpenAi | AdapterId::Generic => None,
+            AdapterId::SdCpp | AdapterId::OpenAi | AdapterId::AudioCpp | AdapterId::Generic => None,
         }
     }
 }
@@ -318,6 +334,7 @@ impl fmt::Display for AdapterId {
 
 /// How KLIF decides the server is ready. TS: `{type:'auto'} | {type:'http', path} | {type:'tcp'}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HealthCheck {
     /// The adapter's default chain (llama.cpp/vllm `/health`, sd.cpp TCP, openai `/health` → `/v1/models` → TCP).
@@ -345,6 +362,7 @@ impl HealthCheck {
 
 /// Availability of a preset's (or a System's) launch. TS: 'ready'|'unsupported'|'invalid'|'exe-missing'|'model-missing'|'busy'.
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Availability {
     Ready,
@@ -363,6 +381,7 @@ pub enum Availability {
 // ------------------------------------------------------------------------------------------- model
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ModelRef {
@@ -397,6 +416,7 @@ pub struct ModelRef {
 
 /// The model's shape from the server log (llama.cpp `print_info`), mirrored in app/ui types.ts.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ModelArch {
@@ -419,6 +439,7 @@ pub struct ModelArch {
 // ----------------------------------------------------------------------------------- command view
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum IssueLevel {
     Error,
@@ -428,6 +449,7 @@ pub enum IssueLevel {
 
 /// One validation finding. Errors block Launch (Availability::Invalid); warnings never do.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Issue {
@@ -453,6 +475,7 @@ impl Issue {
 
 /// One environment row of a command, as shown (never the value of a secret).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct EnvView {
@@ -473,6 +496,7 @@ pub struct EnvView {
 /// line (`klif_common::cmdline::render` of `program` + `args`), `{env:X}` shown as `%X%`. For an external preset
 /// (`endpoint`) there is no command: `external` holds the endpoint URL and `program`/`args` are empty.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct CommandView {
@@ -497,6 +521,7 @@ pub struct CommandView {
 
 /// One param choice as offered by the UI.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ParamOption {
@@ -506,6 +531,7 @@ pub struct ParamOption {
 
 /// A preset param (`[presets.X.params.NAME]`) with the System's current selection.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ParamView {
@@ -520,6 +546,7 @@ pub struct ParamView {
 
 /// The latest benchmark of a preset (from `<data_dir>\bench\<preset-id>.json`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct BenchSummary {
@@ -536,6 +563,12 @@ pub struct BenchSummary {
     pub decode_tps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seconds_per_image: Option<f64>,
+    /// TTS: audio seconds per wall second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tts_rtf: Option<f64>,
+    /// STT: audio seconds per wall second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_rtf: Option<f64>,
     #[serde(rename = "peakVramGiB", skip_serializing_if = "Option::is_none")]
     pub peak_vram_gib: Option<f64>,
     #[serde(rename = "spillMiB", skip_serializing_if = "Option::is_none")]
@@ -549,6 +582,7 @@ pub struct BenchSummary {
 
 /// A preset as listed (Tune picker, `klif-cli presets list`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct PresetInfo {
@@ -583,6 +617,7 @@ pub struct PresetInfo {
 
 /// One preset in full, for the Tune editor (`klif_preset_get`). `spec` env values that are secret are MASK.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PresetDetail {
     pub id: String,
@@ -599,6 +634,7 @@ pub struct PresetDetail {
 // --------------------------------------------------------------------- recommendations / downloads
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum RecFileRole {
     Model,
@@ -608,6 +644,7 @@ pub enum RecFileRole {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct RecFile {
@@ -620,6 +657,7 @@ pub struct RecFile {
 
 /// Measured on one machine (a starting point, not a promise).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Measured {
@@ -640,6 +678,7 @@ pub struct Measured {
 /// A model recommendation for a kind (and LLM class) of System (data, with a disclaimer; downloads only on
 /// explicit request).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct RecommendationInfo {
@@ -670,6 +709,7 @@ pub struct RecommendationInfo {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadState {
     Running,
@@ -682,6 +722,7 @@ pub enum DownloadState {
 
 /// One file of a recommendation being downloaded (one entry per (id, file)).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct DownloadInfo {
@@ -697,10 +738,291 @@ pub struct DownloadInfo {
     pub error: Option<String>,
 }
 
+// ------------------------------------------------------------------------------------------ hardware
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    #[default]
+    Gpu,
+    Cpu,
+}
+
+/// Where a device's FP32 TFLOPS number comes from.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum TflopsSource {
+    /// The embedded GPU table (vendor-published peak).
+    Table,
+    /// `[hardware] tflops` in klif.toml.
+    Config,
+    /// Cores x FLOP per cycle x clock (CPUs).
+    Computed,
+    #[default]
+    Unknown,
+}
+
+/// One GPU or CPU of a machine, with its theoretical peak FP32 throughput.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct ComputeDevice {
+    /// "VEN:DEV", "VEN:DEV#n" (n-th identical adapter) or "cpu".
+    pub id: String,
+    /// Display name: "RX 9070 XT", "Ryzen 9 9950X3D".
+    pub name: String,
+    pub kind: DeviceKind,
+    /// An integrated GPU (shares system memory).
+    pub integrated: bool,
+    /// Part of the memory pool and of the TFLOPS total (integrated GPUs only on machines without a discrete GPU;
+    /// `[hardware] exclude / include` override).
+    pub counted: bool,
+    #[serde(rename = "vramGiB", skip_serializing_if = "Option::is_none")]
+    pub vram_gib: Option<f64>,
+    /// The part of `vram_gib` that is system memory (a counted integrated GPU), already inside `ram_total_gib`.
+    #[serde(rename = "sharedGiB", skip_serializing_if = "Option::is_none")]
+    pub shared_gib: Option<f64>,
+    /// "GDDR6", "HBM3", "LPDDR5X (unified)".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    /// Theoretical peak FP32 TFLOPS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tflops_fp32: Option<f64>,
+    pub tflops_source: TflopsSource,
+    /// "64 CU, 2970 MHz" / "16 cores, AVX-512, 4.3 GHz".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// A machine's static compute and memory facts (no live load).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct HardwareInfo {
+    /// Every GPU, counted or not, in enumeration order.
+    pub gpus: Vec<ComputeDevice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<ComputeDevice>,
+    #[serde(rename = "ramTotalGiB")]
+    pub ram_total_gib: f64,
+    /// Sum of the counted GPUs' memory: the fast-memory pool.
+    #[serde(rename = "vramPoolGiB")]
+    pub vram_pool_gib: f64,
+    /// The largest single counted GPU (image / audio / video runtimes do not split across cards).
+    #[serde(rename = "largestGpuGiB")]
+    pub largest_gpu_gib: f64,
+    /// The pool is unified memory (a machine whose only GPU is integrated).
+    pub unified: bool,
+    /// Sum over the counted devices whose TFLOPS are known.
+    pub tflops_fp32: f64,
+    /// Counted devices without a TFLOPS number (shown as "+?").
+    pub tflops_unknown: u32,
+}
+
+// --------------------------------------------------------------------------------------- suggestions
+
+/// What a suggestion is for: an LLM class or a non-LLM kind.
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum SuggestSlot {
+    #[default]
+    Fast,
+    Deep,
+    Max,
+    Image,
+    Tts,
+    Stt,
+    Video,
+}
+
+/// The suggested model for one slot on this machine (an estimate from the embedded pool; `rec` None = nothing fits).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct Suggestion {
+    pub slot: SuggestSlot,
+    pub kind: SystemKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class: Option<LlmClass>,
+    /// Recommendation id (`<model>.<quant>`) to download / adopt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rec: Option<String>,
+    /// "Qwen 3.8 27B" ("" when nothing fits).
+    pub model: String,
+    /// "UD-Q4_K_XL".
+    pub quant: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx: Option<u32>,
+    /// KV cache type: "f16", "q8_0".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv: Option<String>,
+    #[serde(rename = "estVramGiB")]
+    pub est_vram_gib: f64,
+    #[serde(rename = "estRamGiB")]
+    pub est_ram_gib: f64,
+    #[serde(rename = "budgetVramGiB")]
+    pub budget_vram_gib: f64,
+    #[serde(rename = "budgetRamGiB")]
+    pub budget_ram_gib: f64,
+    /// "experts in RAM", "layers in RAM".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placement: Option<String>,
+    /// Why nothing fits, or what to watch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+// ------------------------------------------------------------------------------------------- records
+
+/// A record metric. `*Tps` and `*Rtf` are best when highest, `*S` when lowest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum RecordMetric {
+    /// Generated tokens per second (>= 128 tokens).
+    DecodeTps,
+    /// Prompt tokens per second, cache excluded (>= 1024 tokens).
+    PrefillTps,
+    /// Time to first token, any request.
+    TtftS,
+    /// Seconds per finished image.
+    ImageS,
+    /// Audio seconds per wall second (TTS).
+    TtsRtf,
+    /// Audio seconds per wall second (STT).
+    SttRtf,
+    /// Seconds per finished video job.
+    VideoS,
+}
+
+impl RecordMetric {
+    /// Higher is better (`*Tps`, `*Rtf`); otherwise lower is better.
+    pub fn higher_is_better(self) -> bool {
+        matches!(self, RecordMetric::DecodeTps | RecordMetric::PrefillTps | RecordMetric::TtsRtf | RecordMetric::SttRtf)
+    }
+}
+
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum RecordSource {
+    #[default]
+    Live,
+    Bench,
+}
+
+/// The model a record belongs to: one exact file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct RecordModel {
+    /// SHA-256 of the model file (the first part of a split GGUF). None until hashed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// File name, e.g. "Qwen3.8-27B-UD-Q4_K_XL.gguf".
+    pub file: String,
+    /// "Qwen 3.8 27B" (the preset's model name, else the file stem).
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quant: Option<String>,
+    /// "unsloth/Qwen3.8-27B-GGUF@<sha>" when the file matches a known recommendation file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+}
+
+/// One best value with the conditions it was reached under.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct RecordValue {
+    pub value: f64,
+    /// Epoch seconds.
+    pub at: f64,
+    pub source: RecordSource,
+    /// The context the server was launched with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ctx: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gen_tokens: Option<u64>,
+    /// KV cache type from the launch args ("q8_0").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// Video frames of the job (videoS).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u32>,
+    /// GPU names it ran on.
+    pub gpus: Vec<String>,
+    /// "b6500".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_build: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    pub klif_version: String,
+    /// The machine's FP32 TFLOPS total at the time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tflops_fp32: Option<f64>,
+}
+
+/// The best values of one model file on one backend on one machine.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct RecordEntry {
+    /// "<machine>|<sha256 or file:size>|<backend>".
+    pub key: String,
+    /// Remote node id (None: this machine).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    /// `[node] name` of the machine, else "This machine" (never the host name).
+    pub machine: String,
+    pub kind: SystemKind,
+    pub model: RecordModel,
+    /// "HIP", "Vulkan", "CUDA", "CPU", "Metal", "" (unknown).
+    pub backend: String,
+    pub best: BTreeMap<RecordMetric, RecordValue>,
+}
+
+/// A broken record (the last few, for the "new record" moment).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct RecordEvent {
+    pub key: String,
+    pub metric: Option<RecordMetric>,
+    /// The previous best (None: the first value for this key and metric).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old: Option<f64>,
+    pub new: f64,
+    pub at: f64,
+}
+
 // ---------------------------------------------------------------------------------------- config
 
 /// Where the API key comes from and whether one is set (never the key).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ApiKeyInfo {
@@ -711,6 +1033,7 @@ pub struct ApiKeyInfo {
 
 /// Facts about the configuration the engine runs with.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ConfigInfo {
@@ -732,6 +1055,7 @@ pub struct ConfigInfo {
 // ----------------------------------------------------------------------------------------- systems view
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum VramSource {
     /// The composition of the last live session of this exact preset hash.
@@ -743,6 +1067,7 @@ pub enum VramSource {
 
 /// One System (a tab): its configuration, what it would run, and its live state.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct System {
@@ -812,6 +1137,7 @@ pub struct System {
 // ----------------------------------------------------------------------------------------- session
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {
     #[default]
@@ -823,6 +1149,7 @@ pub enum Phase {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum LoadStepId {
     #[default]
@@ -835,6 +1162,7 @@ pub enum LoadStepId {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum StepState {
     Done,
@@ -845,6 +1173,7 @@ pub enum StepState {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct LoadStep {
@@ -856,6 +1185,7 @@ pub struct LoadStep {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct LoadProgress {
@@ -865,6 +1195,7 @@ pub struct LoadProgress {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Fault {
@@ -880,6 +1211,7 @@ pub struct Fault {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Ended {
     #[default]
@@ -888,6 +1220,7 @@ pub enum Ended {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct LastSession {
@@ -909,6 +1242,7 @@ pub struct LastSession {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct RequestRecord {
@@ -922,6 +1256,7 @@ pub struct RequestRecord {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum LlmActivity {
     #[default]
@@ -931,6 +1266,7 @@ pub enum LlmActivity {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Prefill {
@@ -944,6 +1280,7 @@ pub struct Prefill {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ContextFill {
@@ -952,6 +1289,7 @@ pub struct ContextFill {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Spec {
@@ -962,6 +1300,7 @@ pub struct Spec {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Totals {
@@ -971,6 +1310,7 @@ pub struct Totals {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct LlmLive {
@@ -986,6 +1326,7 @@ pub struct LlmLive {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ImageJob {
@@ -994,9 +1335,16 @@ pub struct ImageJob {
     pub width: u32,
     pub height: u32,
     pub edit: bool,
+    /// Sampling steps, when the log showed them (sd.cpp progress bar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// A video job (sd.cpp `generate_video WxHxT`): its frame count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ImageActivity {
     #[default]
@@ -1005,6 +1353,7 @@ pub enum ImageActivity {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ImageLive {
@@ -1018,9 +1367,13 @@ pub struct ImageLive {
     pub edit: bool,
     pub recent: Vec<ImageJob>,
     pub images_this_session: u64,
+    /// Frames of the video job in flight (or the last one), for sd.cpp video.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Endpoint {
@@ -1029,6 +1382,7 @@ pub struct Endpoint {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Session {
@@ -1041,7 +1395,9 @@ pub struct Session {
     pub loading: Option<LoadProgress>,
     pub fault: Option<Fault>,
     /// The live part is ONE of `llm` / `image` / `generic` (the others are null): llm for kind llm (llama.cpp,
-    /// vllm), image for kind image (sd.cpp), generic for tts / stt / video and adapters without a parser.
+    /// vllm), image for kind image (sd.cpp), generic for tts / stt / video and adapters without a parser. One
+    /// exception: a video System on sd.cpp has `generic` AND `image` (steps, the job in flight, recent jobs with
+    /// their frames).
     pub llm: Option<LlmLive>,
     pub image: Option<ImageLive>,
     #[serde(default)]
@@ -1062,6 +1418,7 @@ pub struct Session {
 
 /// What KLIF can tell about a server without a dedicated parser (tts / stt / video, generic, openai).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct GenericLive {
@@ -1075,9 +1432,14 @@ pub struct GenericLive {
     /// The model id the server reports (/v1/models).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    /// Whether the model's weights are resident (audio.cpp `/v1/models` `loaded`; lazy loading and
+    /// `--idle-unload-ms` unload them). None: the server does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_loaded: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum VramLayerId {
     Weights,
@@ -1090,6 +1452,7 @@ pub enum VramLayerId {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct VramLayer {
@@ -1099,6 +1462,7 @@ pub struct VramLayer {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct GpuMemory {
@@ -1133,6 +1497,7 @@ pub struct GpuMemory {
 
 /// types.ts GpuMemory.dormant. Explicit renames for the "GiB" fields (camelCase would give "Gib").
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct Dormant {
@@ -1144,6 +1509,7 @@ pub struct Dormant {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct MachineStats {
@@ -1158,6 +1524,7 @@ pub struct MachineStats {
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum HostKind {
     #[default]
@@ -1166,6 +1533,7 @@ pub enum HostKind {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct HostInfo {
@@ -1179,6 +1547,7 @@ pub struct HostInfo {
 
 /// Panel mode: the read-only mini layout on the small status screen (see types.ts HostInfo.panel).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct PanelInfo {
@@ -1193,6 +1562,7 @@ pub struct PanelInfo {
 
 /// A remote node's connection state. TS: 'connecting'|'online'|'offline'|'unauthorized'|'incompatible'.
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum NodeState {
     /// First contact not finished yet.
@@ -1206,6 +1576,7 @@ pub enum NodeState {
 
 /// One `[nodes.<id>]` entry as seen from here.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct NodeView {
@@ -1225,6 +1596,8 @@ pub struct NodeView {
     pub gpus: Vec<GpuMemory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<HardwareInfo>,
     /// The node's presets (masked), `node` set to this node's id.
     #[serde(default)]
     pub presets: Vec<PresetInfo>,
@@ -1235,6 +1608,7 @@ pub struct NodeView {
 // -------------------------------------------------------------------------------------- view model
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct ViewModel {
@@ -1262,12 +1636,32 @@ pub struct ViewModel {
     pub presets: Vec<PresetInfo>,
     #[serde(default)]
     pub recommendations: Vec<RecommendationInfo>,
+    /// This machine's compute and memory.
+    #[serde(default)]
+    pub hardware: HardwareInfo,
+    /// The suggested model per slot for this machine (estimates).
+    #[serde(default)]
+    pub suggestions: Vec<Suggestion>,
+    /// Best values per model file and backend, this machine and the nodes.
+    #[serde(default)]
+    pub records: Vec<RecordEntry>,
+    /// The last broken records, newest last.
+    #[serde(default)]
+    pub record_events: Vec<RecordEvent>,
+    /// Changes whenever `records` / `record_events` change (0: unknown). A node's `snapshot {recordsRev}` leaves
+    /// both lists empty when the caller already holds that revision.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub records_rev: u64,
     #[serde(default)]
     pub downloads: Vec<DownloadInfo>,
     #[serde(default)]
     pub config: ConfigInfo,
     #[serde(default)]
     pub nodes: Vec<NodeView>,
+}
+
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
 }
 
 // ----------------------------------------------------------------------------------------- actions
@@ -1278,14 +1672,15 @@ fn is_false(b: &bool) -> bool {
 
 /// The right an action (or protocol method) needs (SPEC 16.11, default-deny). TS: 'view'|'launch'|'edit'|'local-only'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum Right {
-    /// hello, snapshot, status, preset, plan: every authenticated peer.
+    /// hello, snapshot, status, preset, plan, records_history: every authenticated peer.
     View,
     /// Launch, Stop, StopAll, Restart, Dismiss, UsePreset, SetParam.
     Launch,
     /// SavePreset, DeletePreset, AddSystem, RemoveSystem, UpdateSystem, downloads, AdoptRecommendation,
-    /// command_preview: arbitrary command execution on that machine. Implies Launch.
+    /// ForgetRecord, command_preview: arbitrary command execution on that machine. Implies Launch.
     Edit,
     /// Never over the network: Select, diag.
     LocalOnly,
@@ -1315,7 +1710,7 @@ impl Right {
     /// methods are LocalOnly (default-deny).
     pub fn for_method(method: &str) -> Right {
         match method {
-            "hello" | "snapshot" | "status" | "preset" | "plan" => Right::View,
+            "hello" | "snapshot" | "status" | "preset" | "plan" | "records_history" => Right::View,
             "command_preview" => Right::Edit,
             _ => Right::LocalOnly,
         }
@@ -1444,6 +1839,18 @@ pub enum Action {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<SystemId>,
+        /// Context from a suggestion (else the recommendation's).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ctx: Option<u32>,
+        /// KV cache type from a suggestion ("q8_0").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kv: Option<String>,
+    },
+    /// Remove a junk record entry (`RecordEntry.key` as that machine knows it; `node` = a remote node's entry).
+    ForgetRecord {
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
     },
 }
 
@@ -1467,6 +1874,7 @@ impl Action {
             Action::DownloadRecommendation { .. } => "downloadRecommendation",
             Action::CancelDownload { .. } => "cancelDownload",
             Action::AdoptRecommendation { .. } => "adoptRecommendation",
+            Action::ForgetRecord { .. } => "forgetRecord",
         }
     }
 
@@ -1488,7 +1896,8 @@ impl Action {
             | Action::DeletePreset { .. }
             | Action::AddSystem { .. }
             | Action::DownloadRecommendation { .. }
-            | Action::CancelDownload { .. } => None,
+            | Action::CancelDownload { .. }
+            | Action::ForgetRecord { .. } => None,
         }
     }
 
@@ -1516,13 +1925,14 @@ impl Action {
             | Action::DeletePreset { .. }
             | Action::AddSystem { .. }
             | Action::DownloadRecommendation { .. }
-            | Action::CancelDownload { .. } => {}
+            | Action::CancelDownload { .. }
+            | Action::ForgetRecord { .. } => {}
         }
         a
     }
 
-    /// The explicit `node` field (SavePreset, DeletePreset, AddSystem, DownloadRecommendation, CancelDownload),
-    /// else the node of the first `"<node>/<id>"` System id; None = local.
+    /// The explicit `node` field (SavePreset, DeletePreset, AddSystem, DownloadRecommendation, CancelDownload,
+    /// ForgetRecord), else the node of the first `"<node>/<id>"` System id; None = local.
     pub fn node(&self) -> Option<&str> {
         self.explicit_node().or_else(|| self.system_ids().into_iter().find_map(|id| id.node()))
     }
@@ -1533,7 +1943,8 @@ impl Action {
             | Action::DeletePreset { node, .. }
             | Action::AddSystem { node, .. }
             | Action::DownloadRecommendation { node, .. }
-            | Action::CancelDownload { node, .. } => node.as_deref().map(str::trim).filter(|n| !n.is_empty()),
+            | Action::CancelDownload { node, .. }
+            | Action::ForgetRecord { node, .. } => node.as_deref().map(str::trim).filter(|n| !n.is_empty()),
             _ => None,
         }
     }
@@ -1562,7 +1973,8 @@ impl Action {
             | Action::DeletePreset { node, .. }
             | Action::AddSystem { node, .. }
             | Action::DownloadRecommendation { node, .. }
-            | Action::CancelDownload { node, .. } => *node = None,
+            | Action::CancelDownload { node, .. }
+            | Action::ForgetRecord { node, .. } => *node = None,
             _ => {}
         }
         a
@@ -1586,7 +1998,8 @@ impl Action {
             | Action::UpdateSystem { .. }
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
-            | Action::AdoptRecommendation { .. } => Right::Edit,
+            | Action::AdoptRecommendation { .. }
+            | Action::ForgetRecord { .. } => Right::Edit,
         }
     }
 
@@ -1599,6 +2012,7 @@ impl Action {
             | Action::DownloadRecommendation { id, .. }
             | Action::CancelDownload { id, .. }
             | Action::AdoptRecommendation { id, .. } => out.push_str(&format!(" id={id}")),
+            Action::ForgetRecord { key, .. } => out.push_str(&format!(" key={key}")),
             Action::AddSystem { id, kind, .. } => {
                 out.push_str(&format!(" kind={kind}"));
                 if let Some(id) = id {
@@ -1669,9 +2083,14 @@ impl fmt::Debug for Action {
                 f.debug_struct("DownloadRecommendation").field("id", id).field("node", node).finish()
             }
             Action::CancelDownload { id, node } => f.debug_struct("CancelDownload").field("id", id).field("node", node).finish(),
-            Action::AdoptRecommendation { id, system } => {
-                f.debug_struct("AdoptRecommendation").field("id", id).field("system", system).finish()
-            }
+            Action::AdoptRecommendation { id, system, ctx, kv } => f
+                .debug_struct("AdoptRecommendation")
+                .field("id", id)
+                .field("system", system)
+                .field("ctx", ctx)
+                .field("kv", kv)
+                .finish(),
+            Action::ForgetRecord { key, node } => f.debug_struct("ForgetRecord").field("key", key).field("node", node).finish(),
         }
     }
 }

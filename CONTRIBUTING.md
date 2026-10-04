@@ -62,7 +62,8 @@ npm run check                      # svelte-check
   port, and so should you. If the port already answers, reuse that server. The Tauri `devUrl` points at it too.
 - In a browser the UI runs against a mock engine with scenarios, so you can work on the front end without any
   model server: `http://127.0.0.1:5193/?skin=cliff&scenario=multi` (also `kinds`, `empty`, `node-down`, `many`,
-  `invalid`, `downloads`; `size=mini` for the panel layout; `drawer=tune` opens the Tune drawer).
+  `invalid`, `downloads`, `record`; `size=mini` for the panel layout; `drawer=tune` opens the Tune drawer,
+  `drawer=records` the Records screen, also on the `R` key).
 - To run the real shell against the dev server, start the dev server first, then `cargo run` in `app\src-tauri`.
   A release build needs the `custom-protocol` feature, which `scripts\Build-Release.ps1` sets; use that script.
 - When you run `klif-cli` or the app, set `KLIF_CONFIG` to a scratch copy of `config\klif.example.toml`. Do not
@@ -109,17 +110,21 @@ See the repo map in [AGENTS.md](AGENTS.md). Two contracts to keep in step: the v
 - [ ] The adapter, kind and `health` are right for the server, and you ran it once.
 - [ ] Goes in `docs/presets.md` as an example or in a new doc, not in a user's `klif.toml`.
 
-### Recommendation (an entry in `crates/klif-catalog/data/recommendations.toml`)
+### Recommendation (a model or quant rung in `crates/klif-catalog/data/recommendations.toml`)
 
 - [ ] `hf_repo`, a 40-character `revision` and every file's `sha256` and `size` were checked against the Hugging
       Face API for that revision. A file that comes from another repo names its own `repo` and `revision`, and those
       were checked the same way.
-- [ ] `license` is the model's actual license; the PR notes any condition (gated, non-commercial).
-- [ ] `args` use placeholders (`{model}`, `{ctx}`, `{host}`, `{port}`), no network or secret flags, no `env`.
+- [ ] `license` is the model's actual license; `notes` and the PR say any condition (gated, non-commercial).
+- [ ] `args` use placeholders (`{model}`, `{ctx}`, `{host}`, `{port}`, `{file:<key>}`), no network or secret flags,
+      no `env`.
+- [ ] An LLM's `kv` comes from its `config.json` (the arithmetic is in a comment above it); `quality` follows the
+      scale in the file's header; an image rung's `min_vram_gib` / `offload_*` estimates are honest.
 - [ ] `measured` only if you ran `klif-cli bench` on a file whose SHA-256 equals the hub's; `hardware` and `backend`
       say what it was measured on, `date` is the day you measured.
-- [ ] `kind` (and `class` for an LLM) are right; `min_vram_gib` and `hardware_class` are honest.
-- [ ] The file still loads: `klif-cli models list` shows the entry and no warning about it.
+- [ ] A new model is listed in the right `[tiers]` list, at the place where it should win.
+- [ ] The file still loads: `klif-cli models list` shows the rungs and no warning about them, and `klif-cli suggest`
+      still makes sense on the hardware you know.
 
 ### Bench (measured numbers)
 

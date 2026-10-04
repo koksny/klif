@@ -1,7 +1,8 @@
 <script lang="ts">
   // The Command editor of the preset the tab shows. Header: the exact command line + Copy. Body: adapter, kind
-  // (generic), program, working dir, external endpoint, args, env, the grid (port, host, health, model, mmproj,
-  // ctx, GPU, managed, API key), a live preview (commandPreview, debounced 250 ms) with its issues, and
+  // (generic; image | video for sd.cpp), program, working dir, external endpoint, args, env, the grid (port, host,
+  // health, model, mmproj, ctx, GPU, managed, API key), a live preview (commandPreview, debounced 250 ms) with its
+  // issues, and
   // Revert · Save as new… · Apply. The draft is local (TuneState), never bound to the 2 Hz view model.
   import { ctxProblem, portProblem, specNumberProblem } from '../../model/presets';
   import { KIND_LABEL } from '../../model/systems';
@@ -24,7 +25,7 @@
   let { vm, system, viewedId }: Props = $props();
   const t = getTune();
 
-  const ADAPTERS: AdapterId[] = ['llama.cpp', 'sd.cpp', 'vllm', 'openai', 'generic'];
+  const ADAPTERS: AdapterId[] = ['llama.cpp', 'sd.cpp', 'vllm', 'openai', 'audiocpp', 'generic'];
   const KINDS: SystemKind[] = ['llm', 'image', 'tts', 'stt', 'video'];
 
   /** A loaded draft spec always carries its lists (TuneState makes sure), so the editors can bind them. */
@@ -214,6 +215,19 @@
         >
           <option value="">— required for generic —</option>
           {#each KINDS as k (k)}<option value={k}>{KIND_LABEL[k]}</option>{/each}
+        </select>
+      </label>
+    {:else if spec.adapter === 'sd.cpp'}
+      <!-- sd.cpp serves images, or video with a vid_gen model (MiniMax H3). -->
+      <label class="field">
+        <span>Kind</span>
+        <select
+          value={spec.kind === 'video' ? 'video' : ''}
+          disabled={!editable}
+          onchange={(e) => spec && (spec.kind = (e.currentTarget.value || undefined) as SystemKind | undefined)}
+        >
+          <option value="">{KIND_LABEL.image} (default)</option>
+          <option value="video">{KIND_LABEL.video}</option>
         </select>
       </label>
     {/if}

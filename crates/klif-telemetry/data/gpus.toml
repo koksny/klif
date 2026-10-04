@@ -1,0 +1,5655 @@
+# GPUs KLIF knows the theoretical peak FP32 throughput of (embedded in klif-telemetry with include_str!).
+#
+# One [[gpu]] per SKU:
+#   name         the name Windows (DXGI) reports for the adapter. Matching ignores case, spacing, (R) and (TM).
+#   vendor_id    PCI vendor id: 0x1002 AMD, 0x10DE NVIDIA, 0x8086 Intel.
+#   device_ids   PCI device ids of the SKU. Optional: an entry without them is found by name only.
+#   revisions    PCI revision ids, only for SKUs that share a device id with another entry and are told apart by it.
+#   shaders      stream processors / CUDA cores.
+#   boost_mhz    the vendor's boost (or "up to") clock the peak is computed at.
+#   tflops_fp32  the vendor's published peak single precision (FP32 vector) figure. AMD RDNA 3 / RDNA 4 numbers
+#                include dual-issue; NVIDIA's are shaders x 2 x boost clock. Absent = unknown, shown as "?".
+#   vram_gb      the board's memory, informational (KLIF shows the amount Windows reports).
+#   memory_type  GDDR6, GDDR6X, GDDR7, HBM3 ...
+#   integrated   true for a GPU on the CPU's memory. Absent = KLIF decides from the name and the memory size.
+#   aliases      other names Windows may report for the same SKU.
+#   source       the page the numbers come from.
+#
+# Lookup order: the normalized name first, then vendor + device id + revision, then vendor + device id when exactly
+# one entry carries it.
+
+schema = 1
+
+# -------------------------------------------------------------------------------------------------------- AMD desktop
+
+[[gpu]]
+name = "AMD Radeon VII"
+aliases = ["Radeon VII", "AMD Radeon(TM) VII"]
+vendor_id = 0x1002
+device_ids = [0x66AF]
+shaders = 3840
+boost_mhz = 1800
+tflops_fp32 = 13.8
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5700"
+aliases = ["Radeon RX 5700"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xC4]
+shaders = 2304
+boost_mhz = 1725
+tflops_fp32 = 7.95
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5700 XT"
+aliases = ["Radeon RX 5700 XT"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xC1, 0xC5]
+shaders = 2560
+boost_mhz = 1905
+tflops_fp32 = 9.75
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5700 XT 50th Anniversary"
+aliases = ["Radeon RX 5700 XT 50th Anniversary"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xC0]
+shaders = 2560
+boost_mhz = 1980
+tflops_fp32 = 10.14
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5300 XT"
+aliases = ["Radeon RX 5300 XT"]
+vendor_id = 0x1002
+shaders = 1408
+boost_mhz = 1845
+tflops_fp32 = 5.2
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Radeon_RX_5000_series"
+
+[[gpu]]
+name = "AMD Radeon RX 5500"
+aliases = ["Radeon RX 5500"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xC7]
+shaders = 1408
+boost_mhz = 1845
+tflops_fp32 = 5.2
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5500 XT"
+aliases = ["Radeon RX 5500 XT"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xC5]
+shaders = 1408
+boost_mhz = 1845
+tflops_fp32 = 5.2
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5500 XT"
+aliases = ["Radeon RX 5500 XT"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xC5]
+shaders = 1408
+boost_mhz = 1845
+tflops_fp32 = 5.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5600 OEM"
+aliases = ["Radeon RX 5600 OEM", "AMD Radeon RX 5600", "Radeon RX 5600"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xCB]
+shaders = 2048
+boost_mhz = 1560
+tflops_fp32 = 6.39
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5600 XT"
+aliases = ["Radeon RX 5600 XT"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xCA]
+shaders = 2304
+boost_mhz = 1560
+tflops_fp32 = 7.19
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5300"
+aliases = ["Radeon RX 5300"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xCF]
+shaders = 1408
+boost_mhz = 1645
+tflops_fp32 = 4.63
+vram_gb = 3
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6800"
+aliases = ["Radeon RX 6800"]
+vendor_id = 0x1002
+device_ids = [0x73BF]
+revisions = [0xC3]
+shaders = 3840
+boost_mhz = 2105
+tflops_fp32 = 16.17
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6800.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6800 XT"
+aliases = ["Radeon RX 6800 XT"]
+vendor_id = 0x1002
+device_ids = [0x73BF]
+revisions = [0xC1]
+shaders = 4608
+boost_mhz = 2250
+tflops_fp32 = 20.74
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6800-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6900 XT"
+aliases = ["Radeon RX 6900 XT"]
+vendor_id = 0x1002
+device_ids = [0x73AF, 0x73BF]
+revisions = [0xC0]
+shaders = 5120
+boost_mhz = 2250
+tflops_fp32 = 23.04
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6900-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6700 XT"
+aliases = ["Radeon RX 6700 XT"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xC1, 0xC5]
+shaders = 2560
+boost_mhz = 2581
+tflops_fp32 = 13.21
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6700-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6700"
+aliases = ["Radeon RX 6700"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xDF, 0xFF]
+shaders = 2304
+boost_mhz = 2450
+tflops_fp32 = 11.29
+vram_gb = 10
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6700.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6600 XT"
+aliases = ["Radeon RX 6600 XT"]
+vendor_id = 0x1002
+device_ids = [0x73FF]
+revisions = [0xC1]
+shaders = 2048
+boost_mhz = 2589
+tflops_fp32 = 10.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6600-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6600"
+aliases = ["Radeon RX 6600"]
+vendor_id = 0x1002
+device_ids = [0x73FF]
+revisions = [0xC7]
+shaders = 1792
+boost_mhz = 2491
+tflops_fp32 = 8.93
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6600.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6300"
+aliases = ["Radeon RX 6300"]
+vendor_id = 0x1002
+device_ids = [0x7424]
+shaders = 768
+boost_mhz = 2040
+tflops_fp32 = 3.13
+vram_gb = 2
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/Radeon_RX_6000_series"
+
+[[gpu]]
+name = "AMD Radeon RX 6400"
+aliases = ["Radeon RX 6400"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xC7, 0xD7]
+shaders = 768
+boost_mhz = 2321
+tflops_fp32 = 3.57
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6400.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6500 XT"
+aliases = ["Radeon RX 6500 XT"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xC1]
+shaders = 1024
+boost_mhz = 2815
+tflops_fp32 = 5.77
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6500-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6500 XT"
+aliases = ["Radeon RX 6500 XT"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xC1]
+shaders = 1024
+boost_mhz = 2815
+tflops_fp32 = 5.77
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6500-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6650 XT"
+aliases = ["Radeon RX 6650 XT"]
+vendor_id = 0x1002
+device_ids = [0x73EF]
+revisions = [0xC1]
+shaders = 2048
+boost_mhz = 2635
+tflops_fp32 = 10.79
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6650-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6750 XT"
+aliases = ["Radeon RX 6750 XT"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xC0]
+shaders = 2560
+boost_mhz = 2600
+tflops_fp32 = 13.31
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6750-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6950 XT"
+aliases = ["Radeon RX 6950 XT"]
+vendor_id = 0x1002
+device_ids = [0x73A5]
+shaders = 5120
+boost_mhz = 2310
+tflops_fp32 = 23.65
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/6000-series/amd-radeon-rx-6950-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7900 XT"
+aliases = ["Radeon RX 7900 XT"]
+vendor_id = 0x1002
+device_ids = [0x744C]
+revisions = [0xCC]
+shaders = 5376
+boost_mhz = 2400
+tflops_fp32 = 51.6
+vram_gb = 20
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7900xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7900 XTX"
+aliases = ["Radeon RX 7900 XTX"]
+vendor_id = 0x1002
+device_ids = [0x744C]
+revisions = [0xC8]
+shaders = 6144
+boost_mhz = 2500
+tflops_fp32 = 61.4
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7900xtx.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7600"
+aliases = ["Radeon RX 7600"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0xCF]
+shaders = 2048
+boost_mhz = 2655
+tflops_fp32 = 21.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7600.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7900 GRE"
+aliases = ["Radeon RX 7900 GRE"]
+vendor_id = 0x1002
+device_ids = [0x744C]
+revisions = [0xCE]
+shaders = 5120
+boost_mhz = 2245
+tflops_fp32 = 46
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7900-gre.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7700 XT"
+aliases = ["Radeon RX 7700 XT"]
+vendor_id = 0x1002
+device_ids = [0x747E]
+revisions = [0xFF]
+shaders = 3456
+boost_mhz = 2544
+tflops_fp32 = 35.2
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7700-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7800 XT"
+aliases = ["Radeon RX 7800 XT"]
+vendor_id = 0x1002
+device_ids = [0x747E]
+revisions = [0xC8]
+shaders = 3840
+boost_mhz = 2430
+tflops_fp32 = 37.3
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7800-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6750 GRE 10GB"
+aliases = ["Radeon RX 6750 GRE 10GB"]
+vendor_id = 0x1002
+device_ids = [0x73FF]
+revisions = [0xDF]
+shaders = 2304
+boost_mhz = 2450
+tflops_fp32 = 11.29
+vram_gb = 10
+memory_type = "GDDR6"
+source = "https://www.profesionalreview.com/2023/10/18/rx-6750-gre-10-gb-12-gb/"
+
+[[gpu]]
+name = "AMD Radeon RX 6750 GRE 12GB"
+aliases = ["Radeon RX 6750 GRE 12GB"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xD5, 0xE5]
+shaders = 2560
+boost_mhz = 2581
+tflops_fp32 = 13.21
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.profesionalreview.com/2023/10/18/rx-6750-gre-10-gb-12-gb/"
+
+[[gpu]]
+name = "AMD Radeon RX 6600 LE"
+aliases = ["Radeon RX 6600 LE"]
+vendor_id = 0x1002
+device_ids = [0x73FF]
+revisions = [0xCF]
+shaders = 1792
+boost_mhz = 2495
+tflops_fp32 = 8.94
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.club386.com/lenovo-aims-amd-radeon-rx-6600-le-gpu-at-china"
+
+[[gpu]]
+name = "AMD Radeon RX 7600 XT"
+aliases = ["Radeon RX 7600 XT"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0xC0]
+shaders = 2048
+boost_mhz = 2755
+tflops_fp32 = 22.6
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7600-xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7650 GRE"
+aliases = ["Radeon RX 7650 GRE"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0xC2]
+shaders = 2048
+boost_mhz = 2695
+tflops_fp32 = 22.08
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/zh-cn/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7650-gre.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9070"
+aliases = ["Radeon RX 9070"]
+vendor_id = 0x1002
+device_ids = [0x7550]
+revisions = [0xC3]
+shaders = 3584
+boost_mhz = 2520
+tflops_fp32 = 36.1
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9070.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9070 XT"
+aliases = ["Radeon RX 9070 XT"]
+vendor_id = 0x1002
+device_ids = [0x7550]
+revisions = [0xC0]
+shaders = 4096
+boost_mhz = 2970
+tflops_fp32 = 48.7
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9070xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9070 GRE"
+aliases = ["Radeon RX 9070 GRE"]
+vendor_id = 0x1002
+device_ids = [0x7550]
+revisions = [0xC2]
+shaders = 3072
+boost_mhz = 2790
+tflops_fp32 = 34.3
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9070-gre.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9060 XT"
+aliases = ["Radeon RX 9060 XT"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xC0]
+shaders = 2048
+boost_mhz = 3130
+tflops_fp32 = 25.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9060xt-8gb.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9060 XT"
+aliases = ["Radeon RX 9060 XT"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xC0]
+shaders = 2048
+boost_mhz = 3130
+tflops_fp32 = 25.6
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9060xt.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7400"
+aliases = ["Radeon RX 7400"]
+vendor_id = 0x1002
+device_ids = [0x7499]
+revisions = [0xC0]
+shaders = 1792
+boost_mhz = 1100
+tflops_fp32 = 7.88
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7400.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9060"
+aliases = ["Radeon RX 9060"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xC7]
+shaders = 1792
+boost_mhz = 2990
+tflops_fp32 = 21.4
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9060.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7700"
+aliases = ["Radeon RX 7700"]
+vendor_id = 0x1002
+device_ids = [0x747E]
+revisions = [0xDB]
+shaders = 2560
+boost_mhz = 2459
+tflops_fp32 = 25.2
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7700.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9060 XT LP"
+aliases = ["Radeon RX 9060 XT LP"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xC1]
+shaders = 2048
+boost_mhz = 3050
+tflops_fp32 = 25
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9060xt-lp.html"
+
+[[gpu]]
+name = "AMD Steam Machine"
+aliases = ["Steam Machine", "AMD Radeon Graphics"]
+vendor_id = 0x1002
+device_ids = [0x7481]
+shaders = 1792
+boost_mhz = 2450
+tflops_fp32 = 17.56
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://store.steampowered.com/steammachine"
+
+[[gpu]]
+name = "AMD Radeon RX 9050"
+aliases = ["Radeon RX 9050"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xCF]
+shaders = 1024
+boost_mhz = 2600
+tflops_fp32 = 10.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9050.html"
+
+[[gpu]]
+name = "AMD Radeon RX 9050 4GB"
+aliases = ["Radeon RX 9050 4GB"]
+vendor_id = 0x1002
+device_ids = [0x7590]
+revisions = [0xDF]
+shaders = 1024
+boost_mhz = 2600
+tflops_fp32 = 10.6
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/desktops/radeon/9000-series/amd-radeon-rx-9050-4gb.html"
+
+# ---------------------------------------------------------------------------------------------------- AMD workstation
+
+[[gpu]]
+name = "AMD Radeon Pro WX 4100"
+aliases = ["Radeon Pro WX 4100", "AMD Radeon PRO WX 4100"]
+vendor_id = 0x1002
+device_ids = [0x67E3]
+shaders = 1024
+boost_mhz = 1201
+tflops_fp32 = 2.46
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 5100"
+aliases = ["Radeon Pro WX 5100", "AMD Radeon PRO WX 5100", "AMD Radeon Pro WX 5100 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x67C7]
+shaders = 1792
+boost_mhz = 1085
+tflops_fp32 = 3.89
+vram_gb = 8
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 7100"
+aliases = ["Radeon Pro WX 7100", "AMD Radeon PRO WX 7100", "AMD Radeon Pro WX 7100 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x67C4]
+shaders = 2304
+boost_mhz = 1243
+tflops_fp32 = 5.73
+vram_gb = 8
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 2100"
+aliases = ["Radeon Pro WX 2100", "AMD Radeon PRO WX 2100"]
+vendor_id = 0x1002
+device_ids = [0x6986, 0x6995, 0x6997]
+shaders = 512
+boost_mhz = 1221
+tflops_fp32 = 1.25
+vram_gb = 2
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 3100"
+aliases = ["Radeon Pro WX 3100", "AMD Radeon PRO WX 3100"]
+vendor_id = 0x1002
+device_ids = [0x6980, 0x6985]
+shaders = 512
+boost_mhz = 1221
+tflops_fp32 = 1.25
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Vega Frontier Edition"
+aliases = ["Radeon Vega Frontier Edition", "AMD Radeon(TM) Vega Frontier Edition"]
+vendor_id = 0x1002
+device_ids = [0x6863]
+shaders = 4096
+boost_mhz = 1599
+tflops_fp32 = 13.1
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro SSG"
+aliases = ["Radeon Pro SSG"]
+vendor_id = 0x1002
+device_ids = [0x6862]
+shaders = 4096
+boost_mhz = 1501
+tflops_fp32 = 12.3
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 9100"
+aliases = ["Radeon Pro WX 9100", "AMD Radeon PRO WX 9100"]
+vendor_id = 0x1002
+device_ids = [0x6861]
+shaders = 4096
+boost_mhz = 1501
+tflops_fp32 = 12.3
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 8200"
+aliases = ["Radeon Pro WX 8200", "AMD Radeon PRO WX 8200"]
+vendor_id = 0x1002
+device_ids = [0x6868]
+shaders = 3584
+boost_mhz = 1500
+tflops_fp32 = 10.75
+vram_gb = 8
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro WX 3200"
+aliases = ["Radeon Pro WX 3200", "AMD Radeon PRO WX 3200", "AMD Radeon Pro WX 3200 Series", "AMD Radeon Pro WX 3200 Series"]
+vendor_id = 0x1002
+device_ids = [0x6981]
+shaders = 640
+boost_mhz = 1297
+tflops_fp32 = 1.66
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro W5700"
+aliases = ["Radeon Pro W5700", "AMD Radeon PRO W5700"]
+vendor_id = 0x1002
+device_ids = [0x7312]
+shaders = 2304
+boost_mhz = 1929
+tflops_fp32 = 8.89
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro W5700X"
+aliases = ["Radeon Pro W5700X", "AMD Radeon PRO W5700X"]
+vendor_id = 0x1002
+device_ids = [0x7310]
+shaders = 2560
+boost_mhz = 1836
+tflops_fp32 = 9.4
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_AMD_graphics_processing_units"
+
+[[gpu]]
+name = "AMD Radeon Pro W5500"
+aliases = ["Radeon Pro W5500", "AMD Radeon PRO W5500"]
+vendor_id = 0x1002
+device_ids = [0x7341]
+shaders = 1408
+boost_mhz = 1900
+tflops_fp32 = 5.35
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro VII"
+aliases = ["Radeon Pro VII", "AMD Radeon PRO VII"]
+vendor_id = 0x1002
+device_ids = [0x66A1]
+revisions = [0x06]
+shaders = 3840
+boost_mhz = 1706
+tflops_fp32 = 13.1
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W6600"
+aliases = ["AMD Radeon Pro W6600"]
+vendor_id = 0x1002
+device_ids = [0x73E3]
+shaders = 1792
+boost_mhz = 2902
+tflops_fp32 = 10.4
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w6600.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W6800"
+aliases = ["AMD Radeon Pro W6800"]
+vendor_id = 0x1002
+device_ids = [0x73A3]
+shaders = 3840
+boost_mhz = 2318
+tflops_fp32 = 17.8
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w6800.html"
+
+[[gpu]]
+name = "AMD Radeon Pro W6800X"
+aliases = ["Radeon Pro W6800X", "AMD Radeon PRO W6800X"]
+vendor_id = 0x1002
+device_ids = [0x73AB]
+shaders = 3840
+boost_mhz = 2087
+tflops_fp32 = 16
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://ir.amd.com/news-events/press-releases/detail/1016/new-amd-radeon-pro-w6000x-series-gpus-bring-groundbreaking-high-performance-amd-rdna-2-architecture-to-mac-pro"
+
+[[gpu]]
+name = "AMD Radeon Pro W6800X Duo"
+aliases = ["Radeon Pro W6800X Duo", "AMD Radeon PRO W6800X Duo"]
+vendor_id = 0x1002
+device_ids = [0x73AB]
+shaders = 7680
+boost_mhz = 1966
+tflops_fp32 = 30.2
+vram_gb = 64
+memory_type = "GDDR6"
+source = "https://ir.amd.com/news-events/press-releases/detail/1016/new-amd-radeon-pro-w6000x-series-gpus-bring-groundbreaking-high-performance-amd-rdna-2-architecture-to-mac-pro"
+
+[[gpu]]
+name = "AMD Radeon Pro W6900X"
+aliases = ["Radeon Pro W6900X", "AMD Radeon PRO W6900X"]
+vendor_id = 0x1002
+device_ids = [0x73A2]
+shaders = 5120
+boost_mhz = 2171
+tflops_fp32 = 22
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://ir.amd.com/news-events/press-releases/detail/1016/new-amd-radeon-pro-w6000x-series-gpus-bring-groundbreaking-high-performance-amd-rdna-2-architecture-to-mac-pro"
+
+[[gpu]]
+name = "AMD Radeon PRO W6300"
+aliases = ["AMD Radeon Pro W6300", "Radeon PRO W6300"]
+vendor_id = 0x1002
+device_ids = [0x7423]
+revisions = [0x01]
+shaders = 768
+boost_mhz = 2040
+tflops_fp32 = 3.1
+vram_gb = 2
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_AMD_graphics_processing_units"
+
+[[gpu]]
+name = "AMD Radeon PRO W6400"
+aliases = ["AMD Radeon Pro W6400"]
+vendor_id = 0x1002
+device_ids = [0x7422]
+shaders = 768
+boost_mhz = 2279
+tflops_fp32 = 3.5
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w6400.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7800"
+aliases = ["AMD Radeon Pro W7800"]
+vendor_id = 0x1002
+device_ids = [0x745E]
+shaders = 4480
+boost_mhz = 2522
+tflops_fp32 = 45.2
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7800.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7900"
+aliases = ["AMD Radeon Pro W7900"]
+vendor_id = 0x1002
+device_ids = [0x7448]
+shaders = 6144
+boost_mhz = 2495
+tflops_fp32 = 61.3
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7900.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7500"
+aliases = ["AMD Radeon Pro W7500"]
+vendor_id = 0x1002
+device_ids = [0x7489]
+shaders = 1792
+boost_mhz = 1700
+tflops_fp32 = 12.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7500.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7600"
+aliases = ["AMD Radeon Pro W7600"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0x00]
+shaders = 2048
+boost_mhz = 2440
+tflops_fp32 = 20
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7600.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7700"
+aliases = ["AMD Radeon Pro W7700"]
+vendor_id = 0x1002
+device_ids = [0x7470]
+shaders = 3072
+boost_mhz = 2303
+tflops_fp32 = 28.3
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7700.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7900 Dual Slot"
+aliases = ["AMD Radeon Pro W7900 Dual Slot", "AMD Radeon PRO W7900DS"]
+vendor_id = 0x1002
+device_ids = [0x744A]
+shaders = 6144
+boost_mhz = 2495
+tflops_fp32 = 61.3
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7900-dual-slot.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7800 48GB"
+aliases = ["AMD Radeon Pro W7800 48GB"]
+vendor_id = 0x1002
+device_ids = [0x7449]
+shaders = 4480
+boost_mhz = 2522
+tflops_fp32 = 45.2
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7800-48gb.html"
+
+[[gpu]]
+name = "AMD Radeon AI PRO R9700"
+aliases = ["AMD Radeon AI Pro R9700", "Radeon AI PRO R9700"]
+vendor_id = 0x1002
+device_ids = [0x7551]
+revisions = [0xC0]
+shaders = 4096
+boost_mhz = 2920
+tflops_fp32 = 47.8
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-ai-pro/ai-9000-series/amd-radeon-ai-pro-r9700.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7400"
+aliases = ["AMD Radeon Pro W7400"]
+vendor_id = 0x1002
+device_ids = [0x7499]
+revisions = [0x00]
+shaders = 1792
+boost_mhz = 1100
+tflops_fp32 = 7.9
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7400.html"
+
+[[gpu]]
+name = "AMD Radeon AI PRO R9600D"
+aliases = ["AMD Radeon AI Pro R9600D", "Radeon AI PRO R9600D"]
+vendor_id = 0x1002
+device_ids = [0x7551]
+revisions = [0xC8]
+shaders = 3072
+boost_mhz = 2020
+tflops_fp32 = 24.8
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-ai-pro/ai-9000-series/amd-radeon-ai-pro-r9600d.html"
+
+[[gpu]]
+name = "AMD Radeon AI PRO R9700S"
+aliases = ["AMD Radeon AI Pro R9700S", "Radeon AI PRO R9700S"]
+vendor_id = 0x1002
+device_ids = [0x7551]
+revisions = [0xC1]
+shaders = 4096
+boost_mhz = 2920
+tflops_fp32 = 47.8
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-ai-pro/ai-9000-series/amd-radeon-ai-pro-r9700s.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W7900D"
+aliases = ["AMD Radeon Pro W7900D"]
+vendor_id = 0x1002
+device_ids = [0x744B]
+shaders = 6144
+boost_mhz = 2157
+tflops_fp32 = 53
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.amd.com/zh-cn/products/graphics/workstations/radeon-pro/w7900d.html"
+
+[[gpu]]
+name = "AMD Radeon AI PRO R9600"
+aliases = ["AMD Radeon AI Pro R9600", "Radeon AI PRO R9600", "AMD Radeon AI Pro R9600D"]
+vendor_id = 0x1002
+shaders = 3072
+boost_mhz = 2020
+tflops_fp32 = 24.8
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/graphics/workstations/radeon-ai-pro/ai-9000-series/amd-radeon-ai-pro-r9600.html"
+
+# ----------------------------------------------------------------------------------------------------- AMD datacenter
+
+[[gpu]]
+name = "AMD Instinct MI50 16GB"
+aliases = ["AMD Instinct MI60 / MI50", "Radeon Instinct MI50 16GB"]
+vendor_id = 0x1002
+device_ids = [0x66A1]
+revisions = [0x02]
+shaders = 3840
+boost_mhz = 1725
+tflops_fp32 = 13.3
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/accelerators.html"
+
+[[gpu]]
+name = "AMD Instinct MI50 32GB"
+aliases = ["AMD Instinct MI60 / MI50", "Radeon Instinct MI50 32GB"]
+vendor_id = 0x1002
+device_ids = [0x66A1]
+revisions = [0x02]
+shaders = 3840
+boost_mhz = 1725
+tflops_fp32 = 13.3
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/accelerators.html"
+
+[[gpu]]
+name = "AMD Instinct MI60"
+aliases = ["AMD Instinct MI60 / MI50", "Radeon Instinct MI60"]
+vendor_id = 0x1002
+device_ids = [0x66A1]
+revisions = [0x02]
+shaders = 4096
+boost_mhz = 1800
+tflops_fp32 = 14.7
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/specifications/accelerators.html"
+
+[[gpu]]
+name = "AMD Radeon PRO V520"
+aliases = ["AMD Radeon Pro V520"]
+vendor_id = 0x1002
+device_ids = [0x7360, 0x7362]
+shaders = 2304
+boost_mhz = 1600
+tflops_fp32 = 7.4
+vram_gb = 8
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/accelerators/radeon-pro/amd-radeon-pro-v520.html"
+
+[[gpu]]
+name = "AMD Instinct MI100"
+aliases = ["Radeon Instinct MI100"]
+vendor_id = 0x1002
+device_ids = [0x738C, 0x738E]
+shaders = 7680
+boost_mhz = 1502
+tflops_fp32 = 23.1
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi100.html"
+
+[[gpu]]
+name = "AMD Instinct MI250"
+aliases = ["MI250", "AMD Instinct MI250X / MI250"]
+vendor_id = 0x1002
+device_ids = [0x740C]
+revisions = [0x01]
+shaders = 13312
+boost_mhz = 1700
+tflops_fp32 = 45.3
+vram_gb = 128
+memory_type = "HBM2e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi200/mi250.html"
+
+[[gpu]]
+name = "AMD Instinct MI250X"
+aliases = ["MI250X", "AMD Instinct MI250X / MI250"]
+vendor_id = 0x1002
+device_ids = [0x7408, 0x740C]
+revisions = [0x00, 0x01]
+shaders = 14080
+boost_mhz = 1700
+tflops_fp32 = 47.9
+vram_gb = 128
+memory_type = "HBM2e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi200/mi250x.html"
+
+[[gpu]]
+name = "AMD Radeon PRO V620"
+aliases = ["AMD Radeon Pro V620", "AMD Radeon Pro V620 MxGPU"]
+vendor_id = 0x1002
+device_ids = [0x73A1, 0x73AE]
+shaders = 4608
+boost_mhz = 2200
+tflops_fp32 = 20.28
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/accelerators/radeon-pro/amd-radeon-pro-v620.html"
+
+[[gpu]]
+name = "AMD Instinct MI210"
+aliases = ["MI210", "AMD Instinct MI210 VF"]
+vendor_id = 0x1002
+device_ids = [0x740F, 0x7410]
+shaders = 6656
+boost_mhz = 1700
+tflops_fp32 = 22.6
+vram_gb = 64
+memory_type = "HBM2e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi200/mi210.html"
+
+[[gpu]]
+name = "AMD Instinct MI300A"
+aliases = ["MI300A"]
+vendor_id = 0x1002
+device_ids = [0x74A0]
+shaders = 14592
+boost_mhz = 2100
+tflops_fp32 = 122.6
+vram_gb = 128
+memory_type = "HBM3"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi300/mi300a.html"
+
+[[gpu]]
+name = "AMD Instinct MI300X"
+aliases = ["MI300X", "AMD Instinct MI300X HF", "AMD Instinct MI300X VF"]
+vendor_id = 0x1002
+device_ids = [0x74A1, 0x74A2, 0x74B6, 0x74A9, 0x74BD, 0x74B5]
+shaders = 19456
+boost_mhz = 2100
+tflops_fp32 = 163.4
+vram_gb = 192
+memory_type = "HBM3"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html"
+
+[[gpu]]
+name = "AMD Instinct MI325X"
+aliases = ["MI325X", "AMD Instinct MI325X VF"]
+vendor_id = 0x1002
+device_ids = [0x74A5, 0x74B9]
+shaders = 19456
+boost_mhz = 2100
+tflops_fp32 = 163.4
+vram_gb = 256
+memory_type = "HBM3e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi300/mi325x.html"
+
+[[gpu]]
+name = "AMD Radeon PRO V710"
+aliases = ["AMD Radeon Pro V710", "AMD Radeon Pro V710 MxGPU"]
+vendor_id = 0x1002
+device_ids = [0x7460, 0x7461]
+shaders = 3456
+boost_mhz = 2000
+tflops_fp32 = 27.65
+vram_gb = 28
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/accelerators/radeon-pro/amd-radeon-pro-v710.html"
+
+[[gpu]]
+name = "AMD Instinct MI350X"
+aliases = ["MI350X", "AMD Instinct MI350X VF"]
+vendor_id = 0x1002
+device_ids = [0x75A0, 0x75B0]
+shaders = 16384
+boost_mhz = 2200
+tflops_fp32 = 144.2
+vram_gb = 288
+memory_type = "HBM3e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi350/mi350x.html"
+
+[[gpu]]
+name = "AMD Instinct MI355X"
+aliases = ["MI355X", "AMD Instinct MI355X VF"]
+vendor_id = 0x1002
+device_ids = [0x75A3, 0x75B3]
+shaders = 16384
+boost_mhz = 2400
+tflops_fp32 = 157.3
+vram_gb = 288
+memory_type = "HBM3e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html"
+
+[[gpu]]
+name = "AMD Instinct MI350P"
+aliases = ["MI350P", "AMD Instinct MI350P VF"]
+vendor_id = 0x1002
+device_ids = [0x75A8, 0x75B8]
+shaders = 8192
+boost_mhz = 2200
+tflops_fp32 = 72
+vram_gb = 144
+memory_type = "HBM3e"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi350/mi350p.html"
+
+[[gpu]]
+name = "AMD Instinct MI455X"
+aliases = ["MI455X"]
+vendor_id = 0x1002
+boost_mhz = 2400
+tflops_fp32 = 315
+vram_gb = 432
+memory_type = "HBM4"
+source = "https://www.amd.com/en/products/accelerators/instinct/mi400/mi455x.html"
+
+# --------------------------------------------------------------------------------------------------------- AMD laptop
+
+[[gpu]]
+name = "AMD Radeon RX 5500M"
+aliases = ["Radeon RX 5500M"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xC1]
+shaders = 1408
+boost_mhz = 1645
+tflops_fp32 = 4.63
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5300M"
+aliases = ["Radeon RX 5300M"]
+vendor_id = 0x1002
+device_ids = [0x7340]
+revisions = [0xC3]
+shaders = 1408
+boost_mhz = 1445
+tflops_fp32 = 4.07
+vram_gb = 3
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon Pro W5500M"
+aliases = ["Radeon Pro W5500M", "AMD Radeon PRO W5500M"]
+vendor_id = 0x1002
+device_ids = [0x7347]
+shaders = 1408
+boost_mhz = 1701
+tflops_fp32 = 4.79
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5600M"
+aliases = ["Radeon RX 5600M"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xC2]
+shaders = 2304
+boost_mhz = 1265
+tflops_fp32 = 5.83
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 5700M"
+aliases = ["Radeon RX 5700M"]
+vendor_id = 0x1002
+device_ids = [0x731F]
+revisions = [0xC3]
+shaders = 2304
+boost_mhz = 1720
+tflops_fp32 = 7.93
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6600M"
+aliases = ["Radeon RX 6600M"]
+vendor_id = 0x1002
+device_ids = [0x73E0, 0x73FF]
+revisions = [0x00, 0xC3]
+shaders = 1792
+boost_mhz = 2447
+tflops_fp32 = 8.77
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6700M"
+aliases = ["Radeon RX 6700M"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xCF]
+shaders = 2304
+boost_mhz = 2300
+tflops_fp32 = 10.6
+vram_gb = 10
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6800M"
+aliases = ["Radeon RX 6800M"]
+vendor_id = 0x1002
+device_ids = [0x73DF]
+revisions = [0xC2, 0xC3]
+shaders = 2560
+boost_mhz = 2301
+tflops_fp32 = 11.78
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W6600M"
+aliases = ["AMD Radeon Pro W6600M"]
+vendor_id = 0x1002
+device_ids = [0x73E1]
+shaders = 1792
+boost_mhz = 2902
+tflops_fp32 = 10.4
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W6300M"
+aliases = ["AMD Radeon Pro W6300M"]
+vendor_id = 0x1002
+device_ids = [0x7423]
+revisions = [0x00]
+shaders = 768
+boost_mhz = 2214
+tflops_fp32 = 3.4
+vram_gb = 2
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon PRO W6500M"
+aliases = ["AMD Radeon Pro W6500M"]
+vendor_id = 0x1002
+device_ids = [0x7421]
+shaders = 1024
+boost_mhz = 2588
+tflops_fp32 = 5.3
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/professional-graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6300M"
+aliases = ["Radeon RX 6300M"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xCF]
+shaders = 768
+boost_mhz = 2038
+tflops_fp32 = 3.13
+vram_gb = 2
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6500M"
+aliases = ["Radeon RX 6500M"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xC3, 0xC8]
+shaders = 1024
+boost_mhz = 2432
+tflops_fp32 = 4.98
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6600S"
+aliases = ["Radeon RX 6600S"]
+vendor_id = 0x1002
+device_ids = [0x73FF]
+revisions = [0xCB]
+shaders = 1792
+boost_mhz = 2179
+tflops_fp32 = 7.81
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6650M"
+aliases = ["Radeon RX 6650M"]
+vendor_id = 0x1002
+device_ids = [0x73EF]
+revisions = [0xC3]
+shaders = 1792
+boost_mhz = 2469
+tflops_fp32 = 8.85
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6650M XT"
+aliases = ["Radeon RX 6650M XT"]
+vendor_id = 0x1002
+device_ids = [0x73EF]
+revisions = [0xC4]
+shaders = 2048
+boost_mhz = 2434
+tflops_fp32 = 9.97
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6700S"
+aliases = ["Radeon RX 6700S"]
+vendor_id = 0x1002
+device_ids = [0x73EF]
+revisions = [0xC2]
+shaders = 1792
+boost_mhz = 2210
+tflops_fp32 = 7.92
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6800S"
+aliases = ["Radeon RX 6800S"]
+vendor_id = 0x1002
+device_ids = [0x73EF]
+revisions = [0xC0]
+shaders = 2048
+boost_mhz = 2251
+tflops_fp32 = 9.22
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6850M XT"
+aliases = ["Radeon RX 6850M XT"]
+vendor_id = 0x1002
+shaders = 2560
+boost_mhz = 2598
+tflops_fp32 = 13.3
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6450M"
+aliases = ["Radeon RX 6450M"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xCE]
+shaders = 768
+boost_mhz = 2461
+tflops_fp32 = 3.78
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6550M"
+aliases = ["Radeon RX 6550M"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xD3]
+shaders = 1024
+boost_mhz = 2832
+tflops_fp32 = 5.8
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 6550S"
+aliases = ["Radeon RX 6550S", "AMD Radeon 6550S"]
+vendor_id = 0x1002
+device_ids = [0x743F]
+revisions = [0xCC]
+shaders = 1024
+boost_mhz = 2393
+tflops_fp32 = 4.9
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7600M"
+aliases = ["Radeon RX 7600M"]
+vendor_id = 0x1002
+device_ids = [0x7483]
+shaders = 1792
+boost_mhz = 2414
+tflops_fp32 = 17.3
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7600M XT"
+aliases = ["Radeon RX 7600M XT"]
+vendor_id = 0x1002
+device_ids = [0x7480, 0x73F0]
+revisions = [0xC7]
+shaders = 2048
+boost_mhz = 2612
+tflops_fp32 = 21.4
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7600S"
+aliases = ["Radeon RX 7600S"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0xC3]
+shaders = 1792
+boost_mhz = 2190
+tflops_fp32 = 15.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7700S"
+aliases = ["Radeon RX 7700S"]
+vendor_id = 0x1002
+device_ids = [0x7480]
+revisions = [0xC1]
+shaders = 2048
+boost_mhz = 2502
+tflops_fp32 = 20.5
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7900M"
+aliases = ["Radeon RX 7900M"]
+vendor_id = 0x1002
+device_ids = [0x744C]
+revisions = [0xCF]
+shaders = 4608
+boost_mhz = 2089
+tflops_fp32 = 38.5
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+[[gpu]]
+name = "AMD Radeon RX 7800M"
+aliases = ["Radeon RX 7800M"]
+vendor_id = 0x1002
+device_ids = [0x747E]
+revisions = [0xD8]
+shaders = 3840
+boost_mhz = 2539
+tflops_fp32 = 39
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.amd.com/en/products/specifications/graphics.html"
+
+# ----------------------------------------------------------------------------------------------------- AMD integrated
+
+[[gpu]]
+name = "AMD Radeon(TM) Vega 10 Graphics"
+aliases = ["AMD Radeon Vega 10 Graphics", "Radeon Vega 10 Graphics", "Radeon(TM) Vega 10 Graphics", "Radeon(TM) RX Vega 10 Graphics", "Radeon RX Vega 10 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15D8, 0x15DD]
+revisions = [0xA1, 0xB1, 0xC1, 0xD0, 0xD1]
+shaders = 640
+boost_mhz = 1400
+tflops_fp32 = 1.79
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-3000-series/amd-ryzen-7-3700u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Vega 3 Graphics"
+aliases = ["AMD Radeon Vega 3 Graphics", "Radeon Vega 3 Graphics", "Radeon(TM) Vega 3 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15D8, 0x15DD]
+revisions = [0xA4, 0xB4, 0xC4, 0xC5, 0xCB, 0xCC, 0xCE, 0xCF, 0xD4, 0xD8, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xE1, 0xE2, 0xE3]
+shaders = 192
+boost_mhz = 1200
+tflops_fp32 = 0.46
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-3000-series/amd-ryzen-7-3700u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Vega 6 Graphics"
+aliases = ["AMD Radeon Vega 6 Graphics", "Radeon Vega 6 Graphics", "Radeon(TM) Vega 6 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15D8, 0x15DD]
+revisions = [0x84, 0xA3, 0xB3, 0xC3, 0xCC, 0xD3, 0xD9]
+shaders = 384
+boost_mhz = 1200
+tflops_fp32 = 0.92
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-3000-series/amd-ryzen-7-3700u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Vega 8 Graphics"
+aliases = ["AMD Radeon Vega 8 Graphics", "Radeon Vega 8 Graphics", "Radeon(TM) Vega 8 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15D8, 0x15DD]
+revisions = [0x88, 0xA2, 0xB2, 0xC2, 0xC4, 0xC8, 0xC9, 0xCA, 0xCB, 0xD1, 0xD2, 0xD5, 0xD7, 0xD9]
+shaders = 512
+boost_mhz = 1250
+tflops_fp32 = 1.28
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-3000-series/amd-ryzen-7-3700u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Vega 11 Graphics"
+aliases = ["AMD Radeon Vega 11 Graphics", "Radeon Vega 11 Graphics", "Radeon(TM) Vega 11 Graphics", "Radeon(TM) RX Vega 11 Graphics", "Radeon RX Vega 11 Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15D8, 0x15DD]
+revisions = [0x86, 0xC1, 0xC6, 0xC8, 0xC9, 0xCA, 0xD3, 0xD6, 0xD8, 0xDA]
+shaders = 704
+boost_mhz = 1400
+tflops_fp32 = 1.97
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-3000-series/amd-ryzen-7-3700u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics"]
+vendor_id = 0x1002
+device_ids = [0x1636]
+shaders = 512
+boost_mhz = 2100
+tflops_fp32 = 2.15
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-4000-series/amd-ryzen-7-4800h.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics"]
+vendor_id = 0x1002
+device_ids = [0x1638]
+shaders = 512
+boost_mhz = 2100
+tflops_fp32 = 2.15
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-5000-series/amd-ryzen-7-5700g.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics"]
+vendor_id = 0x1002
+device_ids = [0x164C]
+shaders = 512
+boost_mhz = 1900
+tflops_fp32 = 1.95
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-5000-series/amd-ryzen-7-5700g.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics"]
+vendor_id = 0x1002
+device_ids = [0x15E7]
+shaders = 512
+boost_mhz = 2000
+tflops_fp32 = 2.05
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-5000-series/amd-ryzen-7-5700g.html"
+
+[[gpu]]
+name = "AMD Custom GPU 0405"
+vendor_id = 0x1002
+device_ids = [0x163F]
+shaders = 512
+boost_mhz = 1600
+tflops_fp32 = 1.6
+vram_gb = 16
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.steamdeck.com/en/tech"
+
+[[gpu]]
+name = "AMD Radeon(TM) 660M"
+aliases = ["AMD Radeon 660M", "Radeon 660M", "AMD Radeon(TM) 660M Graphics", "AMD Radeon 660M Graphics"]
+vendor_id = 0x1002
+device_ids = [0x1681]
+revisions = [0x07, 0x0B, 0xC9]
+shaders = 384
+boost_mhz = 1900
+tflops_fp32 = 1.46
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-6000-series/amd-ryzen-5-6600h.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 680M"
+aliases = ["AMD Radeon 680M", "Radeon 680M", "AMD Radeon(TM) 680M Graphics", "AMD Radeon 680M Graphics"]
+vendor_id = 0x1002
+device_ids = [0x1681]
+revisions = [0x06, 0x0A, 0xC7, 0xC8]
+shaders = 768
+boost_mhz = 2400
+tflops_fp32 = 3.69
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/ryzen/ryzen-6000-series/amd-ryzen-9-6980hx.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 610M"
+aliases = ["AMD Radeon 610M", "Radeon 610M", "AMD Radeon(TM) 610M Graphics"]
+vendor_id = 0x1002
+device_ids = [0x1506]
+shaders = 128
+boost_mhz = 1900
+tflops_fp32 = 0.49
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/support/downloads/drivers.html/processors/athlon/athlon-7000-series/amd-athlon-gold-7220u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics", "AMD Radeon 610M", "AMD Radeon(TM) 610M"]
+vendor_id = 0x1002
+device_ids = [0x164E]
+shaders = 128
+boost_mhz = 2200
+tflops_fp32 = 0.56
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/desktops/ryzen/7000-series/amd-ryzen-7-7700x.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 740M Graphics"
+aliases = ["AMD Radeon 740M Graphics", "Radeon 740M Graphics", "AMD Radeon(TM) 740M", "Radeon 740M"]
+vendor_id = 0x1002
+device_ids = [0x15BF, 0x15C8, 0x1901]
+revisions = [0x07, 0x08, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCC, 0xCE, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xDE]
+shaders = 256
+boost_mhz = 2800
+tflops_fp32 = 1.43
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/8000-series/amd-ryzen-5-8540u.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 760M Graphics"
+aliases = ["AMD Radeon 760M Graphics", "Radeon 760M Graphics", "AMD Radeon(TM) 760M", "Radeon 760M"]
+vendor_id = 0x1002
+device_ids = [0x15BF, 0x1900]
+revisions = [0x01, 0x02, 0x03, 0x04, 0x05, 0x07, 0xB7, 0xB8, 0xC1, 0xC3, 0xC6, 0xC8, 0xCA, 0xCB, 0xCD, 0xCF, 0xD1, 0xD3, 0xD5, 0xD6, 0xD8, 0xDA, 0xDB, 0xDC, 0xDD, 0xDF, 0xF0]
+shaders = 512
+boost_mhz = 2800
+tflops_fp32 = 2.87
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/desktops/ryzen/8000-series/amd-ryzen-5-8600g.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 780M Graphics"
+aliases = ["AMD Radeon 780M Graphics", "Radeon 780M Graphics", "AMD Radeon(TM) 780M", "Radeon 780M"]
+vendor_id = 0x1002
+device_ids = [0x15BF, 0x1900]
+revisions = [0x00, 0x01, 0x02, 0x03, 0x05, 0x06, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB9, 0xBA, 0xBB, 0xC0, 0xC1, 0xC2, 0xC4, 0xC5, 0xC6, 0xC7, 0xC9, 0xCB, 0xCC, 0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xF0, 0xF1, 0xF2]
+shaders = 768
+boost_mhz = 2900
+tflops_fp32 = 4.45
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/desktops/ryzen/8000-series/amd-ryzen-7-8700g.html"
+
+[[gpu]]
+name = "AMD Custom GPU 0932"
+vendor_id = 0x1002
+device_ids = [0x1435]
+shaders = 512
+boost_mhz = 1600
+tflops_fp32 = 1.6
+vram_gb = 16
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.steamdeck.com/en/tech"
+
+[[gpu]]
+name = "AMD Radeon(TM) 880M Graphics"
+aliases = ["AMD Radeon 880M Graphics", "Radeon 880M Graphics", "AMD Radeon(TM) 880M", "Radeon 880M"]
+vendor_id = 0x1002
+device_ids = [0x150E]
+revisions = [0xC4, 0xD2]
+shaders = 768
+boost_mhz = 2900
+tflops_fp32 = 4.45
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-9-365.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 890M Graphics"
+aliases = ["AMD Radeon 890M Graphics", "Radeon 890M Graphics", "AMD Radeon(TM) 890M", "Radeon 890M"]
+vendor_id = 0x1002
+device_ids = [0x150E]
+revisions = [0xC1, 0xC5, 0xC6, 0xC7, 0xD1, 0xD3, 0xE1, 0xE3, 0xE4, 0xF1, 0xF3]
+shaders = 1024
+boost_mhz = 3100
+tflops_fp32 = 6.35
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-400-series/amd-ryzen-ai-9-hx-475.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) Graphics"
+aliases = ["AMD Radeon Graphics", "Radeon Graphics", "AMD Radeon 610M"]
+vendor_id = 0x1002
+device_ids = [0x13C0]
+shaders = 128
+boost_mhz = 2200
+tflops_fp32 = 0.56
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-7-9700x.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 8040S Graphics"
+aliases = ["AMD Radeon 8040S Graphics", "Radeon 8040S Graphics", "AMD Radeon(TM) 8040S", "Radeon 8040S"]
+vendor_id = 0x1002
+device_ids = [0x1586]
+revisions = [0xD5]
+shaders = 1024
+boost_mhz = 2800
+tflops_fp32 = 5.73
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen-pro/ai-max-pro-300-series/amd-ryzen-ai-max-pro-380.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 8050S Graphics"
+aliases = ["AMD Radeon 8050S Graphics", "Radeon 8050S Graphics", "AMD Radeon(TM) 8050S", "Radeon 8050S"]
+vendor_id = 0x1002
+device_ids = [0x1586]
+revisions = [0xC2, 0xC4, 0xD2, 0xD4]
+shaders = 2048
+boost_mhz = 2800
+tflops_fp32 = 11.47
+vram_gb = 96
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-max-385.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 8060S Graphics"
+aliases = ["AMD Radeon 8060S Graphics", "Radeon 8060S Graphics", "AMD Radeon(TM) 8060S", "Radeon 8060S"]
+vendor_id = 0x1002
+device_ids = [0x1586]
+revisions = [0xC1, 0xC3, 0xC6, 0xD1]
+shaders = 2560
+boost_mhz = 2900
+tflops_fp32 = 14.85
+vram_gb = 96
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-max-plus-395.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 840M Graphics"
+aliases = ["AMD Radeon 840M Graphics", "Radeon 840M Graphics", "AMD Radeon(TM) 840M", "Radeon 840M"]
+vendor_id = 0x1002
+device_ids = [0x1114, 0x1902]
+revisions = [0xC0, 0xC1, 0xC3, 0xC7, 0xC8, 0xCA, 0xD1, 0xD3, 0xD7, 0xD8, 0xE5, 0xEA, 0xEE, 0xF3, 0xFA, 0xFD]
+shaders = 256
+boost_mhz = 2900
+tflops_fp32 = 1.48
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-5-340.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 860M Graphics"
+aliases = ["AMD Radeon 860M Graphics", "Radeon 860M Graphics", "AMD Radeon(TM) 860M", "Radeon 860M"]
+vendor_id = 0x1002
+device_ids = [0x1114]
+revisions = [0xC2, 0xD2, 0xE2, 0xE4, 0xE9, 0xED, 0xF2, 0xF9, 0xFC]
+shaders = 512
+boost_mhz = 3100
+tflops_fp32 = 3.17
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-400-series/amd-ryzen-ai-7-450.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 820M Graphics"
+aliases = ["AMD Radeon 820M Graphics", "Radeon 820M Graphics", "AMD Radeon(TM) 820M", "Radeon 820M"]
+vendor_id = 0x1002
+device_ids = [0x1902]
+revisions = [0xC2, 0xC6, 0xC9]
+shaders = 128
+boost_mhz = 2800
+tflops_fp32 = 0.72
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-5-330.html"
+
+[[gpu]]
+name = "AMD Radeon(TM) 8065S Graphics"
+aliases = ["AMD Radeon 8065S Graphics", "Radeon 8065S Graphics", "AMD Radeon(TM) 8065S", "Radeon 8065S"]
+vendor_id = 0x1002
+shaders = 2560
+boost_mhz = 3000
+tflops_fp32 = 15.36
+vram_gb = 160
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.amd.com/en/products/processors/laptop/ryzen-pro/ai-max-pro-400-series/amd-ryzen-ai-max-plus-pro-495.html"
+
+# ----------------------------------------------------------------------------------------------------- NVIDIA desktop
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2080"
+aliases = ["GeForce RTX 2080"]
+vendor_id = 0x10DE
+device_ids = [0x1E82, 0x1E87]
+shaders = 2944
+boost_mhz = 1800
+tflops_fp32 = 10.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2080 Ti"
+aliases = ["GeForce RTX 2080 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x1E04, 0x1E07]
+shaders = 4352
+boost_mhz = 1635
+tflops_fp32 = 14.2
+vram_gb = 11
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2070"
+aliases = ["GeForce RTX 2070"]
+vendor_id = 0x10DE
+device_ids = [0x1F02, 0x1F07]
+shaders = 2304
+boost_mhz = 1710
+tflops_fp32 = 7.9
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA TITAN RTX"
+aliases = ["TITAN RTX", "NVIDIA Titan RTX"]
+vendor_id = 0x10DE
+device_ids = [0x1E02]
+shaders = 4608
+boost_mhz = 1770
+tflops_fp32 = 16.3
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/titan/titan-rtx/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2060"
+aliases = ["GeForce RTX 2060", "GeForce RTX 2060 6GB"]
+vendor_id = 0x10DE
+device_ids = [0x1F08]
+shaders = 1920
+boost_mhz = 1680
+tflops_fp32 = 6.5
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1660 Ti"
+aliases = ["GeForce GTX 1660 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2182]
+shaders = 1536
+boost_mhz = 1770
+tflops_fp32 = 5.4
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1660"
+aliases = ["GeForce GTX 1660"]
+vendor_id = 0x10DE
+device_ids = [0x2184]
+shaders = 1408
+boost_mhz = 1785
+tflops_fp32 = 5
+vram_gb = 6
+memory_type = "GDDR5"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1650"
+aliases = ["GeForce GTX 1650", "GeForce GTX 1650 4GB GDDR5"]
+vendor_id = 0x10DE
+device_ids = [0x1F82]
+shaders = 896
+boost_mhz = 1665
+tflops_fp32 = 3
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2060 SUPER"
+aliases = ["GeForce RTX 2060 SUPER", "NVIDIA GeForce RTX 2060 Super", "GeForce RTX 2060 Super"]
+vendor_id = 0x10DE
+device_ids = [0x1F06, 0x1F42, 0x1F47]
+shaders = 2176
+boost_mhz = 1650
+tflops_fp32 = 7.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2070 SUPER"
+aliases = ["GeForce RTX 2070 SUPER", "NVIDIA GeForce RTX 2070 Super", "GeForce RTX 2070 Super"]
+vendor_id = 0x10DE
+device_ids = [0x1E84, 0x1EC2, 0x1EC7]
+shaders = 2560
+boost_mhz = 1770
+tflops_fp32 = 9.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2080 SUPER"
+aliases = ["GeForce RTX 2080 SUPER", "NVIDIA GeForce RTX 2080 Super", "GeForce RTX 2080 Super"]
+vendor_id = 0x10DE
+device_ids = [0x1E81]
+shaders = 3072
+boost_mhz = 1815
+tflops_fp32 = 11.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1660 SUPER"
+aliases = ["GeForce GTX 1660 SUPER", "GeForce GTX 1660 Super"]
+vendor_id = 0x10DE
+device_ids = [0x21C4, 0x1F09]
+shaders = 1408
+boost_mhz = 1785
+tflops_fp32 = 5
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1650 SUPER"
+aliases = ["GeForce GTX 1650 SUPER", "GeForce GTX 1650 Super"]
+vendor_id = 0x10DE
+device_ids = [0x2187]
+shaders = 1280
+boost_mhz = 1725
+tflops_fp32 = 4.4
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2060"
+aliases = ["GeForce RTX 2060", "GeForce RTX 2060 6GB (TU104)"]
+vendor_id = 0x10DE
+device_ids = [0x1E89]
+shaders = 1920
+boost_mhz = 1680
+tflops_fp32 = 6.5
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1650"
+aliases = ["GeForce GTX 1650", "GeForce GTX 1650 4GB GDDR6"]
+vendor_id = 0x10DE
+device_ids = [0x1F82]
+shaders = 896
+boost_mhz = 1590
+tflops_fp32 = 2.8
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1650"
+aliases = ["GeForce GTX 1650", "GeForce GTX 1650 4GB GDDR6 (TU106)"]
+vendor_id = 0x10DE
+device_ids = [0x1F0A]
+shaders = 896
+boost_mhz = 1590
+tflops_fp32 = 2.8
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1650"
+aliases = ["GeForce GTX 1650", "GeForce GTX 1650 4GB GDDR6 (TU116)"]
+vendor_id = 0x10DE
+device_ids = [0x2188]
+shaders = 896
+boost_mhz = 1590
+tflops_fp32 = 2.8
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080"
+aliases = ["GeForce RTX 3080", "GeForce RTX 3080 10GB"]
+vendor_id = 0x10DE
+device_ids = [0x2206, 0x2216]
+shaders = 8704
+boost_mhz = 1710
+tflops_fp32 = 29.8
+vram_gb = 10
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3090"
+aliases = ["GeForce RTX 3090"]
+vendor_id = 0x10DE
+device_ids = [0x2204]
+shaders = 10496
+boost_mhz = 1695
+tflops_fp32 = 35.6
+vram_gb = 24
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3070"
+aliases = ["GeForce RTX 3070"]
+vendor_id = 0x10DE
+device_ids = [0x2484, 0x2488, 0x248D]
+shaders = 5888
+boost_mhz = 1725
+tflops_fp32 = 20.3
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060 Ti"
+aliases = ["GeForce RTX 3060 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2486, 0x2489, 0x248E]
+shaders = 4864
+boost_mhz = 1665
+tflops_fp32 = 16.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060"
+aliases = ["GeForce RTX 3060", "GeForce RTX 3060 12GB"]
+vendor_id = 0x10DE
+device_ids = [0x2503, 0x2504, 0x2501, 0x2509]
+shaders = 3584
+boost_mhz = 1777
+tflops_fp32 = 12.7
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3070 Ti"
+aliases = ["GeForce RTX 3070 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2482, 0x248C]
+shaders = 6144
+boost_mhz = 1770
+tflops_fp32 = 21.7
+vram_gb = 8
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080 Ti"
+aliases = ["GeForce RTX 3080 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2208]
+shaders = 10240
+boost_mhz = 1665
+tflops_fp32 = 34.1
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060"
+aliases = ["GeForce RTX 3060", "GeForce RTX 3060 12GB (GA104)"]
+vendor_id = 0x10DE
+device_ids = [0x2487]
+shaders = 3584
+boost_mhz = 1777
+tflops_fp32 = 12.7
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 2060"
+aliases = ["GeForce RTX 2060 12GB"]
+vendor_id = 0x10DE
+device_ids = [0x1F03]
+shaders = 2176
+boost_mhz = 1650
+tflops_fp32 = 7.2
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050"
+aliases = ["GeForce RTX 3050", "GeForce RTX 3050 8GB"]
+vendor_id = 0x10DE
+device_ids = [0x2507]
+shaders = 2560
+boost_mhz = 1777
+tflops_fp32 = 9.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050 OEM"
+aliases = ["GeForce RTX 3050 OEM", "GeForce RTX 3050 (OEM)"]
+vendor_id = 0x10DE
+device_ids = [0x2508]
+shaders = 2304
+boost_mhz = 1755
+tflops_fp32 = 8.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080"
+aliases = ["GeForce RTX 3080 12GB", "NVIDIA GeForce RTX 3080 12GB"]
+vendor_id = 0x10DE
+device_ids = [0x220A]
+shaders = 8960
+boost_mhz = 1710
+tflops_fp32 = 30.6
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060 Ti"
+aliases = ["GeForce RTX 3060 Ti (GA103)"]
+vendor_id = 0x10DE
+device_ids = [0x2414]
+shaders = 4864
+boost_mhz = 1665
+tflops_fp32 = 16.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3090 Ti"
+aliases = ["GeForce RTX 3090 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2203]
+shaders = 10752
+boost_mhz = 1860
+tflops_fp32 = 40
+vram_gb = 24
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce GTX 1630"
+aliases = ["GeForce GTX 1630"]
+vendor_id = 0x10DE
+device_ids = [0x1F83]
+shaders = 512
+boost_mhz = 1785
+tflops_fp32 = 1.8
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060"
+aliases = ["GeForce RTX 3060", "GeForce RTX 3060 8GB"]
+vendor_id = 0x10DE
+device_ids = [0x2544]
+shaders = 3584
+boost_mhz = 1777
+tflops_fp32 = 12.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060"
+aliases = ["GeForce RTX 3060", "GeForce RTX 3060 8GB (GA104)"]
+vendor_id = 0x10DE
+device_ids = [0x24C7]
+shaders = 3584
+boost_mhz = 1777
+tflops_fp32 = 12.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060 Ti"
+aliases = ["GeForce RTX 3060 Ti GDDR6X"]
+vendor_id = 0x10DE
+device_ids = [0x24C9]
+shaders = 4864
+boost_mhz = 1665
+tflops_fp32 = 16.2
+vram_gb = 8
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3070 Ti"
+aliases = ["GeForce RTX 3070 Ti (GA102)"]
+vendor_id = 0x10DE
+device_ids = [0x2207]
+shaders = 6144
+boost_mhz = 1770
+tflops_fp32 = 21.7
+vram_gb = 8
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4090"
+aliases = ["GeForce RTX 4090"]
+vendor_id = 0x10DE
+device_ids = [0x2684]
+shaders = 16384
+boost_mhz = 2520
+tflops_fp32 = 82.6
+vram_gb = 24
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4080"
+aliases = ["GeForce RTX 4080"]
+vendor_id = 0x10DE
+device_ids = [0x2704]
+shaders = 9728
+boost_mhz = 2505
+tflops_fp32 = 48.7
+vram_gb = 16
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050"
+aliases = ["GeForce RTX 3050", "GeForce RTX 3050 8GB (GA107)"]
+vendor_id = 0x10DE
+device_ids = [0x2582]
+shaders = 2560
+boost_mhz = 1777
+tflops_fp32 = 9.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070 Ti"
+aliases = ["GeForce RTX 4070 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2782]
+shaders = 7680
+boost_mhz = 2610
+tflops_fp32 = 40.1
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070"
+aliases = ["GeForce RTX 4070", "GeForce RTX 4070 12GB GDDR6X"]
+vendor_id = 0x10DE
+device_ids = [0x2786]
+shaders = 5888
+boost_mhz = 2475
+tflops_fp32 = 29.1
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060 Ti"
+aliases = ["GeForce RTX 4060 Ti 8GB"]
+vendor_id = 0x10DE
+device_ids = [0x2803]
+shaders = 4352
+boost_mhz = 2535
+tflops_fp32 = 22
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060"
+aliases = ["GeForce RTX 4060"]
+vendor_id = 0x10DE
+device_ids = [0x2882]
+shaders = 3072
+boost_mhz = 2460
+tflops_fp32 = 15
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060 Ti"
+aliases = ["GeForce RTX 4060 Ti 16GB", "NVIDIA GeForce RTX 4060 Ti 16GB"]
+vendor_id = 0x10DE
+device_ids = [0x2805]
+shaders = 4352
+boost_mhz = 2535
+tflops_fp32 = 22
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4090 D"
+aliases = ["GeForce RTX 4090 D"]
+vendor_id = 0x10DE
+device_ids = [0x2685]
+shaders = 14592
+boost_mhz = 2520
+tflops_fp32 = 74
+vram_gb = 24
+memory_type = "GDDR6X"
+source = "https://www.nvidia.cn/geforce/graphics-cards/40-series/rtx-4090-d/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070 SUPER"
+aliases = ["GeForce RTX 4070 SUPER", "NVIDIA GeForce RTX 4070 Super"]
+vendor_id = 0x10DE
+device_ids = [0x2783]
+shaders = 7168
+boost_mhz = 2475
+tflops_fp32 = 36
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070 Ti SUPER"
+aliases = ["GeForce RTX 4070 Ti SUPER", "NVIDIA GeForce RTX 4070 Ti Super"]
+vendor_id = 0x10DE
+device_ids = [0x2705]
+shaders = 8448
+boost_mhz = 2610
+tflops_fp32 = 44
+vram_gb = 16
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4080 SUPER"
+aliases = ["GeForce RTX 4080 SUPER", "NVIDIA GeForce RTX 4080 Super"]
+vendor_id = 0x10DE
+device_ids = [0x2702, 0x2703]
+shaders = 10240
+boost_mhz = 2550
+tflops_fp32 = 52
+vram_gb = 16
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050"
+aliases = ["GeForce RTX 3050", "GeForce RTX 3050 6GB"]
+vendor_id = 0x10DE
+device_ids = [0x2584]
+shaders = 2304
+boost_mhz = 1470
+tflops_fp32 = 6.8
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070"
+aliases = ["GeForce RTX 4070 (AD103)"]
+vendor_id = 0x10DE
+device_ids = [0x2709]
+shaders = 5888
+boost_mhz = 2475
+tflops_fp32 = 29.1
+vram_gb = 12
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060"
+aliases = ["GeForce RTX 4060 (AD106)"]
+vendor_id = 0x10DE
+device_ids = [0x2808]
+shaders = 3072
+boost_mhz = 2460
+tflops_fp32 = 15
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060 Ti"
+aliases = ["GeForce RTX 4060 Ti 8GB (AD104)"]
+vendor_id = 0x10DE
+device_ids = [0x2788]
+shaders = 4352
+boost_mhz = 2535
+tflops_fp32 = 22
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070 Ti SUPER"
+aliases = ["GeForce RTX 4070 Ti SUPER (AD102)"]
+vendor_id = 0x10DE
+device_ids = [0x2689]
+shaders = 8448
+boost_mhz = 2610
+tflops_fp32 = 44
+vram_gb = 16
+memory_type = "GDDR6X"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070"
+aliases = ["GeForce RTX 4070 12GB GDDR6"]
+vendor_id = 0x10DE
+device_ids = [0x2786]
+shaders = 5888
+boost_mhz = 2475
+tflops_fp32 = 29.1
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5080"
+aliases = ["GeForce RTX 5080"]
+vendor_id = 0x10DE
+device_ids = [0x2C02]
+shaders = 10752
+boost_mhz = 2617
+tflops_fp32 = 56.3
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5090"
+aliases = ["GeForce RTX 5090"]
+vendor_id = 0x10DE
+device_ids = [0x2B85]
+shaders = 21760
+boost_mhz = 2407
+tflops_fp32 = 104.8
+vram_gb = 32
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5090 D"
+aliases = ["GeForce RTX 5090 D"]
+vendor_id = 0x10DE
+device_ids = [0x2B87]
+shaders = 21760
+boost_mhz = 2407
+tflops_fp32 = 104.8
+vram_gb = 32
+memory_type = "GDDR7"
+source = "https://web.archive.org/web/20250310021605/https://www.nvidia.cn/geforce/graphics-cards/50-series/rtx-5090-d/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070 Ti"
+aliases = ["GeForce RTX 5070 Ti"]
+vendor_id = 0x10DE
+device_ids = [0x2C05]
+shaders = 8960
+boost_mhz = 2452
+tflops_fp32 = 43.9
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5070-family/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070"
+aliases = ["GeForce RTX 5070"]
+vendor_id = 0x10DE
+device_ids = [0x2F04]
+shaders = 6144
+boost_mhz = 2512
+tflops_fp32 = 30.9
+vram_gb = 12
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5070-family/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5060 Ti"
+aliases = ["GeForce RTX 5060 Ti 16GB", "NVIDIA GeForce RTX 5060 Ti 16GB"]
+vendor_id = 0x10DE
+device_ids = [0x2D04]
+shaders = 4608
+boost_mhz = 2572
+tflops_fp32 = 23.7
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5060-family/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5060 Ti"
+aliases = ["GeForce RTX 5060 Ti 8GB", "NVIDIA GeForce RTX 5060 Ti 8GB"]
+vendor_id = 0x10DE
+device_ids = [0x2D04]
+shaders = 4608
+boost_mhz = 2572
+tflops_fp32 = 23.7
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5060-family/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5060"
+aliases = ["GeForce RTX 5060"]
+vendor_id = 0x10DE
+device_ids = [0x2D05]
+shaders = 3840
+boost_mhz = 2497
+tflops_fp32 = 19.2
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5060-family/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5050"
+aliases = ["GeForce RTX 5050"]
+vendor_id = 0x10DE
+device_ids = [0x2D83]
+shaders = 2560
+boost_mhz = 2572
+tflops_fp32 = 13.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5050/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5090 D v2"
+aliases = ["GeForce RTX 5090 D V2", "NVIDIA GeForce RTX 5090 D V2"]
+vendor_id = 0x10DE
+device_ids = [0x2B8C]
+shaders = 21760
+boost_mhz = 2407
+tflops_fp32 = 104.8
+vram_gb = 24
+memory_type = "GDDR7"
+source = "https://www.nvidia.cn/geforce/graphics-cards/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5060"
+aliases = ["GeForce RTX 5060 (GB205)"]
+vendor_id = 0x10DE
+device_ids = [0x2F06]
+shaders = 3840
+boost_mhz = 2497
+tflops_fp32 = 19.2
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://hwbusters.com/news/rtx-5060-gb205-cards-are-real-nvidia-is-recycling-rtx-5070-dies/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070"
+aliases = ["GeForce RTX 5070 (GB203)"]
+vendor_id = 0x10DE
+device_ids = [0x2C09]
+shaders = 6144
+boost_mhz = 2512
+tflops_fp32 = 30.9
+vram_gb = 12
+memory_type = "GDDR7"
+source = "https://download.nvidia.com/XFree86/Linux-x86_64/615.71.09/README/supportedchips.html"
+
+# ------------------------------------------------------------------------------------------------- NVIDIA workstation
+
+[[gpu]]
+name = "Quadro RTX 5000"
+vendor_id = 0x10DE
+device_ids = [0x1EB0]
+shaders = 3072
+boost_mhz = 1815
+tflops_fp32 = 11.2
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/ja/Solutions/design-visualization/documents/quadro-rtx-5000-data-sheet-a4-704120-r4_JP.pdf"
+
+[[gpu]]
+name = "Quadro RTX 6000"
+aliases = ["Quadro RTX 6000/8000", "Quadro RTX 8000"]
+vendor_id = 0x10DE
+device_ids = [0x1E30, 0x1E36, 0x1E78]
+shaders = 4608
+boost_mhz = 1770
+tflops_fp32 = 16.3
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/ja/Solutions/design-visualization/documents/quadro-rtx-6000-a4-nvidia-704093-r4_JP.pdf"
+
+[[gpu]]
+name = "Quadro RTX 8000"
+aliases = ["Quadro RTX 6000/8000", "Quadro RTX 6000"]
+vendor_id = 0x10DE
+device_ids = [0x1E30, 0x1E78]
+shaders = 4608
+boost_mhz = 1770
+tflops_fp32 = 16.3
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/quadro-product-literature/quadro-rtx-8000-us-nvidia-876688-r5-web.pdf"
+
+[[gpu]]
+name = "Quadro RTX 4000"
+vendor_id = 0x10DE
+device_ids = [0x1EB1]
+shaders = 2304
+boost_mhz = 1545
+tflops_fp32 = 7.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/ja/Solutions/design-visualization/documents/quadro-rtx-4000-datasheet-a4-nvidia-1060942-r2-web_JP.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX A6000"
+aliases = ["RTX A6000"]
+vendor_id = 0x10DE
+device_ids = [0x2230]
+shaders = 10752
+boost_mhz = 1800
+tflops_fp32 = 38.7
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a6000/"
+
+[[gpu]]
+name = "NVIDIA RTX A4000H"
+aliases = ["RTX A4000H"]
+vendor_id = 0x10DE
+device_ids = [0x24B1]
+shaders = 6144
+boost_mhz = 1560
+tflops_fp32 = 19.2
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://alitek.advantech.com/products/NVIDIA-RTX-A4000H/mod/32F806A1-248C-4561-AA40-2E61CE89C71A"
+
+[[gpu]]
+name = "NVIDIA RTX A4500"
+aliases = ["RTX A4500"]
+vendor_id = 0x10DE
+device_ids = [0x2232]
+shaders = 7168
+boost_mhz = 1650
+tflops_fp32 = 23.7
+vram_gb = 20
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a4500/"
+
+[[gpu]]
+name = "NVIDIA RTX A4000"
+aliases = ["RTX A4000"]
+vendor_id = 0x10DE
+device_ids = [0x24B0]
+shaders = 6144
+boost_mhz = 1560
+tflops_fp32 = 19.2
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a4000/"
+
+[[gpu]]
+name = "NVIDIA RTX A5000"
+aliases = ["RTX A5000"]
+vendor_id = 0x10DE
+device_ids = [0x2231]
+shaders = 8192
+boost_mhz = 1695
+tflops_fp32 = 27.8
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a5000/"
+
+[[gpu]]
+name = "NVIDIA T600"
+aliases = ["T600"]
+vendor_id = 0x10DE
+device_ids = [0x1FB1]
+shaders = 640
+boost_mhz = 1335
+tflops_fp32 = 1.7
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.NVIDIA.com/content/dam/en-zz/Solutions/design-visualization/productspage/quadro/quadro-desktop/proviz-print-nvidia-T600-datasheet-us-nvidia-1670029-r5-web.pdf"
+
+[[gpu]]
+name = "NVIDIA T1000"
+aliases = ["T1000", "Quadro T1000 Mobile", "NVIDIA DGX Display"]
+vendor_id = 0x10DE
+device_ids = [0x1FB0]
+shaders = 896
+boost_mhz = 1395
+tflops_fp32 = 2.5
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.NVIDIA.com/content/dam/en-zz/Solutions/design-visualization/productspage/quadro/quadro-desktop/nvidia-t1000-datasheet-1987414-r4.pdf"
+
+[[gpu]]
+name = "NVIDIA T400"
+aliases = ["T400", "Quadro T400 Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x1FB2]
+shaders = 384
+boost_mhz = 1425
+tflops_fp32 = 1.09
+vram_gb = 2
+memory_type = "GDDR6"
+source = "https://www.NVIDIA.com/content/dam/en-zz/Solutions/design-visualization/productspage/quadro/quadro-desktop/nvidia-t400-datasheet-1987150-r3.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX A2000"
+aliases = ["RTX A2000"]
+vendor_id = 0x10DE
+device_ids = [0x2531]
+shaders = 3328
+boost_mhz = 1200
+tflops_fp32 = 8
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a2000/"
+
+[[gpu]]
+name = "NVIDIA RTX A2000 12GB"
+aliases = ["RTX A2000 12GB"]
+vendor_id = 0x10DE
+device_ids = [0x2571]
+shaders = 3328
+boost_mhz = 1200
+tflops_fp32 = 8
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a2000/"
+
+[[gpu]]
+name = "NVIDIA T1000 8GB"
+aliases = ["T1000 8GB"]
+vendor_id = 0x10DE
+device_ids = [0x1FF0]
+shaders = 896
+boost_mhz = 1395
+tflops_fp32 = 2.5
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.NVIDIA.com/content/dam/en-zz/Solutions/design-visualization/productspage/quadro/quadro-desktop/nvidia-t1000-datasheet-1987414-r4.pdf"
+
+[[gpu]]
+name = "NVIDIA T400 4GB"
+aliases = ["T400 4GB", "T400 4GB / T400E", "NVIDIA T400E"]
+vendor_id = 0x10DE
+device_ids = [0x1FF2]
+shaders = 384
+boost_mhz = 1425
+tflops_fp32 = 1.09
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.NVIDIA.com/content/dam/en-zz/Solutions/design-visualization/productspage/quadro/quadro-desktop/nvidia-t400-datasheet-1987150-r3.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX A5500"
+aliases = ["RTX A5500"]
+vendor_id = 0x10DE
+device_ids = [0x2233]
+shaders = 10240
+boost_mhz = 1665
+tflops_fp32 = 34.1
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a5500/"
+
+[[gpu]]
+name = "NVIDIA RTX 6000 Ada Generation"
+aliases = ["RTX 6000 Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x26B1]
+shaders = 18176
+boost_mhz = 2505
+tflops_fp32 = 91.1
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-6000/"
+
+[[gpu]]
+name = "NVIDIA A800 40GB Active"
+aliases = ["A800 40GB Active"]
+vendor_id = 0x10DE
+device_ids = [0x20F6]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 40
+memory_type = "HBM2"
+source = "https://www.nvidia.com/en-us/data-center/a100/"
+
+[[gpu]]
+name = "NVIDIA RTX 4000 SFF Ada Generation"
+aliases = ["RTX 4000 SFF Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x27B0]
+shaders = 6144
+boost_mhz = 1560
+tflops_fp32 = 19.2
+vram_gb = 20
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-4000-sff/"
+
+[[gpu]]
+name = "NVIDIA RTX 5000 Ada Generation"
+aliases = ["RTX 5000 Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x26B2]
+shaders = 12800
+boost_mhz = 2550
+tflops_fp32 = 65.3
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-5000/"
+
+[[gpu]]
+name = "NVIDIA RTX 4000 Ada Generation"
+aliases = ["RTX 4000 Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x27B2]
+shaders = 6144
+boost_mhz = 2175
+tflops_fp32 = 26.7
+vram_gb = 20
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-4000/"
+
+[[gpu]]
+name = "NVIDIA RTX 4500 Ada Generation"
+aliases = ["RTX 4500 Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x27B1]
+shaders = 7680
+boost_mhz = 2580
+tflops_fp32 = 39.6
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-4500/"
+
+[[gpu]]
+name = "NVIDIA RTX 2000E Ada Generation"
+aliases = ["RTX 2000E Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x28B0]
+shaders = 2816
+boost_mhz = 1580
+tflops_fp32 = 8.9
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://lenovopress.lenovo.com/lp2207-thinksystem-nvidia-rtx-2000e-ada-16gb-pcie-active-gpu"
+
+[[gpu]]
+name = "NVIDIA RTX 5880 Ada Generation"
+aliases = ["RTX 5880 Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x26B3]
+shaders = 14080
+boost_mhz = 2460
+tflops_fp32 = 69.3
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://valuehub.hp.com/static/nvidia/docs/NVIDIA%20RTX%205880%20Ada%20Generation%20Datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX 2000 Ada Generation"
+aliases = ["RTX 2000 Ada Generation", "RTX 2000 / 2000E Ada Generation", "NVIDIA RTX 2000E Ada Generation"]
+vendor_id = 0x10DE
+device_ids = [0x28B0]
+shaders = 2816
+boost_mhz = 2130
+tflops_fp32 = 12
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-2000/"
+
+[[gpu]]
+name = "NVIDIA RTX A1000"
+aliases = ["RTX A1000"]
+vendor_id = 0x10DE
+device_ids = [0x25B0]
+shaders = 2304
+boost_mhz = 1462
+tflops_fp32 = 6.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a1000/"
+
+[[gpu]]
+name = "NVIDIA RTX A400"
+aliases = ["RTX A400"]
+vendor_id = 0x10DE
+device_ids = [0x25B2]
+shaders = 768
+boost_mhz = 1762
+tflops_fp32 = 2.7
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/rtx-a400/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 4000 Blackwell"
+aliases = ["RTX PRO 4000 Blackwell"]
+vendor_id = 0x10DE
+device_ids = [0x2C34]
+shaders = 8960
+boost_mhz = 2065
+tflops_fp32 = 37
+vram_gb = 24
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/products/workstations/professional-desktop-gpus/rtx-pro-4000/workstation-datasheet-rtx-pro-4000-nvidia-us-web.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 5000 Blackwell"
+aliases = ["RTX PRO 5000 Blackwell", "RTX PRO 5000 Blackwell / RTX PRO 5000 72GB Blackwell", "NVIDIA RTX PRO 5000 72GB Blackwell"]
+vendor_id = 0x10DE
+device_ids = [0x2BB3]
+shaders = 14080
+boost_mhz = 2308
+tflops_fp32 = 65
+vram_gb = 48
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-5000/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition"
+aliases = ["RTX PRO 6000 Blackwell Max-Q Workstation Edition"]
+vendor_id = 0x10DE
+device_ids = [0x2BB4]
+shaders = 24064
+boost_mhz = 2288
+tflops_fp32 = 110
+vram_gb = 96
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000-max-q/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+aliases = ["RTX PRO 6000 Blackwell Workstation Edition"]
+vendor_id = 0x10DE
+device_ids = [0x2BB1]
+shaders = 24064
+boost_mhz = 2617
+tflops_fp32 = 126
+vram_gb = 96
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-6000/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 4500 Blackwell"
+aliases = ["RTX PRO 4500 Blackwell"]
+vendor_id = 0x10DE
+device_ids = [0x2C31]
+shaders = 10496
+boost_mhz = 2429
+tflops_fp32 = 51
+vram_gb = 32
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-4500/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 2000 Blackwell"
+aliases = ["RTX PRO 2000 Blackwell"]
+vendor_id = 0x10DE
+device_ids = [0x2D30]
+shaders = 4352
+boost_mhz = 1957
+tflops_fp32 = 17
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-2000/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 4000 Blackwell SFF Edition"
+aliases = ["RTX PRO 4000 Blackwell SFF Edition"]
+vendor_id = 0x10DE
+device_ids = [0x2C33]
+shaders = 8960
+boost_mhz = 1342
+tflops_fp32 = 24
+vram_gb = 24
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-4000-sff/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 5000 72GB Blackwell"
+aliases = ["RTX PRO 5000 72GB Blackwell", "RTX PRO 5000 Blackwell / RTX PRO 5000 72GB Blackwell", "NVIDIA RTX PRO 5000 Blackwell"]
+vendor_id = 0x10DE
+device_ids = [0x2BB3]
+shaders = 14080
+boost_mhz = 2308
+tflops_fp32 = 65
+vram_gb = 72
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-desktop-gpus/rtx-pro-5000/"
+
+[[gpu]]
+name = "NVIDIA GB300 (DGX Station)"
+aliases = ["NVIDIA GB300", "NVIDIA DGX Station"]
+vendor_id = 0x10DE
+shaders = 18944
+boost_mhz = 2111
+tflops_fp32 = 80
+vram_gb = 252
+memory_type = "HBM3e"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/products/workstations/dgx-station/workstation-datasheet-dgx-station-nvidia-us-5543600-web.pdf"
+
+# -------------------------------------------------------------------------------------------------- NVIDIA datacenter
+
+[[gpu]]
+name = "Tesla M6"
+aliases = ["NVIDIA Tesla M6"]
+vendor_id = 0x10DE
+device_ids = [0x13F3]
+shaders = 1536
+boost_mhz = 1051
+tflops_fp32 = 3.2
+vram_gb = 8
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla M60"
+aliases = ["NVIDIA Tesla M60"]
+vendor_id = 0x10DE
+device_ids = [0x13F2]
+shaders = 2048
+boost_mhz = 1178
+tflops_fp32 = 4.8
+vram_gb = 8
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla M4"
+aliases = ["NVIDIA Tesla M4"]
+vendor_id = 0x10DE
+device_ids = [0x1431]
+shaders = 1024
+boost_mhz = 1072
+tflops_fp32 = 2.2
+vram_gb = 4
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla M40"
+aliases = ["NVIDIA Tesla M40", "Tesla M40 12GB"]
+vendor_id = 0x10DE
+device_ids = [0x17FD]
+shaders = 3072
+boost_mhz = 1114
+tflops_fp32 = 6.8
+vram_gb = 12
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla P100-SXM2-16GB"
+aliases = ["NVIDIA Tesla P100-SXM2-16GB"]
+vendor_id = 0x10DE
+device_ids = [0x15F9]
+shaders = 3584
+boost_mhz = 1480
+tflops_fp32 = 10.6
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/tesla/pdf/nvidia-tesla-p100-datasheet.pdf"
+
+[[gpu]]
+name = "Tesla M40 24GB"
+aliases = ["NVIDIA Tesla M40 24GB"]
+vendor_id = 0x10DE
+device_ids = [0x17FD]
+shaders = 3072
+boost_mhz = 1114
+tflops_fp32 = 6.8
+vram_gb = 24
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla P100-PCIE-12GB"
+aliases = ["NVIDIA Tesla P100-PCIE-12GB"]
+vendor_id = 0x10DE
+device_ids = [0x15F7]
+shaders = 3584
+boost_mhz = 1303
+tflops_fp32 = 9.3
+vram_gb = 12
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/tesla/pdf/nvidia-tesla-p100-PCIe-datasheet.pdf"
+
+[[gpu]]
+name = "Tesla P100-PCIE-16GB"
+aliases = ["NVIDIA Tesla P100-PCIE-16GB"]
+vendor_id = 0x10DE
+device_ids = [0x15F8]
+shaders = 3584
+boost_mhz = 1303
+tflops_fp32 = 9.3
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/tesla/pdf/nvidia-tesla-p100-PCIe-datasheet.pdf"
+
+[[gpu]]
+name = "Tesla P4"
+aliases = ["NVIDIA Tesla P4"]
+vendor_id = 0x10DE
+device_ids = [0x1BB3]
+shaders = 2560
+boost_mhz = 1063
+tflops_fp32 = 5.5
+vram_gb = 8
+memory_type = "GDDR5"
+source = "https://images.nvidia.com/content/pdf/tesla/184457-Tesla-P4-Datasheet-NV-Final-Letter-Web.pdf"
+
+[[gpu]]
+name = "Tesla P40"
+aliases = ["NVIDIA Tesla P40"]
+vendor_id = 0x10DE
+device_ids = [0x1B38]
+shaders = 3840
+boost_mhz = 1531
+tflops_fp32 = 12
+vram_gb = 24
+memory_type = "GDDR5"
+source = "https://images.nvidia.com/content/pdf/tesla/184427-Tesla-P40-Datasheet-NV-Final-Letter-Web.pdf"
+
+[[gpu]]
+name = "Tesla V100-SXM2-16GB"
+aliases = ["NVIDIA Tesla V100-SXM2-16GB", "Tesla V100 SXM2 16GB", "NVIDIA V100-SXM2-16GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB1, 0x1DF5]
+shaders = 5120
+boost_mhz = 1530
+tflops_fp32 = 15.7
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla P6"
+aliases = ["NVIDIA Tesla P6"]
+vendor_id = 0x10DE
+device_ids = [0x1BB4]
+shaders = 2048
+boost_mhz = 1506
+tflops_fp32 = 6.2
+vram_gb = 16
+memory_type = "GDDR5"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla V100-PCIE-16GB"
+aliases = ["NVIDIA Tesla V100-PCIE-16GB", "Tesla V100 PCIe 16GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB4]
+shaders = 5120
+boost_mhz = 1380
+tflops_fp32 = 14
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla V100-DGXS-32GB"
+aliases = ["NVIDIA Tesla V100-DGXS-32GB", "Tesla V100 DGXS 32GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB7]
+shaders = 5120
+boost_mhz = 1530
+tflops_fp32 = 15.7
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla V100-FHHL-16GB"
+aliases = ["NVIDIA Tesla V100-FHHL-16GB", "Tesla V100 FHHL 16GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB3]
+shaders = 5120
+boost_mhz = 1290
+tflops_fp32 = 13.2
+vram_gb = 16
+memory_type = "HBM2"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "Tesla V100-PCIE-32GB"
+aliases = ["NVIDIA Tesla V100-PCIE-32GB", "Tesla V100 PCIe 32GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB6]
+shaders = 5120
+boost_mhz = 1380
+tflops_fp32 = 14
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla V100-SXM2-32GB"
+aliases = ["NVIDIA Tesla V100-SXM2-32GB", "Tesla V100 SXM2 32GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB5]
+shaders = 5120
+boost_mhz = 1530
+tflops_fp32 = 15.7
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla V100-SXM3-32GB"
+aliases = ["NVIDIA Tesla V100-SXM3-32GB", "Tesla V100 SXM3 32GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DB8]
+shaders = 5120
+boost_mhz = 1530
+tflops_fp32 = 15.7
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "Tesla T4"
+aliases = ["NVIDIA Tesla T4", "NVIDIA T4"]
+vendor_id = 0x10DE
+device_ids = [0x1EB8]
+shaders = 2560
+boost_mhz = 1590
+tflops_fp32 = 8.1
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/data-center/tesla-t4/"
+
+[[gpu]]
+name = "Tesla V100S-PCIE-32GB"
+aliases = ["NVIDIA Tesla V100S-PCIE-32GB", "Tesla V100S PCIe 32GB"]
+vendor_id = 0x10DE
+device_ids = [0x1DF6]
+shaders = 5120
+boost_mhz = 1597
+tflops_fp32 = 16.4
+vram_gb = 32
+memory_type = "HBM2"
+source = "https://images.nvidia.com/content/technologies/volta/pdf/volta-v100-datasheet-update-us-1165301-r5.pdf"
+
+[[gpu]]
+name = "NVIDIA A100-SXM4-40GB"
+aliases = ["A100-SXM4-40GB", "NVIDIA A100 SXM4 40GB"]
+vendor_id = 0x10DE
+device_ids = [0x20B0]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 40
+memory_type = "HBM2"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf"
+
+[[gpu]]
+name = "NVIDIA A100-PCIE-40GB"
+aliases = ["A100-PCIE-40GB", "NVIDIA A100 PCIe 40GB"]
+vendor_id = 0x10DE
+device_ids = [0x20F1]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 40
+memory_type = "HBM2"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf"
+
+[[gpu]]
+name = "NVIDIA A40"
+aliases = ["A40"]
+vendor_id = 0x10DE
+device_ids = [0x2235]
+shaders = 10752
+boost_mhz = 1740
+tflops_fp32 = 37.4
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://images.nvidia.com/content/Solutions/data-center/a40/nvidia-a40-datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA A100-SXM4-80GB"
+aliases = ["A100-SXM4-80GB", "NVIDIA A100 SXM4 80GB"]
+vendor_id = 0x10DE
+device_ids = [0x20B2]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf"
+
+[[gpu]]
+name = "NVIDIA A10"
+aliases = ["A10", "NVIDIA A10 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2236]
+shaders = 9216
+boost_mhz = 1695
+tflops_fp32 = 31.2
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a10/pdf/datasheet-new/nvidia-a10-datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA A16"
+aliases = ["A16", "NVIDIA A16 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25B6]
+shaders = 1280
+boost_mhz = 1758
+tflops_fp32 = 4.5
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://images.nvidia.com/content/Solutions/data-center/vgpu-a16-datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA A30"
+aliases = ["A30", "NVIDIA A30 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x20B7]
+shaders = 3584
+boost_mhz = 1440
+tflops_fp32 = 10.3
+vram_gb = 24
+memory_type = "HBM2"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/data-center/products/a30-gpu/pdf/a30-datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA A100 80GB PCIe"
+aliases = ["A100 80GB PCIe", "NVIDIA A100-PCIE-80GB"]
+vendor_id = 0x10DE
+device_ids = [0x20B5]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf"
+
+[[gpu]]
+name = "NVIDIA A10G"
+aliases = ["A10G", "NVIDIA A10G Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2237]
+shaders = 10240
+boost_mhz = 1710
+tflops_fp32 = 35
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/data-center/products/a10-gpu/"
+
+[[gpu]]
+name = "NVIDIA A2"
+aliases = ["A2", "NVIDIA A2 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25B6]
+shaders = 1280
+boost_mhz = 1770
+tflops_fp32 = 4.5
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/data-center/products/a2/"
+
+[[gpu]]
+name = "NVIDIA T4G"
+aliases = ["T4G", "NVIDIA T4G Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x1EB4]
+shaders = 2560
+boost_mhz = 1590
+tflops_fp32 = 8.1
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/data-center/tesla-t4/"
+
+[[gpu]]
+name = "NVIDIA A100-SXM-64GB"
+aliases = ["A100-SXM-64GB"]
+vendor_id = 0x10DE
+device_ids = [0x20B3]
+shaders = 7936
+boost_mhz = 1395
+tflops_fp32 = 22.14
+vram_gb = 64
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/en-us/data-center/a100/"
+
+[[gpu]]
+name = "NVIDIA A100X"
+aliases = ["A100X Converged Accelerator"]
+vendor_id = 0x10DE
+device_ids = [0x20B8]
+shaders = 6912
+boost_mhz = 1437
+tflops_fp32 = 19.9
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.pny.com/file%20library/company/support/product%20brochures/nvidia%20converged%20accelerators/gtc21-fall-accelerated-computing-datasheet-converged-accelerators-6-2022.pdf"
+
+[[gpu]]
+name = "NVIDIA A30X"
+aliases = ["A30X Converged Accelerator"]
+vendor_id = 0x10DE
+device_ids = [0x20B9]
+shaders = 3584
+boost_mhz = 1440
+tflops_fp32 = 10.3
+vram_gb = 24
+memory_type = "HBM2e"
+source = "https://thegioimaychu.vn/nvidia-a30x-converged-accelerator-tm9290.html"
+
+[[gpu]]
+name = "NVIDIA H100 80GB HBM3"
+aliases = ["NVIDIA H100", "H100 SXM5 80GB", "NVIDIA H100 SXM5 80GB"]
+vendor_id = 0x10DE
+device_ids = [0x2330]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 67
+vram_gb = 80
+memory_type = "HBM3"
+source = "https://www.nvidia.com/en-us/data-center/h100/"
+
+[[gpu]]
+name = "NVIDIA H100 PCIe"
+aliases = ["H100 PCIe", "NVIDIA H100 80GB PCIe"]
+vendor_id = 0x10DE
+device_ids = [0x2331]
+shaders = 14592
+boost_mhz = 1755
+tflops_fp32 = 51
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.pny.com/file%20library/company/support/product%20brochures/nvidia%20data%20center%20gpus/nvidia-h100-datasheet.pdf"
+
+[[gpu]]
+name = "NVIDIA L40"
+aliases = ["L40"]
+vendor_id = 0x10DE
+device_ids = [0x26B5]
+shaders = 18176
+boost_mhz = 2490
+tflops_fp32 = 90.5
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/support-guide/NVIDIA-L40-Datasheet-January-2023.pdf"
+
+[[gpu]]
+name = "NVIDIA A800 80GB PCIe"
+aliases = ["A800 80GB PCIe", "NVIDIA A800 80GB PCIe LC"]
+vendor_id = 0x10DE
+device_ids = [0x20F5]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/en-us/data-center/a100/"
+
+[[gpu]]
+name = "NVIDIA A800-SXM4-40GB"
+aliases = ["A800-SXM4-40GB"]
+vendor_id = 0x10DE
+device_ids = [0x20BD]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 40
+memory_type = "HBM2"
+source = "https://www.nvidia.com/en-us/data-center/a100/"
+
+[[gpu]]
+name = "NVIDIA A800-SXM4-80GB"
+aliases = ["A800-SXM4-80GB"]
+vendor_id = 0x10DE
+device_ids = [0x20F3]
+shaders = 6912
+boost_mhz = 1410
+tflops_fp32 = 19.5
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/en-us/data-center/a100/"
+
+[[gpu]]
+name = "NVIDIA GH200 120GB"
+aliases = ["NVIDIA GH200 480GB", "GH200 Grace Hopper Superchip"]
+vendor_id = 0x10DE
+device_ids = [0x2342]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 67
+vram_gb = 96
+memory_type = "HBM3"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/tkno03fa645gb7f33w60rf200d330420.pdf"
+
+[[gpu]]
+name = "NVIDIA H100"
+aliases = ["H100 SXM5 94GB"]
+vendor_id = 0x10DE
+device_ids = [0x2339]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 66.9
+vram_gb = 94
+memory_type = "HBM3"
+source = "https://www.nvidia.com/en-us/data-center/h100/"
+
+[[gpu]]
+name = "NVIDIA H100 CNX"
+aliases = ["H100 CNX Converged Accelerator"]
+vendor_id = 0x10DE
+device_ids = [0x2313]
+shaders = 14592
+boost_mhz = 1845
+tflops_fp32 = 53.8
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://www.nvidia.com/en-us/data-center/h100/"
+
+[[gpu]]
+name = "NVIDIA H100 NVL"
+aliases = ["H100 NVL", "NVIDIA H100 NVL 94GB"]
+vendor_id = 0x10DE
+device_ids = [0x2321]
+shaders = 16896
+boost_mhz = 1785
+tflops_fp32 = 60
+vram_gb = 94
+memory_type = "HBM3"
+source = "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/h100/PB-11773-001_v01.pdf"
+
+[[gpu]]
+name = "NVIDIA H800 NVL"
+aliases = ["H800 NVL"]
+vendor_id = 0x10DE
+device_ids = [0x233A]
+shaders = 16896
+boost_mhz = 1785
+tflops_fp32 = 60
+vram_gb = 94
+memory_type = "HBM3"
+source = "https://lenovopress.lenovo.com/lp1814-thinksystem-nvidia-h800-pcie-gen5-gpu"
+
+[[gpu]]
+name = "NVIDIA H800"
+aliases = ["H800 SXM5 80GB"]
+vendor_id = 0x10DE
+device_ids = [0x2324]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 66.9
+vram_gb = 80
+memory_type = "HBM3"
+source = "https://en.wikipedia.org/wiki/Template:Nvidia_Tesla"
+
+[[gpu]]
+name = "NVIDIA H800 PCIe"
+aliases = ["H800 PCIe"]
+vendor_id = 0x10DE
+device_ids = [0x2322]
+shaders = 14592
+boost_mhz = 1755
+tflops_fp32 = 51
+vram_gb = 80
+memory_type = "HBM2e"
+source = "https://lenovopress.lenovo.com/lp1814-thinksystem-nvidia-h800-pcie-gen5-gpu"
+
+[[gpu]]
+name = "NVIDIA L4"
+aliases = ["L4", "NVIDIA L4 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x27B8]
+shaders = 7424
+boost_mhz = 2040
+tflops_fp32 = 30.3
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/8f4cjsr458mk07kxxt608b1ct0t570x7.pdf"
+
+[[gpu]]
+name = "NVIDIA L40S"
+aliases = ["L40S"]
+vendor_id = 0x10DE
+device_ids = [0x26B9]
+shaders = 18176
+boost_mhz = 2520
+tflops_fp32 = 91.6
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/data-center/l40s/"
+
+[[gpu]]
+name = "NVIDIA L20"
+aliases = ["L20", "NVIDIA L20 Tensor Core GPU"]
+vendor_id = 0x10DE
+device_ids = [0x26BA, 0x26B7]
+shaders = 11776
+boost_mhz = 2520
+tflops_fp32 = 59.8
+vram_gb = 48
+memory_type = "GDDR6"
+source = "https://www.scan.co.uk/products/48gb-pny-nvidia-l20-11776-cuda-368-tensor-92-rt-cores-gddr6-ecc-598-tflops-fp32-dp14a"
+
+[[gpu]]
+name = "NVIDIA GH200 144G HBM3e"
+aliases = ["GH200 144GB HBM3e"]
+vendor_id = 0x10DE
+device_ids = [0x2348]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 67
+vram_gb = 144
+memory_type = "HBM3e"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/tkno03fa645gb7f33w60rf200d330420.pdf"
+
+[[gpu]]
+name = "NVIDIA H20"
+aliases = ["H20", "NVIDIA HGX H20"]
+vendor_id = 0x10DE
+device_ids = [0x2329]
+shaders = 9984
+boost_mhz = 1980
+tflops_fp32 = 39.5
+vram_gb = 96
+memory_type = "HBM3"
+source = "https://wccftech.com/nvidia-china-compliant-h20-gpu-41-percent-fewer-cores-lower-performance-vs-top-hopper-h100/amp/"
+
+[[gpu]]
+name = "NVIDIA H200"
+aliases = ["H200 SXM 141GB", "NVIDIA H200 SXM"]
+vendor_id = 0x10DE
+device_ids = [0x2335]
+shaders = 16896
+boost_mhz = 1980
+tflops_fp32 = 67
+vram_gb = 141
+memory_type = "HBM3e"
+source = "https://www.nvidia.com/en-us/data-center/h200/"
+
+[[gpu]]
+name = "NVIDIA L2"
+aliases = ["L2"]
+vendor_id = 0x10DE
+device_ids = [0x27B6]
+tflops_fp32 = 24.1
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://flopper.io/gpu/nvidia-l2"
+
+[[gpu]]
+name = "NVIDIA H200 NVL"
+aliases = ["H200 NVL"]
+vendor_id = 0x10DE
+device_ids = [0x233B]
+shaders = 16896
+boost_mhz = 1785
+tflops_fp32 = 60
+vram_gb = 141
+memory_type = "HBM3e"
+source = "https://www.nvidia.com/en-us/data-center/h200/"
+
+[[gpu]]
+name = "NVIDIA B200"
+aliases = ["B200", "NVIDIA HGX B200", "NVIDIA B200 SXM"]
+vendor_id = 0x10DE
+device_ids = [0x2901, 0x2909]
+shaders = 18944
+boost_mhz = 1980
+tflops_fp32 = 75
+vram_gb = 180
+memory_type = "HBM3e"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/y441155802qub41q118b2852i557jem5.pdf"
+
+[[gpu]]
+name = "NVIDIA GB200"
+aliases = ["GB200", "NVIDIA GB200 Grace Blackwell Superchip"]
+vendor_id = 0x10DE
+device_ids = [0x2941]
+shaders = 18944
+boost_mhz = 2111
+tflops_fp32 = 80
+vram_gb = 186
+memory_type = "HBM3e"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/y441155802qub41q118b2852i557jem5.pdf"
+
+[[gpu]]
+name = "NVIDIA H20-3e"
+aliases = ["H20 141GB", "NVIDIA H20 HBM3e"]
+vendor_id = 0x10DE
+device_ids = [0x232C]
+shaders = 9984
+boost_mhz = 1980
+tflops_fp32 = 39.5
+vram_gb = 141
+memory_type = "HBM3e"
+source = "https://flopper.io/gpu/nvidia-h20-141gb"
+
+[[gpu]]
+name = "NVIDIA RTX 6000D"
+aliases = ["RTX 6000D"]
+vendor_id = 0x10DE
+device_ids = [0x2BB9]
+shaders = 19968
+boost_mhz = 2430
+tflops_fp32 = 97
+vram_gb = 84
+memory_type = "GDDR7"
+source = "https://www.pcgameshardware.de/Grafikkarten-Grafikkarte-97980/News/Nvidia-RTX-6000D-84-GiByte-auseinandergenommen-1498729/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+aliases = ["RTX PRO 6000 Blackwell Server Edition"]
+vendor_id = 0x10DE
+device_ids = [0x2BB5]
+shaders = 24064
+boost_mhz = 2493
+tflops_fp32 = 120
+vram_gb = 96
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/data-center/rtx-pro-6000-blackwell-server-edition/"
+
+[[gpu]]
+name = "NVIDIA B300 SXM6 AC"
+aliases = ["B300", "NVIDIA HGX B300", "NVIDIA B300"]
+vendor_id = 0x10DE
+device_ids = [0x3182]
+shaders = 18944
+boost_mhz = 1980
+tflops_fp32 = 75
+vram_gb = 270
+memory_type = "HBM3e"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/1k0p832eq8r5ca0u5383ie5o4tp3bst1.pdf"
+
+[[gpu]]
+name = "NVIDIA GB300"
+aliases = ["GB300", "NVIDIA GB300 Grace Blackwell Ultra Superchip"]
+vendor_id = 0x10DE
+device_ids = [0x31C2, 0x31C3]
+shaders = 18944
+boost_mhz = 2111
+tflops_fp32 = 80
+vram_gb = 279
+memory_type = "HBM3e"
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/1k0p832eq8r5ca0u5383ie5o4tp3bst1.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 4500 Blackwell Server Edition"
+aliases = ["RTX PRO 4500 Blackwell Server Edition"]
+vendor_id = 0x10DE
+device_ids = [0x2C3A]
+shaders = 10496
+boost_mhz = 2429
+tflops_fp32 = 51
+vram_gb = 32
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/data-center/rtx-pro-4500-blackwell-server-edition/"
+
+# ------------------------------------------------------------------------------------------------------ NVIDIA laptop
+
+[[gpu]]
+name = "Quadro RTX 3000"
+aliases = ["Quadro RTX 3000 Mobile / Max-Q", "Quadro RTX 3000 Mobile Refresh", "Quadro RTX 3000 with Max-Q Design", "Matrox D-Series D2450", "Matrox D-Series D2480"]
+vendor_id = 0x10DE
+device_ids = [0x1F36, 0x1F76]
+shaders = 1920
+boost_mhz = 1406
+tflops_fp32 = 5.4
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "Quadro RTX 3000 with Max-Q Design"
+aliases = ["Quadro RTX 3000 Mobile / Max-Q", "Quadro RTX 3000"]
+vendor_id = 0x10DE
+device_ids = [0x1F36]
+shaders = 1920
+boost_mhz = 1215
+tflops_fp32 = 4.67
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "Quadro RTX 4000"
+aliases = ["Quadro RTX 4000 Mobile / Max-Q", "Quadro RTX 4000 with Max-Q Design"]
+vendor_id = 0x10DE
+device_ids = [0x1EB6]
+shaders = 2560
+boost_mhz = 1560
+tflops_fp32 = 8
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "Quadro RTX 4000 with Max-Q Design"
+aliases = ["Quadro RTX 4000 Mobile / Max-Q", "Quadro RTX 4000"]
+vendor_id = 0x10DE
+device_ids = [0x1EB6]
+shaders = 2560
+boost_mhz = 1380
+tflops_fp32 = 7.1
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "Quadro RTX 5000"
+aliases = ["Quadro RTX 5000 Mobile / Max-Q", "Quadro RTX 5000 Mobile Refresh", "Quadro RTX 5000 with Max-Q Design"]
+vendor_id = 0x10DE
+device_ids = [0x1EB5, 0x1EF5]
+shaders = 3072
+boost_mhz = 1530
+tflops_fp32 = 9.4
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "Quadro RTX 5000 with Max-Q Design"
+aliases = ["Quadro RTX 5000 Mobile / Max-Q", "Quadro RTX 5000"]
+vendor_id = 0x10DE
+device_ids = [0x1EB5]
+shaders = 3072
+boost_mhz = 1350
+tflops_fp32 = 8.3
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3060 Laptop GPU"
+aliases = ["GeForce RTX 3060 Laptop GPU", "GeForce RTX 3060 Mobile / Max-Q"]
+vendor_id = 0x10DE
+device_ids = [0x2520, 0x2521, 0x2560]
+shaders = 3840
+boost_mhz = 1703
+tflops_fp32 = 13.1
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3070 Laptop GPU"
+aliases = ["GeForce RTX 3070 Laptop GPU", "GeForce RTX 3070 Mobile / Max-Q"]
+vendor_id = 0x10DE
+device_ids = [0x249D, 0x24DD]
+shaders = 5120
+boost_mhz = 1620
+tflops_fp32 = 16.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080 Laptop GPU"
+aliases = ["GeForce RTX 3080 Laptop GPU", "GeForce RTX 3080 Mobile / Max-Q 8GB/16GB", "NVIDIA GeForce RTX 3060 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x249C, 0x24DC]
+shaders = 6144
+boost_mhz = 1710
+tflops_fp32 = 21
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080 Laptop GPU"
+aliases = ["GeForce RTX 3080 Laptop GPU", "GeForce RTX 3080 Mobile / Max-Q 8GB/16GB", "NVIDIA GeForce RTX 3060 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x249C, 0x24DC]
+shaders = 6144
+boost_mhz = 1710
+tflops_fp32 = 21
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA RTX A2000 Laptop GPU"
+aliases = ["RTX A2000 Laptop GPU", "RTX A2000 Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x25B8]
+shaders = 2560
+boost_mhz = 1816
+tflops_fp32 = 9.3
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A3000 Laptop GPU"
+aliases = ["RTX A3000 Laptop GPU", "RTX A3000 Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x24B8]
+shaders = 4096
+boost_mhz = 1562
+tflops_fp32 = 12.8
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A4000 Laptop GPU"
+aliases = ["RTX A4000 Laptop GPU", "RTX A4000 Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x24B7]
+shaders = 5120
+boost_mhz = 1738
+tflops_fp32 = 17.8
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A5000 Laptop GPU"
+aliases = ["RTX A5000 Laptop GPU", "RTX A5000 Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x24B6]
+shaders = 6144
+boost_mhz = 1766
+tflops_fp32 = 21.7
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050 Laptop GPU"
+aliases = ["GeForce RTX 3050 Laptop GPU", "GeForce RTX 3050 Mobile", "GeForce RTX 3050 4GB Laptop GPU", "NVIDIA GeForce RTX 3050 Ti Laptop GPU", "NVIDIA GeForce RTX 3060 Laptop GPU", "NVIDIA GeForce RTX 3050 4GB Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25A2, 0x25A5, 0x25E2, 0x25E5, 0x25AB]
+shaders = 2048
+boost_mhz = 1740
+tflops_fp32 = 7.1
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050 Ti Laptop GPU"
+aliases = ["GeForce RTX 3050 Ti Laptop GPU", "GeForce RTX 3050 Ti Mobile / Max-Q", "GeForce RTX 3050 Ti Mobile", "NVIDIA GeForce RTX 3050Ti Laptop GPU", "NVIDIA GeForce RTX 3060 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2523, 0x2563, 0x25A0, 0x25E0]
+shaders = 2560
+boost_mhz = 1695
+tflops_fp32 = 8.7
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3070 Ti Laptop GPU"
+aliases = ["GeForce RTX 3070 Ti Laptop GPU", "Geforce RTX 3070 Ti Laptop GPU", "NVIDIA GeForce RTX 3060 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x24A0, 0x24E0]
+shaders = 5888
+boost_mhz = 1485
+tflops_fp32 = 17.5
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3080 Ti Laptop GPU"
+aliases = ["GeForce RTX 3080 Ti Laptop GPU", "GeForce RTX 3080 Ti Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2420, 0x2460]
+shaders = 7424
+boost_mhz = 1590
+tflops_fp32 = 23.6
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/30-series/"
+
+[[gpu]]
+name = "NVIDIA RTX A1000 Laptop GPU"
+aliases = ["RTX A1000 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25B9]
+shaders = 2048
+boost_mhz = 1831
+tflops_fp32 = 7.5
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A2000 8GB Laptop GPU"
+aliases = ["RTX A2000 8GB Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25BA]
+shaders = 2560
+boost_mhz = 1816
+tflops_fp32 = 9.3
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/resources/rtx-embedded/"
+
+[[gpu]]
+name = "NVIDIA RTX A3000 12GB Laptop GPU"
+aliases = ["RTX A3000 12GB Laptop GPU", "RTX A3000 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x24B9, 0x24BB]
+shaders = 4096
+boost_mhz = 1721
+tflops_fp32 = 14.1
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A4500 Laptop GPU"
+aliases = ["RTX A4500 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x24BA]
+shaders = 5888
+boost_mhz = 1571
+tflops_fp32 = 18.5
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A500 Laptop GPU"
+aliases = ["RTX A500 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25BB, 0x25BD]
+shaders = 2048
+boost_mhz = 1709
+tflops_fp32 = 7
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX A5500 Laptop GPU"
+aliases = ["RTX A5500 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2438]
+shaders = 7424
+boost_mhz = 1664
+tflops_fp32 = 24.7
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 3050 6GB Laptop GPU"
+aliases = ["GeForce RTX 3050 6GB Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25AC, 0x25EC]
+shaders = 2560
+boost_mhz = 1492
+tflops_fp32 = 7.6
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.notebookcheck.net/NVIDIA-GeForce-RTX-3050-6GB-Laptop-GPU-GPU-Benchmarks-and-Specs.692276.0.html"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4050 Laptop GPU"
+aliases = ["GeForce RTX 4050 Laptop GPU", "GeForce RTX 4050 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x28A1, 0x28E1]
+shaders = 2560
+boost_mhz = 2370
+tflops_fp32 = 12.1
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4060 Laptop GPU"
+aliases = ["GeForce RTX 4060 Laptop GPU", "GeForce RTX 4060 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x28A0, 0x28E0]
+shaders = 3072
+boost_mhz = 2370
+tflops_fp32 = 14.6
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4070 Laptop GPU"
+aliases = ["GeForce RTX 4070 Laptop GPU", "GeForce RTX 4070 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2820, 0x2860]
+shaders = 4608
+boost_mhz = 2175
+tflops_fp32 = 20
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4080 Laptop GPU"
+aliases = ["GeForce RTX 4080 Laptop GPU", "GeForce RTX 4080 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x27A0, 0x27E0]
+shaders = 7424
+boost_mhz = 2280
+tflops_fp32 = 33.9
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 4090 Laptop GPU"
+aliases = ["GeForce RTX 4090 Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2717, 0x2757]
+shaders = 9728
+boost_mhz = 2040
+tflops_fp32 = 39.7
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 2000 Ada Generation Laptop GPU"
+aliases = ["RTX 2000 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x28B8]
+shaders = 3072
+boost_mhz = 2360
+tflops_fp32 = 14.5
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 3000 Ada Generation Laptop GPU"
+aliases = ["RTX 3000 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2838]
+shaders = 4608
+boost_mhz = 2159
+tflops_fp32 = 19.9
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 3500 Ada Generation Laptop GPU"
+aliases = ["RTX 3500 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x27BB]
+shaders = 5120
+boost_mhz = 2246
+tflops_fp32 = 23
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 4000 Ada Generation Laptop GPU"
+aliases = ["RTX 4000 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x27BA]
+shaders = 7424
+boost_mhz = 2263
+tflops_fp32 = 33.6
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 5000 Ada Generation Laptop GPU"
+aliases = ["RTX 5000 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2730]
+shaders = 9728
+boost_mhz = 2190
+tflops_fp32 = 42.6
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX A1000 6GB Laptop GPU"
+aliases = ["RTX A1000 6GB Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x25BC]
+shaders = 2560
+boost_mhz = 1816
+tflops_fp32 = 9.3
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://en.wikipedia.org/wiki/List_of_Nvidia_graphics_processing_units"
+
+[[gpu]]
+name = "NVIDIA RTX 1000 Ada Generation Laptop GPU"
+aliases = ["RTX 1000 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x28B9]
+shaders = 2560
+boost_mhz = 2363
+tflops_fp32 = 12.1
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX 500 Ada Generation Laptop GPU"
+aliases = ["RTX 500 Ada Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x28BA, 0x28BB]
+shaders = 2048
+boost_mhz = 2246
+tflops_fp32 = 9.2
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 1000 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 1000 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2DB8]
+shaders = 2560
+boost_mhz = 2656
+tflops_fp32 = 13.6
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 2000 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 2000 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2D39]
+shaders = 3328
+boost_mhz = 2659
+tflops_fp32 = 17.7
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 3000 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 3000 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2F38]
+shaders = 5888
+boost_mhz = 2471
+tflops_fp32 = 29.1
+vram_gb = 12
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 4000 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2C39]
+shaders = 7680
+boost_mhz = 2520
+tflops_fp32 = 38.7
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 500 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 500 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2DB9]
+shaders = 1792
+boost_mhz = 2567
+tflops_fp32 = 9.2
+vram_gb = 6
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA RTX PRO 5000 Blackwell Generation Laptop GPU"
+aliases = ["RTX PRO 5000 Blackwell Generation Laptop GPU"]
+vendor_id = 0x10DE
+device_ids = [0x2C38]
+shaders = 10496
+boost_mhz = 2372
+tflops_fp32 = 49.8
+vram_gb = 24
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/products/workstations/professional-laptops/compare/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070 Ti Laptop GPU"
+aliases = ["GeForce RTX 5070 Ti Laptop GPU", "GeForce RTX 5070 Ti Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2F18, 0x2F58]
+shaders = 5888
+boost_mhz = 2220
+tflops_fp32 = 26.1
+vram_gb = 12
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5080 Laptop GPU"
+aliases = ["GeForce RTX 5080 Laptop GPU", "GeForce RTX 5080 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2C19, 0x2C59]
+shaders = 7680
+boost_mhz = 2287
+tflops_fp32 = 35.1
+vram_gb = 16
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5090 Laptop GPU"
+aliases = ["GeForce RTX 5090 Laptop GPU", "GeForce RTX 5090 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2C18, 0x2C58]
+shaders = 10496
+boost_mhz = 2160
+tflops_fp32 = 45.3
+vram_gb = 24
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070 Laptop GPU"
+aliases = ["GeForce RTX 5070 Laptop GPU", "GeForce RTX 5070 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2D18, 0x2D58]
+shaders = 4608
+boost_mhz = 2347
+tflops_fp32 = 21.6
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5060 Laptop GPU"
+aliases = ["GeForce RTX 5060 Laptop GPU", "GeForce RTX 5060 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2D19, 0x2D59]
+shaders = 3328
+boost_mhz = 2497
+tflops_fp32 = 16.6
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5050 Laptop GPU"
+aliases = ["GeForce RTX 5050 Laptop GPU", "GeForce RTX 5050 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2D98, 0x2DD8]
+shaders = 2560
+boost_mhz = 2662
+tflops_fp32 = 13.6
+vram_gb = 8
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/50-series/"
+
+[[gpu]]
+name = "NVIDIA GeForce RTX 5070 Laptop GPU"
+aliases = ["GeForce RTX 5070 Laptop GPU", "GeForce RTX 5070 Max-Q / Mobile"]
+vendor_id = 0x10DE
+device_ids = [0x2D18, 0x2D58]
+shaders = 4608
+boost_mhz = 2347
+tflops_fp32 = 21.6
+vram_gb = 12
+memory_type = "GDDR7"
+source = "https://www.nvidia.com/en-us/geforce/laptops/compare/"
+
+# -------------------------------------------------------------------------------------------------- NVIDIA integrated
+
+[[gpu]]
+name = "NVIDIA GB10"
+aliases = ["NVIDIA DGX Spark", "NVIDIA GB10 Grace Blackwell Superchip", "GB20B GB10"]
+vendor_id = 0x10DE
+device_ids = [0x2E12]
+shaders = 6144
+boost_mhz = 2523
+tflops_fp32 = 31
+vram_gb = 128
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.hc2025.hotchips.org/assets/program/conference/day2/21_nvidia_skende_final.pdf"
+
+[[gpu]]
+name = "NVIDIA RTX Spark N1X (5120-core Blackwell RTX GPU)"
+aliases = ["NVIDIA RTX Spark N1X", "N1X 650", "RTX Spark N1X 5120"]
+vendor_id = 0x10DE
+device_ids = [0x2E06]
+shaders = 5120
+boost_mhz = 2300
+tflops_fp32 = 23.6
+vram_gb = 64
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.nvidia.com/en-us/products/rtx-spark/"
+
+[[gpu]]
+name = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)"
+aliases = ["NVIDIA RTX Spark N1X", "N1X 675", "RTX Spark N1X 6144"]
+vendor_id = 0x10DE
+device_ids = [0x2E03]
+shaders = 6144
+boost_mhz = 2300
+tflops_fp32 = 28.3
+vram_gb = 128
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://www.nvidia.com/en-us/products/rtx-spark/"
+
+# ---------------------------------------------------------------------------------------------------- NVIDIA embedded
+
+[[gpu]]
+name = "NVIDIA Jetson AGX Orin 32GB"
+aliases = ["Jetson AGX Orin 32GB", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 1792
+boost_mhz = 939
+tflops_fp32 = 3.365
+vram_gb = 32
+memory_type = "LPDDR5"
+integrated = true
+source = "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/5380/Jetson_AGX_Orin_Series_Data_Sheet_DS-10662-001_v1.5.pdf"
+
+[[gpu]]
+name = "NVIDIA Jetson AGX Orin 64GB"
+aliases = ["Jetson AGX Orin 64GB", "Orin (nvgpu)", "NVIDIA Jetson AGX Orin Developer Kit"]
+vendor_id = 0x10DE
+shaders = 2048
+boost_mhz = 1300
+tflops_fp32 = 5.32
+vram_gb = 64
+memory_type = "LPDDR5"
+integrated = true
+source = "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/5380/Jetson_AGX_Orin_Series_Data_Sheet_DS-10662-001_v1.5.pdf"
+
+[[gpu]]
+name = "NVIDIA Jetson AGX Orin Industrial"
+aliases = ["Jetson AGX Orin Industrial", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 2048
+boost_mhz = 1185
+tflops_fp32 = 4.8
+vram_gb = 64
+memory_type = "LPDDR5"
+integrated = true
+source = "https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/5380/Jetson_AGX_Orin_Series_Data_Sheet_DS-10662-001_v1.5.pdf"
+
+[[gpu]]
+name = "NVIDIA Jetson Orin NX 16GB"
+aliases = ["Jetson Orin NX 16GB", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 1024
+boost_mhz = 1173
+tflops_fp32 = 2.4
+vram_gb = 16
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/"
+
+[[gpu]]
+name = "NVIDIA Jetson Orin NX 8GB"
+aliases = ["Jetson Orin NX 8GB", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 1024
+boost_mhz = 1173
+tflops_fp32 = 2.4
+vram_gb = 8
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/"
+
+[[gpu]]
+name = "NVIDIA Jetson Orin Nano 4GB"
+aliases = ["Jetson Orin Nano 4GB", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 512
+boost_mhz = 1020
+tflops_fp32 = 1.04
+vram_gb = 4
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/"
+
+[[gpu]]
+name = "NVIDIA Jetson Orin Nano 8GB"
+aliases = ["Jetson Orin Nano 8GB", "Jetson Orin Nano Super", "Orin (nvgpu)"]
+vendor_id = 0x10DE
+shaders = 1024
+boost_mhz = 1020
+tflops_fp32 = 2.1
+vram_gb = 8
+memory_type = "LPDDR5"
+integrated = true
+source = "https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/"
+
+[[gpu]]
+name = "NVIDIA Jetson AGX Thor (T5000)"
+aliases = ["NVIDIA Jetson Thor", "NVIDIA Jetson AGX Thor Developer Kit", "NVIDIA Thor (nvgpu)", "Jetson T5000"]
+vendor_id = 0x10DE
+device_ids = [0x2B00]
+shaders = 2560
+boost_mhz = 1570
+tflops_fp32 = 8
+vram_gb = 128
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/x20v2h2y15uh0ne54rpb73xh4x7s0m1s.pdf"
+
+[[gpu]]
+name = "NVIDIA Jetson T4000"
+aliases = ["NVIDIA Jetson AGX Thor T4000", "Jetson T4000"]
+vendor_id = 0x10DE
+shaders = 1536
+boost_mhz = 1530
+tflops_fp32 = 4.7
+vram_gb = 64
+memory_type = "LPDDR5X"
+integrated = true
+source = "https://dam-cdn.nvd.orangelogic.com/AssetLink/x20v2h2y15uh0ne54rpb73xh4x7s0m1s.pdf"
+
+# ------------------------------------------------------------------------------------------------------ Intel desktop
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe Graphics"
+aliases = ["Intel Iris Xe Graphics (DG1 desktop)", "Iris Xe DG1"]
+vendor_id = 0x8086
+device_ids = [0x4908]
+shaders = 640
+boost_mhz = 1500
+tflops_fp32 = 1.92
+vram_gb = 4
+memory_type = "LPDDR4X"
+source = "https://www.tomshardware.com/news/asus-iris-xe-dg1-specifications"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A380 Graphics"
+aliases = ["Intel Arc A380 Graphics", "Arc A380", "Intel(R) Arc(tm) A380 Graphics", "Matrox LUMA A380"]
+vendor_id = 0x8086
+device_ids = [0x56A5]
+shaders = 1024
+boost_mhz = 2000
+tflops_fp32 = 4.1
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/227959/intel-arc-a380-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A310 Graphics"
+aliases = ["Intel Arc A310 Graphics", "Arc A310", "Intel(R) Arc(tm) A310 Graphics", "Intel(R) Arc(TM) A310 LP Graphics", "Intel(R) Arc(TM) A350 Graphics", "Matrox LUMA A310"]
+vendor_id = 0x8086
+device_ids = [0x56A6]
+shaders = 768
+boost_mhz = 2000
+tflops_fp32 = 3.07
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/227958/intel-arc-a310-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A750 Graphics"
+aliases = ["Intel Arc A750 Graphics", "Arc A750", "Intel(R) Arc(tm) A750 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56A1]
+shaders = 3584
+boost_mhz = 2050
+tflops_fp32 = 14.7
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/227954/intel-arc-a750-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A770 Graphics"
+aliases = ["Intel Arc A770 Graphics", "Arc A770 8GB", "Intel(R) Arc(tm) A770 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56A0]
+shaders = 4096
+boost_mhz = 2100
+tflops_fp32 = 17.2
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/227955/intel-arc-a770-graphics-8gb/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A770 Graphics"
+aliases = ["Intel Arc A770 Graphics", "Arc A770 16GB", "Intel(R) Arc(tm) A770 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56A0]
+shaders = 4096
+boost_mhz = 2100
+tflops_fp32 = 17.2
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/229151/intel-arc-a770-graphics-16gb/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A580 Graphics"
+aliases = ["Intel Arc A580 Graphics", "Arc A580", "Intel(R) Arc(tm) A580 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56A2]
+shaders = 3072
+boost_mhz = 1700
+tflops_fp32 = 10.4
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/227961/intel-arc-a580-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B580 Graphics"
+aliases = ["Intel Arc B580 Graphics", "Arc B580", "Intel(R) Arc(tm) B580 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xE20B, 0xE209]
+shaders = 2560
+boost_mhz = 2670
+tflops_fp32 = 13.67
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/241598/intel-arc-b580-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B570 Graphics"
+aliases = ["Intel Arc B570 Graphics", "Arc B570", "Intel(R) Arc(tm) B570 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xE20C]
+shaders = 2304
+boost_mhz = 2500
+tflops_fp32 = 11.52
+vram_gb = 10
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/241676/intel-arc-b570-graphics/specifications.html"
+
+# -------------------------------------------------------------------------------------------------- Intel workstation
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro A40/A50 Graphics"
+aliases = ["Intel Arc Pro A40 Graphics", "Arc Pro A40", "Intel(R) Arc(TM) Pro A40 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56B1]
+shaders = 1024
+boost_mhz = 2450
+tflops_fp32 = 5.02
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://web.archive.org/web/20231101/https://www.intel.com/content/www/us/en/products/docs/arc-discrete-graphics/a-series/workstation/overview.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro A40/A50 Graphics"
+aliases = ["Intel Arc Pro A50 Graphics", "Arc Pro A50", "Intel(R) Arc(TM) Pro A50 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x56B1]
+shaders = 1024
+boost_mhz = 2450
+tflops_fp32 = 5.02
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://web.archive.org/web/20231101/https://www.intel.com/content/www/us/en/products/docs/arc-discrete-graphics/a-series/workstation/overview.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro A60 Graphics"
+aliases = ["Intel Arc Pro A60 Graphics", "Arc Pro A60"]
+vendor_id = 0x8086
+device_ids = [0x56B3]
+shaders = 2048
+boost_mhz = 2450
+tflops_fp32 = 10.04
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://web.archive.org/web/20231101/https://www.intel.com/content/www/us/en/products/docs/arc-discrete-graphics/a-series/workstation/overview.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B60 Graphics"
+aliases = ["Intel Arc Pro B60 Graphics", "Arc Pro B60", "Intel(R) Arc(tm) Pro B60 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xE211]
+shaders = 2560
+boost_mhz = 2400
+tflops_fp32 = 12.28
+vram_gb = 24
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/243916/intel-arc-pro-b60-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B50 Graphics"
+aliases = ["Intel Arc Pro B50 Graphics", "Arc Pro B50", "Intel(R) Arc(tm) Pro B50 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xE212]
+shaders = 2048
+boost_mhz = 2600
+tflops_fp32 = 10.65
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/242615/intel-arc-pro-b50-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B70 Graphics"
+aliases = ["Intel Arc Pro B70 Graphics", "Arc Pro B70", "Intel(R) Arc(tm) Pro B70 Graphics", "Intel(R) Graphics [0xe223]"]
+vendor_id = 0x8086
+device_ids = [0xE223]
+shaders = 4096
+boost_mhz = 2800
+tflops_fp32 = 22.94
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/245797/intel-arc-pro-b70-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B65 Graphics"
+aliases = ["Intel Arc Pro B65 Graphics", "Arc Pro B65", "Intel(R) Arc(tm) Pro B65 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xE222]
+shaders = 2560
+boost_mhz = 2400
+tflops_fp32 = 12.28
+vram_gb = 32
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/245796/intel-arc-pro-b65-graphics/specifications.html"
+
+# --------------------------------------------------------------------------------------------------- Intel datacenter
+
+[[gpu]]
+name = "Intel(R) Data Center GPU Flex 140"
+aliases = ["Intel Data Center GPU Flex 140", "Data Center GPU Flex Series 140"]
+vendor_id = 0x8086
+device_ids = [0x56C1]
+shaders = 1024
+boost_mhz = 1950
+tflops_fp32 = 3.99
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/230020/intel-data-center-gpu-flex-140/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Data Center GPU Flex 170"
+aliases = ["Intel Data Center GPU Flex 170", "Data Center GPU Flex Series 170"]
+vendor_id = 0x8086
+device_ids = [0x56C0]
+shaders = 4096
+boost_mhz = 2050
+tflops_fp32 = 16.79
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/230019/intel-data-center-gpu-flex-170/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Data Center GPU Max 1100"
+aliases = ["Intel Data Center GPU Max 1100", "Data Center GPU Max 1100"]
+vendor_id = 0x8086
+device_ids = [0x0BDA, 0x0BD9, 0x0BDB]
+shaders = 7168
+boost_mhz = 1550
+tflops_fp32 = 22.22
+vram_gb = 48
+memory_type = "HBM2e"
+source = "https://www.intel.com/content/www/us/en/products/sku/232876/intel-data-center-gpu-max-1100/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Data Center GPU Max 1550"
+aliases = ["Intel Data Center GPU Max 1550", "Data Center GPU Max 1550"]
+vendor_id = 0x8086
+device_ids = [0x0BD5, 0x0BD6]
+shaders = 16384
+boost_mhz = 1600
+tflops_fp32 = 52.43
+vram_gb = 128
+memory_type = "HBM2e"
+source = "https://www.intel.com/content/www/us/en/products/sku/232873/intel-data-center-gpu-max-1550/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Data Center GPU Flex 170V"
+aliases = ["Intel Data Center GPU Flex 170V"]
+vendor_id = 0x8086
+device_ids = [0x56C2]
+shaders = 4096
+boost_mhz = 2050
+tflops_fp32 = 16.79
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/details/discrete-gpus/data-center-gpu/flex-series.html"
+
+# ------------------------------------------------------------------------------------------------------- Intel laptop
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe MAX Graphics"
+aliases = ["Intel Iris Xe MAX Graphics", "Iris Xe MAX", "Intel(R) Iris(R) Xe MAX 100 Graphics"]
+vendor_id = 0x8086
+device_ids = [0x4905]
+shaders = 768
+boost_mhz = 1650
+tflops_fp32 = 2.53
+vram_gb = 4
+memory_type = "LPDDR4X"
+source = "https://www.techradar.com/news/intel-joins-forces-with-asus-to-launch-its-first-iris-xe-desktop-graphics-cards"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A550M Graphics"
+aliases = ["Intel Arc A550M Graphics", "Arc A550M"]
+vendor_id = 0x8086
+device_ids = [0x5692]
+shaders = 2048
+boost_mhz = 900
+tflops_fp32 = 3.69
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/228343/intel-arc-a550m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A730M Graphics"
+aliases = ["Intel Arc A730M Graphics", "Arc A730M"]
+vendor_id = 0x8086
+device_ids = [0x5691]
+shaders = 3072
+boost_mhz = 1100
+tflops_fp32 = 6.76
+vram_gb = 12
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/228340/intel-arc-a730m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A770M Graphics"
+aliases = ["Intel Arc A770M Graphics", "Arc A770M"]
+vendor_id = 0x8086
+device_ids = [0x5690]
+shaders = 4096
+boost_mhz = 1650
+tflops_fp32 = 13.52
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/228341/intel-arc-a770m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A350M Graphics"
+aliases = ["Intel Arc A350M Graphics", "Arc A350M"]
+vendor_id = 0x8086
+device_ids = [0x5694]
+shaders = 768
+boost_mhz = 1150
+tflops_fp32 = 1.77
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/228338/intel-arc-a350m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A370M Graphics"
+aliases = ["Intel Arc A370M Graphics", "Arc A370M"]
+vendor_id = 0x8086
+device_ids = [0x5693]
+shaders = 1024
+boost_mhz = 1550
+tflops_fp32 = 3.17
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/228342/intel-arc-a370m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro A30M Graphics"
+aliases = ["Intel Arc Pro A30M Graphics", "Arc Pro A30M"]
+vendor_id = 0x8086
+device_ids = [0x56B0]
+shaders = 1024
+boost_mhz = 2050
+tflops_fp32 = 4.2
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://web.archive.org/web/20231101/https://www.intel.com/content/www/us/en/products/docs/arc-discrete-graphics/a-series/workstation/overview.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A530M Graphics"
+aliases = ["Intel Arc A530M Graphics", "Arc A530M"]
+vendor_id = 0x8086
+device_ids = [0x5697]
+shaders = 1536
+boost_mhz = 1200
+tflops_fp32 = 3.69
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/232776/intel-arc-a530m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A570M Graphics"
+aliases = ["Intel Arc A570M Graphics", "Arc A570M"]
+vendor_id = 0x8086
+device_ids = [0x5696]
+shaders = 2048
+boost_mhz = 1300
+tflops_fp32 = 5.32
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/232777/intel-arc-a570m-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro A60M Graphics"
+aliases = ["Intel Arc Pro A60M Graphics", "Arc Pro A60M"]
+vendor_id = 0x8086
+device_ids = [0x56B2]
+shaders = 2048
+boost_mhz = 2300
+tflops_fp32 = 9.42
+vram_gb = 8
+memory_type = "GDDR6"
+source = "https://web.archive.org/web/20231101/https://www.intel.com/content/www/us/en/products/docs/arc-discrete-graphics/a-series/workstation/overview.html"
+
+# --------------------------------------------------------------------------------------------------- Intel integrated
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 620"
+aliases = ["Intel UHD Graphics 620"]
+vendor_id = 0x8086
+device_ids = [0x5917, 0x3EA0, 0x3EA9]
+shaders = 192
+boost_mhz = 1150
+tflops_fp32 = 0.44
+memory_type = "shared system memory"
+integrated = true
+source = "https://en.wikipedia.org/wiki/List_of_Intel_graphics_processing_units"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 630"
+aliases = ["Intel UHD Graphics 630"]
+vendor_id = 0x8086
+device_ids = [0x3E92, 0x3E91, 0x3E98, 0x3E9B, 0x9BC5, 0x9BC8]
+shaders = 192
+boost_mhz = 1200
+tflops_fp32 = 0.46
+memory_type = "shared system memory"
+integrated = true
+source = "https://en.wikipedia.org/wiki/List_of_Intel_graphics_processing_units"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Plus Graphics"
+aliases = ["Intel Iris Plus Graphics G7", "Intel(R) Iris(R) Plus Graphics 940", "Intel(R) Iris(R) Plus Graphics 950", "Intel(R) Iris(R) Plus Graphics 930"]
+vendor_id = 0x8086
+device_ids = [0x8A52, 0x8A51, 0x8A53]
+shaders = 512
+boost_mhz = 1100
+tflops_fp32 = 1.13
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/196597/intel-core-i71065g7-processor-8m-cache-up-to-3-90-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Plus Graphics"
+aliases = ["Intel Iris Plus Graphics G4"]
+vendor_id = 0x8086
+device_ids = [0x8A5A, 0x8A5C]
+shaders = 384
+boost_mhz = 1050
+tflops_fp32 = 0.81
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/196591/intel-core-i51035g4-processor-6m-cache-up-to-3-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics"
+aliases = ["Intel UHD Graphics G1", "Intel UHD Graphics for 10th Gen Intel Processors"]
+vendor_id = 0x8086
+device_ids = [0x8A56, 0x8A58]
+shaders = 256
+boost_mhz = 1050
+tflops_fp32 = 0.54
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/196603/intel-core-i51035g1-processor-6m-cache-up-to-3-60-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe Graphics"
+aliases = ["Intel Iris Xe Graphics", "Iris Xe Graphics G7 96EU"]
+vendor_id = 0x8086
+device_ids = [0x9A49, 0x9A40]
+shaders = 768
+boost_mhz = 1400
+tflops_fp32 = 2.15
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/217181/intel-core-i71195g7-processor-12m-cache-up-to-5-00-ghz-with-ipu/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe Graphics"
+aliases = ["Intel Iris Xe Graphics", "Iris Xe Graphics G7 80EU"]
+vendor_id = 0x8086
+device_ids = [0x9A49, 0x9A40]
+shaders = 640
+boost_mhz = 1300
+tflops_fp32 = 1.66
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/208658/intel-core-i51135g7-processor-8m-cache-up-to-4-20-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics"
+aliases = ["Intel UHD Graphics for 11th Gen Intel Processors", "Intel(R) UHD Graphics G4"]
+vendor_id = 0x8086
+device_ids = [0x9A78]
+shaders = 384
+boost_mhz = 1250
+tflops_fp32 = 0.96
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/208652/intel-core-i31115g4-processor-6m-cache-up-to-4-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 730"
+aliases = ["Intel UHD Graphics 730"]
+vendor_id = 0x8086
+device_ids = [0x4C8B, 0x4682, 0x4692, 0xA782]
+shaders = 192
+boost_mhz = 1550
+tflops_fp32 = 0.6
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/236788/intel-core-i5-processor-14400-20m-cache-up-to-4-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 750"
+aliases = ["Intel UHD Graphics 750"]
+vendor_id = 0x8086
+device_ids = [0x4C8A]
+shaders = 256
+boost_mhz = 1300
+tflops_fp32 = 0.67
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/212325/intel-core-i911900k-processor-16m-cache-up-to-5-30-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics"
+aliases = ["Intel UHD Graphics for 11th Gen Intel Processors"]
+vendor_id = 0x8086
+device_ids = [0x9A60, 0x9A68, 0x9A70]
+shaders = 256
+boost_mhz = 1450
+tflops_fp32 = 0.74
+memory_type = "shared system memory"
+integrated = true
+source = "http://www.intel.com/content/www/us/en/products/sku/213801/intel-core-i911900h-processor-24m-cache-up-to-4-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 770"
+aliases = ["Intel UHD Graphics 770"]
+vendor_id = 0x8086
+device_ids = [0x4680, 0x4688, 0x4690, 0xA780, 0xA781, 0xA788, 0xA78A, 0xA78B]
+shaders = 256
+boost_mhz = 1650
+tflops_fp32 = 0.84
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/230496/intel-core-i913900k-processor-36m-cache-up-to-5-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics 710"
+aliases = ["Intel UHD Graphics 710"]
+vendor_id = 0x8086
+device_ids = [0x4693, 0xA783]
+shaders = 128
+boost_mhz = 1450
+tflops_fp32 = 0.37
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/96163/intel-celeron-processor-g6900-4m-cache-3-40-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel UHD Graphics for 13th Gen Intel Processors", "Intel(R) UHD Graphics"]
+vendor_id = 0x8086
+device_ids = [0xA7A9, 0x46A3, 0x46B3, 0x46C3]
+shaders = 512
+boost_mhz = 1400
+tflops_fp32 = 1.43
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/232136/intel-core-i31315u-processor-10m-cache-up-to-4-50-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe Graphics"
+aliases = ["Intel Iris Xe Graphics"]
+vendor_id = 0x8086
+device_ids = [0x46A6, 0x46A8, 0x46AA, 0x46B0, 0x46B1, 0x46C1, 0xA7A0, 0xA7A1]
+shaders = 768
+boost_mhz = 1500
+tflops_fp32 = 2.3
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/232128/intel-core-i713700h-processor-24m-cache-up-to-5-00-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Iris(R) Xe Graphics"
+aliases = ["Intel Iris Xe Graphics"]
+vendor_id = 0x8086
+device_ids = [0x46A6, 0x46A8, 0x46AA, 0x46B0, 0x46B1, 0x46C1, 0xA7A0, 0xA7A1]
+shaders = 640
+boost_mhz = 1450
+tflops_fp32 = 1.86
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/232147/intel-core-i513500h-processor-18m-cache-up-to-4-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) UHD Graphics"
+aliases = ["Intel Graphics (Alder Lake-N)", "Intel(R) Graphics"]
+vendor_id = 0x8086
+device_ids = [0x46D0, 0x46D1, 0x46D2, 0x46D3, 0x46D4]
+shaders = 256
+boost_mhz = 1350
+tflops_fp32 = 0.69
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/231805/intel-core-i3n305-processor-6m-cache-up-to-3-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Graphics"
+aliases = ["Intel(R) Arc(TM) Pro Graphics", "Intel Arc Graphics", "Intel Arc Graphics (8-core)"]
+vendor_id = 0x8086
+device_ids = [0x7D55]
+shaders = 1024
+boost_mhz = 2350
+tflops_fp32 = 4.81
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/236849/intel-core-ultra-9-processor-185h-24m-cache-up-to-5-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Graphics"
+aliases = ["Intel(R) Arc(TM) Pro Graphics", "Intel Arc Graphics (7-core)"]
+vendor_id = 0x8086
+device_ids = [0x7D55]
+shaders = 896
+boost_mhz = 2200
+tflops_fp32 = 3.94
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/236848/intel-core-ultra-5-processor-125h-18m-cache-up-to-4-50-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Meteor Lake U)"]
+vendor_id = 0x8086
+device_ids = [0x7D45, 0x7D40, 0x7D60]
+shaders = 512
+boost_mhz = 2000
+tflops_fp32 = 2.05
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/237329/intel-core-ultra-7-processor-165u-12m-cache-up-to-4-90-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Meteor Lake U 3-core)"]
+vendor_id = 0x8086
+device_ids = [0x7D45]
+shaders = 384
+boost_mhz = 1800
+tflops_fp32 = 1.38
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/237505/intel-core-ultra-5-processor-115u-10m-cache-up-to-4-20-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) 130V GPU (16GB)"
+aliases = ["Intel(R) Arc(TM) 130V GPU", "Intel Arc Graphics 130V", "Intel(R) Arc(TM) Graphics"]
+vendor_id = 0x8086
+device_ids = [0x64A0]
+shaders = 896
+boost_mhz = 1850
+tflops_fp32 = 3.32
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/240951/intel-core-ultra-5-processor-238v-8m-cache-up-to-4-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) 140V GPU (16GB)"
+aliases = ["Intel(R) Arc(TM) 140V GPU", "Intel(R) Arc(TM) 140V GPU (32GB)", "Intel(R) Arc(TM) 140V GPU (8GB)", "Intel Arc Graphics 140V", "Intel(R) Arc(TM) Graphics"]
+vendor_id = 0x8086
+device_ids = [0x64A0]
+shaders = 1024
+boost_mhz = 2050
+tflops_fp32 = 4.2
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/240961/intel-core-ultra-9-processor-288v-12m-cache-up-to-5-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Arrow Lake S/HX)"]
+vendor_id = 0x8086
+device_ids = [0x7D67]
+shaders = 512
+boost_mhz = 2000
+tflops_fp32 = 2.05
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/241060/intel-core-ultra-9-processor-285k-36m-cache-up-to-5-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) 130T GPU (16GB)"
+aliases = ["Intel(R) Arc(TM) 130T GPU", "Intel Arc Graphics 130T"]
+vendor_id = 0x8086
+device_ids = [0x7D51]
+shaders = 896
+boost_mhz = 2200
+tflops_fp32 = 3.94
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/241749/intel-core-ultra-5-processor-225h-18m-cache-up-to-4-90-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) 140T GPU (16GB)"
+aliases = ["Intel(R) Arc(TM) 140T GPU", "Intel Arc Graphics 140T", "Intel(R) Arc(TM) Pro Graphics"]
+vendor_id = 0x8086
+device_ids = [0x7D51]
+shaders = 1024
+boost_mhz = 2350
+tflops_fp32 = 4.81
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/241747/intel-core-ultra-9-processor-285h-24m-cache-up-to-5-40-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Arrow Lake U)"]
+vendor_id = 0x8086
+device_ids = [0x7D41]
+shaders = 512
+boost_mhz = 2100
+tflops_fp32 = 2.15
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/241861/intel-core-ultra-5-processor-225u-12m-cache-up-to-4-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Arrow Lake HX 3-core)"]
+vendor_id = 0x8086
+device_ids = [0x7D67]
+shaders = 384
+boost_mhz = 1900
+tflops_fp32 = 1.46
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/242295/intel-core-ultra-5-processor-245hx-24m-cache-up-to-5-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B370 GPU"
+aliases = ["Intel Arc B370 GPU", "Intel Arc B370"]
+vendor_id = 0x8086
+device_ids = [0xB081, 0xB083]
+shaders = 1280
+boost_mhz = 2400
+tflops_fp32 = 6.14
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245531/intel-core-ultra-5-processor-338h-18m-cache-up-to-4-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B390 GPU"
+aliases = ["Intel Arc B390 GPU", "Intel Arc B390", "Intel(R) Arc(TM) B390 Graphics"]
+vendor_id = 0x8086
+device_ids = [0xB080, 0xB082]
+shaders = 1536
+boost_mhz = 2500
+tflops_fp32 = 7.68
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245526/intel-core-ultra-x9-processor-388h-18m-cache-up-to-5-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B370 GPU"
+aliases = ["Intel Arc Pro B370 GPU"]
+vendor_id = 0x8086
+device_ids = [0xB085, 0xB087]
+shaders = 1280
+boost_mhz = 2400
+tflops_fp32 = 6.14
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245531/intel-core-ultra-5-processor-338h-18m-cache-up-to-4-70-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) Pro B390 GPU"
+aliases = ["Intel Arc Pro B390 GPU"]
+vendor_id = 0x8086
+device_ids = [0xB084, 0xB086]
+shaders = 1536
+boost_mhz = 2500
+tflops_fp32 = 7.68
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245526/intel-core-ultra-x9-processor-388h-18m-cache-up-to-5-10-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Panther Lake 4 Xe3)"]
+vendor_id = 0x8086
+device_ids = [0xB090, 0xB0A0]
+shaders = 512
+boost_mhz = 2500
+tflops_fp32 = 2.56
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245713/intel-core-ultra-7-processor-365-12m-cache-up-to-4-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Panther Lake 2 Xe3)"]
+vendor_id = 0x8086
+device_ids = [0xB090]
+shaders = 256
+boost_mhz = 2300
+tflops_fp32 = 1.18
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245718/intel-core-ultra-5-processor-332-12m-cache-up-to-4-40-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Wildcat Lake 2 Xe3)"]
+vendor_id = 0x8086
+device_ids = [0xFD80]
+shaders = 256
+boost_mhz = 2600
+tflops_fp32 = 1.33
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/246015/intel-core-7-processor-360-6m-cache-up-to-4-80-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Graphics"
+aliases = ["Intel Graphics (Wildcat Lake 1 Xe3)"]
+vendor_id = 0x8086
+device_ids = [0xFD81]
+shaders = 128
+boost_mhz = 2300
+tflops_fp32 = 0.59
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/246020/intel-core-3-processor-304-6m-cache-up-to-4-30-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B370 GPU"
+aliases = ["Intel Arc B370 GPU (Arc G3)"]
+vendor_id = 0x8086
+device_ids = [0xB081, 0xB083]
+shaders = 1280
+boost_mhz = 2200
+tflops_fp32 = 5.63
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245626/intel-arc-g3-processor-12m-cache-up-to-4-60-ghz/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) B390 GPU"
+aliases = ["Intel Arc B390 GPU (Arc G3 Extreme)"]
+vendor_id = 0x8086
+device_ids = [0xB080, 0xB082]
+shaders = 1536
+boost_mhz = 2300
+tflops_fp32 = 7.07
+memory_type = "shared system memory"
+integrated = true
+source = "https://www.intel.com/content/www/us/en/products/sku/245625/intel-arc-g3-extreme-processor-12m-cache-up-to-4-70-ghz/specifications.html"
+
+# ----------------------------------------------------------------------------------------------------- Intel embedded
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A310E Graphics"
+aliases = ["Intel Arc A310E Graphics", "Arc A310E"]
+vendor_id = 0x8086
+device_ids = [0x56BB]
+shaders = 768
+boost_mhz = 2000
+tflops_fp32 = 3.07
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/237552/intel-arc-a310e-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A350E Graphics"
+aliases = ["Intel Arc A350E Graphics", "Arc A350E"]
+vendor_id = 0x8086
+device_ids = [0x56BD]
+shaders = 768
+boost_mhz = 1150
+tflops_fp32 = 1.77
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/237551/intel-arc-a350e-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A370E Graphics"
+aliases = ["Intel Arc A370E Graphics", "Arc A370E"]
+vendor_id = 0x8086
+device_ids = [0x56BC]
+shaders = 1024
+boost_mhz = 1550
+tflops_fp32 = 3.17
+vram_gb = 4
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/237550/intel-arc-a370e-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A380E Graphics"
+aliases = ["Intel Arc A380E Graphics", "Arc A380E"]
+vendor_id = 0x8086
+device_ids = [0x56BA]
+shaders = 1024
+boost_mhz = 2000
+tflops_fp32 = 4.1
+vram_gb = 6
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/237549/intel-arc-a380e-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A580E Graphics"
+aliases = ["Intel Arc A580E Graphics", "Arc A580E"]
+vendor_id = 0x8086
+device_ids = [0x56BF]
+shaders = 3072
+boost_mhz = 1700
+tflops_fp32 = 10.44
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/240446/intel-arc-a580e-graphics/specifications.html"
+
+[[gpu]]
+name = "Intel(R) Arc(TM) A750E Graphics"
+aliases = ["Intel Arc A750E Graphics", "Arc A750E"]
+vendor_id = 0x8086
+device_ids = [0x56BE]
+shaders = 3584
+boost_mhz = 2050
+tflops_fp32 = 14.69
+vram_gb = 16
+memory_type = "GDDR6"
+source = "https://www.intel.com/content/www/us/en/products/sku/240447/intel-arc-a750e-graphics/specifications.html"

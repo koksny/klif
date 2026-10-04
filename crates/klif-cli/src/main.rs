@@ -7,67 +7,28 @@
 
 mod args;
 mod bench_cmd;
+mod catalog;
 mod cmds;
 mod conn;
+mod hardware_cmd;
 mod keys_cmd;
+mod logs_cmd;
 mod models;
 mod out;
+mod outputs;
 mod presets;
+mod records_cmd;
 mod resolve;
+mod schema_cmd;
+mod suggest_cmd;
+mod watch_cmd;
 
 use args::Args;
 use out::{CliError, CliResult, Out};
 use std::process::ExitCode;
 
-const USAGE: &str = "\
-klif-cli - KLIF (Koksny.com LOCAL INFERENCE FORNICATOR) from a terminal or a coding agent
-
-usage: klif-cli [--json] <command> ...
-
-  status [<system>]                       Systems, GPUs and nodes (one System with <system>)
-  diag                                    diagnostics: config location, engine, GPUs, versions (no secrets)
-  plan <system>                           the exact command a System would launch now (secrets masked)
-  select <system>                         select a tab
-  launch <system> --yes [--stop-others] [--wait]
-  stop <system> --yes | stop --all --yes
-  restart <system> --yes [--wait]
-  dismiss <system>                        leave a fault (back to offline)
-
-  systems list
-  systems add --kind llm|image|tts|stt|video [--class fast|deep|max] [--label L] [--id ID] [--preset P] [--node N]
-  systems remove <system> --yes
-  systems rename <system> <label>
-  systems move <system> <index>           0-based tab index among the local Systems
-  systems exclusive <system> on|off
-
-  presets list [--node N]
-  presets show <id> [--node N]
-  presets use <system> <id>
-  presets param <system> <name> <value>
-  presets save <id> --file F.toml [--use <system>] [--node N]
-  presets set <id> key=value... [--node N]
-  presets delete <id> --yes [--node N]
-
-  bench <system> [--runs N] [--prompt N] [--gen N] [--keep-running] [--allow-shared] [--yes]
-  bench list [--preset ID]
-
-  models list [--kind K]
-  models download <rec-id> --yes
-  models adopt <rec-id> [--system S]
-
-  key status | key set (reads one line from stdin) | key clear --yes
-  node status | node token [--create [--yes]]
-  nodes list
-  serve                                   run the engine headless (+ the network listener when [node] listen is set)
-
-<system>: an id (s1, render-box/s1), a label ignoring case and spaces (system1, \"System 1\"),
-          or the 0.2 names low|medium|high|krea (local s1/s2/s3/cgi).
-presets set keys: command  args=[\"json\",\"array\"]  args+=TOKEN  args-=TOKEN  env.NAME=VALUE  env.NAME-
-          env_remove+=NAME  env_remove-=NAME  cwd  port  host  endpoint  health  model  mmproj  ctx  gpu  kind
-          adapter  name  managed  api_key  model_name  quant  backend  device  notes   (empty value = unset)
-config:   KLIF_CONFIG=<klif.toml>, else .local\\klif.toml above the exe or the current folder, else %APPDATA%\\KLIF\\klif.toml.
-logs:     KLIF_LOG=info|debug (stderr; trace = KLIF's own records only, dependencies capped at debug).
-";
+/// Set by `--json`: the stderr progress of a download is then JSON lines too.
+static JSON_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Engine log lines on stderr: warnings by default (KLIF_LOG=info|debug for more); bench and download progress
 /// always.
@@ -101,7 +62,12 @@ impl log::Log for StderrLog {
             return;
         }
         if progress_target(r.target()) && r.level() == log::Level::Info {
-            eprintln!("  {}", r.args());
+            if r.target().starts_with("klif_core::download") && JSON_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                let note = outputs::DownloadEvent::Note { at: klif_core::klif_common::now_s(), message: r.args().to_string() };
+                eprintln!("{}", out::json_line(out::val(&note)));
+            } else {
+                eprintln!("  {}", r.args());
+            }
         } else {
             eprintln!("[{} {}] {}", r.level(), r.target(), r.args());
         }
@@ -133,6 +99,7 @@ fn main() -> ExitCode {
         raw.len() != before
     };
     let out = Out { json };
+    JSON_MODE.store(json, std::sync::atomic::Ordering::Relaxed);
     let result = run(raw, out);
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -143,23 +110,37 @@ fn main() -> ExitCode {
     }
 }
 
+/// `help [<command>]`: the text list, or one command's details; `--json`: the catalog (`HelpDoc`).
+fn help(words: Vec<String>, out: Out) -> CliResult {
+    if words.is_empty() {
+        let doc = catalog::help_doc(None);
+        out.doc(out::val(&doc), || doc.usage.clone());
+        return Ok(());
+    }
+    let cmds = catalog::matching(&words);
+    if cmds.is_empty() {
+        return Err(CliError::new("not_found", format!("There is no command {q}{}{q} (klif-cli --help lists them).", words.join(" "), q = '"')));
+    }
+    out.doc(out::val(&catalog::help_doc(Some(&cmds))), || catalog::command_text(&cmds));
+    Ok(())
+}
+
 fn run(mut raw: Vec<String>, out: Out) -> CliResult {
     let Some(first) = raw.first().cloned() else {
         if !out.json {
-            eprint!("{USAGE}");
+            eprint!("{}", catalog::usage_text());
         }
         return Err(CliError::usage("Missing command (klif-cli --help lists them)."));
     };
     match first.as_str() {
-        "help" | "--help" | "-h" | "/?" => {
-            out.doc(serde_json::json!({ "usage": USAGE }), || USAGE.to_string());
-            return Ok(());
-        }
+        "help" | "--help" | "-h" | "/?" => return help(raw[1..].to_vec(), out),
         "--version" | "-V" | "version" => {
             let v = klif_core::klif_common::KLIF_VERSION;
-            out.doc(serde_json::json!({ "version": v }), || format!("klif-cli {v}"));
+            out.doc(out::val(&outputs::VersionDoc { version: v.to_string() }), || format!("klif-cli {v}"));
             return Ok(());
         }
+        // No configuration needed: the schemas describe klif-cli itself.
+        "schema" => return schema_cmd::run(Args::new(raw[1..].to_vec()), out),
         _ => {}
     }
     raw.remove(0);
@@ -168,6 +149,7 @@ fn run(mut raw: Vec<String>, out: Out) -> CliResult {
     match first.as_str() {
         "status" => cmds::status(args, &loaded, out),
         "diag" => cmds::diag(args, &loaded, out),
+        "hardware" => hardware_cmd::run(args, &loaded, out),
         "plan" => cmds::plan(args, &loaded, out),
         "select" => cmds::select(args, &loaded, out),
         "launch" => cmds::launch(args, &loaded, out),
@@ -179,7 +161,11 @@ fn run(mut raw: Vec<String>, out: Out) -> CliResult {
         "serve" => cmds::serve(args, &loaded, out),
         "presets" => presets::run(args, &loaded, out),
         "bench" => bench_cmd::run(args, &loaded, out),
+        "logs" => logs_cmd::run(args, &loaded, out),
+        "watch" => watch_cmd::run(args, &loaded, out),
+        "records" => records_cmd::run(args, &loaded, out),
         "models" => models::run(args, &loaded, out),
+        "suggest" => suggest_cmd::run(args, &loaded, out),
         "key" => keys_cmd::key(args, &loaded, out),
         "node" => keys_cmd::node(args, &loaded, out),
         other => Err(CliError::usage(format!("Unknown command \"{other}\" (klif-cli --help lists them)."))),

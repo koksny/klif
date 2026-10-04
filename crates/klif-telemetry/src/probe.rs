@@ -48,6 +48,10 @@ pub struct ModelsInfo {
     /// Context window: llama.cpp `meta.n_ctx`, vLLM `max_model_len`, others `context_length` / `context_window`.
     pub n_ctx: Option<u64>,
     pub size_bytes: Option<u64>,
+    /// audio.cpp: some entry is resident (`loaded: true`); None when no entry carries a boolean `loaded`.
+    pub loaded: Option<bool>,
+    /// audio.cpp: the id of the first resident entry.
+    pub loaded_id: Option<String>,
 }
 
 /// A `/metrics` answer.
@@ -257,10 +261,16 @@ pub fn parse_models(body: &str) -> Option<ModelsInfo> {
         .or_else(|| u(d0, "max_model_len"))
         .or_else(|| u(d0, "context_length"))
         .or_else(|| u(d0, "context_window"));
+    // audio.cpp lists every configured model with `loaded` (weights resident or not).
+    let all: &[Value] = body.get("data").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    let flags: Vec<(bool, Option<&str>)> =
+        all.iter().filter_map(|m| m.get("loaded").and_then(Value::as_bool).map(|l| (l, m.get("id").and_then(Value::as_str)))).collect();
     Some(ModelsInfo {
         id: d0.get("id").or_else(|| d0.get("name")).and_then(|v| v.as_str()).map(model_id_display),
         n_ctx,
         size_bytes: meta.and_then(|m| u(m, "size")),
+        loaded: (!flags.is_empty()).then(|| flags.iter().any(|(l, _)| *l)),
+        loaded_id: flags.iter().find(|(l, _)| *l).and_then(|(_, id)| *id).map(model_id_display),
     })
 }
 

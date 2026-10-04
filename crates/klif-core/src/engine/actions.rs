@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Result};
 use klif_catalog::store;
-use klif_common::config::{default_system_label, validate_preset_id, validate_system_id, OnConflict, PresetCfg, SystemCfg};
+use klif_common::config::{default_system_label, validate_preset_id, validate_system_id, Config, OnConflict, PresetCfg, SystemCfg};
 use klif_common::now_s;
 use klif_common::secret::{is_secret_env, is_secret_flag, MASK};
 use klif_common::vm::{
@@ -191,7 +191,8 @@ impl Inner {
             Action::UpdateSystem { system, label, move_to, exclusive } => self.update_system(&system, label.as_deref(), move_to, exclusive),
             Action::DownloadRecommendation { id, node: _ } => self.download(&id),
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
-            Action::AdoptRecommendation { id, system } => self.adopt_recommendation(&id, system.as_ref()),
+            Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
+            Action::ForgetRecord { key, node: _ } => self.forget_record(&key),
         }
     }
 
@@ -929,15 +930,30 @@ impl Inner {
         }
     }
 
-    fn adopt_recommendation(&self, id: &str, system: Option<&SystemId>) -> Result<()> {
+    /// `ctx` / `kv` from the caller (a suggestion card, `models adopt --ctx --kv`), else from this machine's suggestion
+    /// of that recommendation, which also gives the -fitt margin of its tier and sd.cpp's --offload-to-cpu.
+    fn adopt_recommendation(&self, id: &str, system: Option<&SystemId>, ctx: Option<u32>, kv: Option<String>) -> Result<()> {
         let cfg = self.cfg();
         let catalog = self.catalog();
-        let (pid, spec) = catalog.preset_from_recommendation(&cfg, id, system)?;
+        let (pid, mut spec) = catalog.preset_from_recommendation(&cfg, id, system)?;
+        let fit = {
+            let hw = lock(&self.hardware);
+            let class = system.and_then(|s| cfg.system(s.as_str())).and_then(|s| s.class);
+            klif_catalog::suggest::adopt_fit(&hw.info, &hw.suggestions, id, class, cfg.gpu.inference.as_deref(), ctx, kv)
+        };
+        klif_catalog::suggest::apply_fit(&mut spec, &fit).map_err(|e| anyhow!(e))?;
+        let audiocpp = (spec.adapter == AdapterId::AudioCpp).then(|| catalog.recommendation(id)).flatten();
+        if let Some(rec) = audiocpp {
+            per_rung_config(&mut spec, &rec.id);
+        }
         validate_preset_id(&pid).map_err(|e| anyhow!(e))?;
         if let Some(s) = system {
             let sys = self.local_system(&cfg, s)?;
             let label = cfg.system_label(s.as_str()).unwrap_or_else(|| s.to_string());
             check_kind(&pid, &spec, sys.kind, &label)?;
+        }
+        if let Some(rec) = audiocpp {
+            write_audiocpp_config(&cfg, &spec, &rec.model_id, &rec.family)?;
         }
         self.write(|path| {
             store::upsert_preset(path, &pid, &spec, None, None)?;
@@ -947,6 +963,37 @@ impl Inner {
             Ok(())
         })
     }
+}
+
+/// Each quant rung gets its own server config (`voxcpm2.server.json` -> `voxcpm2-q8-0.server.json`), so adopting a
+/// second rung of the same model never serves the first rung's weights.
+fn per_rung_config(spec: &mut PresetCfg, rec_id: &str) {
+    let Some(i) = spec.args.iter().position(|a| a == "--config") else { return };
+    let Some(arg) = spec.args.get_mut(i + 1) else { return };
+    let cut = arg.rfind(['\\', '/']).map_or(0, |n| n + 1);
+    *arg = format!("{}{}.server.json", &arg[..cut], rec_id.replace('.', "-"));
+}
+
+/// audio.cpp takes its models only from the JSON file `--config` names: write that file for an adopted
+/// recommendation (one model, lazily loaded), unless it exists already (the user's edits win).
+fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, model_id: &str, family: &str) -> Result<()> {
+    let Some(i) = spec.args.iter().position(|a| a == "--config") else { return Ok(()) };
+    let Some(raw) = spec.args.get(i + 1) else { return Ok(()) };
+    let (Some(models_dir), Some(model)) = (cfg.models_dir(), spec.model.as_deref()) else { return Ok(()) };
+    let path = std::path::PathBuf::from(raw.replace("{models_dir}", &models_dir.to_string_lossy()));
+    if path.exists() {
+        return Ok(());
+    }
+    let doc = serde_json::json!({
+        "lazy_load": true,
+        "max_loaded_models": 1,
+        "models": [{ "id": model_id, "family": family, "path": model, "task": "tts", "mode": "offline" }],
+    });
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| anyhow!("Could not create {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&doc)?).map_err(|e| anyhow!("Could not write {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// A preset's kind must be the System's (generic presets must say their kind).

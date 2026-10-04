@@ -37,6 +37,8 @@ export interface SkinTokens {
   accentInk: string;
   warn: string;
   danger: string;
+  /** The colour of a record (a new best on the Records screen and the "new record" moment); default: warn. */
+  record?: string;
   fontUi: string;
   fontData: string;
   fontDisplay: string;

@@ -9,7 +9,7 @@
   //   strip       four glass cells (LLM: prefill, decode, context, speculative; CGI: last image, images, size, mode)
   //   timeline    8 request capsules (cyan prefill, mint decode) / 12 job bars (height = time, edits hatched)
   //   controls    endpoint + API key chips; the primary pill (one width: Launch / Cancel / Stop / Restart after a
-  //               fault); Restart (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log)
+  //               fault); Restart (Dismiss after a fault), Tune (always), Records, Endpoint / Web UI, Console (Full log)
   //   console     the last log line
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { fmtClock, fmtInt, fmtSeconds } from '../../lib/model/format';
@@ -309,6 +309,7 @@
       <button class="btn w1" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>Restart</button>
     {/if}
     <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
+    <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">Records</span></button>
     <button class="btn w2" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'Web UI' : 'Endpoint'}</button>
     <button class="btn w2" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'Full log' : 'Console'}</button>
   </footer>
@@ -920,6 +921,36 @@
   }
   .btn.w2 {
     width: calc(var(--u) * 104);
+  }
+  /* Records: a round icon button while the row is short of room (below ~1240 px wide), the labelled pill from there up */
+  .btn.rec {
+    width: calc(var(--u) * 38);
+    padding: 0;
+  }
+  .btn.rec .rl {
+    display: none;
+  }
+  .btn.rec .ri {
+    width: calc(var(--u) * 15);
+    height: calc(var(--u) * 15);
+    min-width: 12px;
+    min-height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  @media (min-width: 1240px) {
+    .btn.rec {
+      width: calc(var(--u) * 96);
+    }
+    .btn.rec .rl {
+      display: inline;
+    }
+    .btn.rec .ri {
+      display: none;
+    }
   }
   .chip:hover:not(:disabled),
   .btn:hover:not(:disabled) {

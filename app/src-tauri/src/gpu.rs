@@ -62,6 +62,9 @@ pub fn dxgi_adapters() -> Vec<DxgiAdapter> {
                 luid_high: d.AdapterLuid.HighPart,
                 luid_low: d.AdapterLuid.LowPart,
                 dedicated_bytes: d.DedicatedVideoMemory as u64,
+                revision: d.Revision,
+                subsys_id: d.SubSysId,
+                shared_bytes: d.SharedSystemMemory as u64,
             },
             software: (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0,
         });

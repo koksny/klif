@@ -235,6 +235,7 @@ impl SessionTracker {
             median_decode_tps: None,
             arch: None,
             backend_build: self.backend.backend_build(),
+            compute_backend: self.backend.compute_backend(),
             device_mismatch: backend::device_mismatch(&self.backend.reported_devices(), self.spec.expect_device.as_deref()),
             console: self.console(),
             // Filled from the per-process measurements (Telemetry::snapshot).

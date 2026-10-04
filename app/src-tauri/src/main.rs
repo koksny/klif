@@ -13,6 +13,7 @@ mod commands;
 mod endpoint;
 mod engine;
 mod geometry;
+mod images;
 mod klog;
 mod opener;
 mod panel;
@@ -121,6 +122,8 @@ fn main() {
             commands::klif_engine_status,
             commands::klif_act,
             commands::klif_preset_get,
+            commands::klif_records_history,
+            commands::klif_save_image,
             commands::klif_command_preview,
             commands::klif_set_api_key,
             commands::klif_open_config,

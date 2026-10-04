@@ -16,6 +16,7 @@ use klif_common::vm::{
 use klif_supervisor::{Owned, ProcState, ProcessHost, Supervisor};
 use klif_telemetry::{GpuSnapshot, Health, SessionSignals, TelemetrySnapshot, WatchSpec};
 
+use super::record_capture::RecordTrack;
 use super::{r1, Inner, State, CONSOLE_LEN};
 use crate::keys;
 use crate::narrate::{dormant_line, wake_line};
@@ -75,6 +76,8 @@ pub(crate) struct SessionCtx {
     pub(crate) activity: f64,
     /// Dormancy episodes already narrated (entry, wake); None until the first look at its GPU.
     pub(crate) dormant_seen: Option<(u64, u64)>,
+    /// What the session already handed to the records.
+    pub(crate) rec: RecordTrack,
 }
 
 impl SessionCtx {
@@ -108,6 +111,7 @@ impl SessionCtx {
             busy: false,
             activity: 0.0,
             dormant_seen: None,
+            rec: RecordTrack::default(),
         }
     }
 
@@ -411,7 +415,8 @@ impl Inner {
         if cfg.system(id.as_str()).is_none() {
             header.push(format!("[KLIF] {id} is not in klif.toml; it can only be stopped"));
         }
-        let ctx = SessionCtx::new(p, owned, Phase::Loading, header);
+        let mut ctx = SessionCtx::new(p, owned, Phase::Loading, header);
+        ctx.rec = RecordTrack::adopted(now_s());
         self.begin_session(st, cfg, id, ctx, true);
         true
     }
@@ -450,6 +455,7 @@ impl Inner {
     pub(super) fn end_session(&self, st: &mut State, id: &SystemId, ended: Ended, now: f64) {
         let Some(ctx) = st.sessions.remove(id) else { return };
         st.session_seq += 1;
+        self.records.end_session(&ctx.p.record.session_name);
         let (up_end, ended_at) = match (ended, &ctx.fault) {
             (Ended::Fault, Some(f)) => (f.at, f.at),
             _ => (ctx.stop_at.unwrap_or(now), now),
@@ -546,6 +552,9 @@ impl Inner {
                     }
                     if sig.median_decode_tps.is_some() {
                         ctx.median_tps = sig.median_decode_tps;
+                    }
+                    if let Some(t) = snap {
+                        self.capture_records(&id, ctx, sig, t, cfg, now);
                     }
                 }
                 if ctx.phase == Phase::Live {
@@ -782,7 +791,8 @@ impl Inner {
 }
 
 /// Exactly one live part by kind while live: llm for kind llm, image for kind image, generic otherwise (and for
-/// a kind whose server gives no dedicated signals).
+/// a kind whose server gives no dedicated signals). A video System whose server reports jobs (sd.cpp) also keeps
+/// `image` (steps, the job in flight, recent jobs with their frames) next to `generic`.
 pub(crate) fn live_parts(
     kind: SystemKind,
     live: bool,
@@ -796,6 +806,7 @@ pub(crate) fn live_parts(
     match kind {
         SystemKind::Llm if llm.is_some() => (llm, None, None),
         SystemKind::Image if image.is_some() => (None, image, None),
+        SystemKind::Video if image.is_some() => (None, image, Some(generic.unwrap_or_default())),
         _ => (None, None, Some(generic.unwrap_or_default())),
     }
 }

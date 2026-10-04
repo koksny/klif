@@ -7,8 +7,13 @@
 //! llama.cpp, `cache_prompt: false` + a wait until `/slots` is idle; tokens are counted from `reasoning_content` +
 //! `content`, server `timings` (llama.cpp) are preferred over client clocks, `stream_options.include_usage` gives
 //! vLLM/OpenAI token counts. Image: `POST /v1/images/generations` (the sd.cpp server's OpenAI route; the image
-//! uses the server's launch defaults), seconds per image = wall time. tts / stt / video: not supported yet.
+//! uses the server's launch defaults), seconds per image = wall time. TTS: fixed texts to `POST /v1/audio/speech`,
+//! STT: the `--audio <file.wav>` speech to the server's transcription route; both record audio seconds per wall
+//! second (`bench/audio.rs`). Video: not supported yet.
 //! Peak VRAM / spill / layers are sampled from the engine's view model (focused on the System) during the runs.
+//! Records (`crate::records`): the runs happen inside a bench window (`EngineLink::bench_mark`), so the requests the
+//! engine reads from the server's log count as bench records; the result is handed over at the end for servers
+//! whose log KLIF does not read.
 
 use anyhow::{anyhow, bail, Context, Result};
 use klif_common::config::validate_preset_id;
@@ -26,7 +31,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::link::EngineLink;
 
-/// Bench options (`--runs --prompt --gen --keep-running --allow-shared --yes`).
+mod audio;
+
+/// Bench options (`--runs --prompt --gen --keep-running --allow-shared --yes --audio`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchOpts {
     pub runs: u32,
@@ -37,16 +44,19 @@ pub struct BenchOpts {
     pub yes: bool,
     /// Bench even while another System runs on the same GPU (numbers are then shared-GPU numbers).
     pub allow_shared: bool,
+    /// STT: the speech to transcribe (a WAV file; required for stt Systems).
+    pub audio: Option<PathBuf>,
 }
 
 impl Default for BenchOpts {
     fn default() -> Self {
-        BenchOpts { runs: 3, prompt_tokens: 512, gen_tokens: 128, keep_running: false, yes: false, allow_shared: false }
+        BenchOpts { runs: 3, prompt_tokens: 512, gen_tokens: 128, keep_running: false, yes: false, allow_shared: false, audio: None }
     }
 }
 
 /// The machine a record was measured on.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct BenchHardware {
     pub gpu: String,
@@ -58,6 +68,7 @@ pub struct BenchHardware {
 
 /// One measured request (LLM) or image.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct BenchRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,10 +83,23 @@ pub struct BenchRun {
     pub prompt_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gen_tokens: Option<u64>,
+    /// TTS / STT: seconds of audio produced / transcribed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_s: Option<f64>,
+    /// TTS / STT: wall seconds of the request (the server's own timing when it reports one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_s: Option<f64>,
+    /// TTS: audio seconds per wall second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tts_rtf: Option<f64>,
+    /// STT: audio seconds per wall second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_rtf: Option<f64>,
 }
 
 /// One bench of one preset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct BenchRecord {
     /// Epoch seconds.
@@ -129,7 +153,16 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
     let sys = find(&vm, system)?.clone();
     let label = sys.label.clone();
     match sys.kind {
-        SystemKind::Llm | SystemKind::Image => {}
+        SystemKind::Llm | SystemKind::Image | SystemKind::Tts => {}
+        // Fail before anything is launched: the speech file must be there and readable.
+        SystemKind::Stt => match opts.audio.as_deref() {
+            Some(p) => {
+                audio::read_wav(p)?;
+            }
+            None => bail!(
+                "Bench of a Transcription (STT) System needs real speech: pass --audio <file.wav> (a WAV recording of a few seconds to a few minutes)."
+            ),
+        },
         k => bail!("Bench of {} Systems is not supported yet ({label}).", k.label()),
     }
     let preset_id = sys.preset.clone().ok_or_else(|| anyhow!("{label} has no preset; choose one first (klif-cli presets use {} <id>).", sys.id))?;
@@ -194,7 +227,15 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
         wait_ready(link, system, &label)?;
     }
 
+    // Records: what the server logs during the runs counts as bench records, and the result goes to the engine
+    // before a launched System is stopped (an engine that does not know `bench` answers an error: ignored).
+    if let Err(e) = link.bench_mark(system, true, None) {
+        log::debug!("bench window of {label} not opened: {e:#}");
+    }
     let result = measure(link, system, &sys, adapter, &preset_id, opts, load_s);
+    if let Err(e) = link.bench_mark(system, false, result.as_ref().ok()) {
+        log::debug!("bench result of {label} not handed to the records: {e:#}");
+    }
     if launched && !opts.keep_running {
         stop_launched(link, system, &label);
     }
@@ -434,6 +475,8 @@ fn measure(
 
     let (runs, backend_build) = match sys.kind {
         SystemKind::Image => (bench_image(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
+        SystemKind::Tts => (audio::bench_tts(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
+        SystemKind::Stt => (audio::bench_stt(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
         _ => bench_llm(link, id, &sys, &agent, &target, opts, &mut peak)?,
     };
 
@@ -730,6 +773,7 @@ fn bench_llm(
             seconds_per_image: None,
             prompt_tokens: prompt_n,
             gen_tokens: gen_n,
+            ..BenchRun::default()
         };
         log::info!(
             "run {}/{}: ttft {} s, prefill {} tok/s, decode {} tok/s ({} prompt / {} generated tokens)",
@@ -889,6 +933,8 @@ pub fn summarize(rec: &BenchRecord, stale: bool) -> BenchSummary {
         prefill_tps: med(|r| r.prefill_tps),
         decode_tps: med(|r| r.decode_tps),
         seconds_per_image: med(|r| r.seconds_per_image),
+        tts_rtf: med(|r| r.tts_rtf),
+        stt_rtf: med(|r| r.stt_rtf),
         peak_vram_gib: rec.peak_vram_gib,
         spill_mib: rec.spill_mib,
         backend_build: rec.backend_build.clone(),

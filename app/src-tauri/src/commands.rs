@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use klif_common::config::PresetCfg;
-use klif_common::vm::{Action, CommandView, PresetDetail, SystemId, SystemKind, SystemStatus, ViewModel};
+use klif_common::vm::{Action, CommandView, PresetDetail, RecordEvent, RecordMetric, SystemId, SystemKind, SystemStatus, ViewModel};
 use klif_common::Secret;
 use tauri::{AppHandle, Runtime, State};
 
@@ -87,6 +87,28 @@ pub async fn klif_act(shell: ShellState<'_>, action: Action) -> Result<(), Strin
 pub async fn klif_preset_get(shell: ShellState<'_>, id: String, node: Option<String>) -> Result<Option<PresetDetail>, String> {
     let e = engine(&shell)?;
     blocking(move || e.try_preset(&id, node.as_deref()).map_err(|err| format!("{err:#}"))).await
+}
+
+/// The climb of one record (the Records screen's progress chart): every broken record of `key` (a key of
+/// `ViewModel.records`; a node's `"<node>/<key>"` is asked of that node), oldest first, optionally of one metric.
+/// Rejects with the engine's sentence (no such record, or the node could not answer).
+#[tauri::command]
+pub async fn klif_records_history(shell: ShellState<'_>, key: String, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>, String> {
+    let e = engine(&shell)?;
+    blocking(move || e.records_history(&key, metric).map_err(|err| format!("{err:#}"))).await
+}
+
+/// Save the Records export card: `data` is the base64 of a PNG or GIF, `name` the file name the UI suggests. It
+/// lands in the user's Pictures folder, subfolder KLIF, under a safe name and never over an existing file; the
+/// result is the full path of the file.
+#[tauri::command]
+pub async fn klif_save_image(name: String, data: String) -> Result<String, String> {
+    let r = blocking(move || crate::images::save(&name, &data)).await;
+    match &r {
+        Ok(path) => log::info!("saved image {}", std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()),
+        Err(msg) => log::info!("image not saved: {msg}"),
+    }
+    r
 }
 
 /// The command an unsaved preset would run for `system` (the Tune drawer's live preview), with its issues.

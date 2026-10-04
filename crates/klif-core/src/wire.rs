@@ -5,8 +5,12 @@
 //! the wire (payloads are cleartext until TLS). Served locally (127.0.0.1, token in control.json, full rights) and,
 //! when `[node] listen` is set, on the network (node token, rights per `[node] allow`, see `klif_common::vm::Right`).
 //! Spoken by klif-cli (`link::ControlClient`) and other KLIF nodes (`nodes::NodeHub`).
-//! Methods: `hello`, `snapshot` {focus?}, `status`, `act` (params = the Action itself), `plan` {system},
-//! `preset` {id, node?}, `command_preview` {spec, system?}, `diag`. Owner: package E3.
+//! Methods: `hello`, `snapshot` {focus?, recordsRev?}, `status`, `act` (params = the Action itself), `plan` {system},
+//! `preset` {id, node?}, `command_preview` {spec, system?}, `diag`, `bench` {system, phase, record?} (local only),
+//! `records_history` {key, metric?} (the broken records of one record key from `records-history.jsonl`, oldest
+//! first, as `RecordEvent`s; view right; a network peer gets this machine's keys only).
+//! A network `snapshot` that names the `recordsRev` the caller holds comes without records (unchanged). Owner:
+//! package E3.
 //!
 //! MAC input (exact bytes): `nonce "\n" id "\n" method "\n" canonical-params`, where `id` is decimal and
 //! `canonical-params` is [`canonical_json`] of the params (object keys sorted, no whitespace; absent params =
@@ -367,6 +371,7 @@ pub struct ErrorBody {
 
 /// One System in the compact status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct StatusSystem {
     pub id: SystemId,
@@ -397,6 +402,7 @@ pub struct StatusSystem {
 
 /// One GPU in the compact status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct StatusGpu {
     pub id: String,
@@ -409,6 +415,7 @@ pub struct StatusGpu {
 
 /// One remote node in the compact status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct StatusNode {
     pub id: String,
@@ -420,6 +427,7 @@ pub struct StatusNode {
 /// The compact status an agent polls (`klif-cli --json status` = `{schemaVersion:1, ...StatusJson}`; method
 /// `status`). `status <system>` returns one `systems` entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct StatusJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]

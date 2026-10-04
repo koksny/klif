@@ -358,7 +358,7 @@ pub const STARTER: &str = r#"# KLIF configuration (0.3). KLIF edits this file to
 
 # [presets.my-llm]
 # name = "My LLM"
-# adapter = "llama.cpp"                     # llama.cpp | sd.cpp | vllm | openai | generic
+# adapter = "llama.cpp"                     # llama.cpp | sd.cpp | vllm | openai | audiocpp | generic
 # command = 'D:\llama.cpp\llama-server.exe'
 # args = ["-m", "{model}", "-c", "{ctx}", "--host", "{host}", "--port", "{port}"]
 # model = 'D:\models\model.gguf'

@@ -7,7 +7,7 @@
 //!
 //! Locks (order): `act_serial` -> `tick_lock` -> `reload_lock` -> `persist_lock` -> `st` -> `telemetry` (->
 //! telemetry's own lock). `loaded`, `catalog`, `published`, `subs`, `files`, `key_info`, `bench`, `downloads`,
-//! `servers`, `ulps`, `gpu_ids`, `nodes_sig` are leaves: nothing else is locked while one of them is held. The node
+//! `servers`, `ulps`, `gpu_ids`, `hardware`, `nodes_sig` are leaves: nothing else is locked while one of them is held. The node
 //! hub is never called while `st` is held. Slow IO (spawning, stopping, store writes, state file writes, port
 //! tables, network, the catalog's file metadata probes) never happens under `st`.
 //!
@@ -15,11 +15,13 @@
 //! `conflicts` (holders, reservations, the port / exclusive / VRAM rules), `compose` (the view model: status
 //! mapping, ghosts, remote merge, conveniences, float clamping), `actions` (every `Action`, pending launches,
 //! routing to nodes, store writes, downloads), `watch` (config hot reload, GPUs, external watches, API key, bench
-//! cache, port owners, the network listener).
+//! cache, port owners, the network listener), `record_capture` (records from live sessions and benches, their
+//! view-model part; the store is `crate::records`, whose locks are leaves too).
 
 mod actions;
 mod compose;
 mod conflicts;
+mod record_capture;
 mod session;
 mod watch;
 
@@ -33,11 +35,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use klif_catalog::Catalog;
-use klif_common::config::{Config, LoadedConfig, PresetCfg};
+use klif_common::config::{Config, HardwareCfg, LoadedConfig, PresetCfg};
 use klif_common::now_s;
 use klif_common::vm::{
-    ApiKeyInfo, BenchSummary, CommandView, ConfigInfo, DownloadInfo, GpuMemory, HostInfo, Issue, IssueLevel, MachineStats, ModelArch,
-    PresetDetail, SystemId, SystemStatus, ViewModel, VramLayer,
+    ApiKeyInfo, BenchSummary, CommandView, ConfigInfo, DownloadInfo, GpuMemory, HardwareInfo, HostInfo, Issue, IssueLevel, MachineStats,
+    ModelArch, PresetDetail, SystemId, SystemStatus, ViewModel, VramLayer,
 };
 use klif_common::Secret;
 use klif_supervisor::Supervisor;
@@ -204,6 +206,24 @@ struct FileWatch {
     key: Option<(String, Option<Stat>, f64)>,
 }
 
+/// The machine inventory (GPUs, CPU, RAM, FP32 TFLOPS) and the `[hardware]` it was computed with: read at start and
+/// again when `[hardware]` changes, never per tick.
+pub(crate) struct HardwareState {
+    pub(crate) cfg: HardwareCfg,
+    pub(crate) info: HardwareInfo,
+    /// The suggested model per slot for `info` from the embedded pool (package B): computed with the inventory,
+    /// never per tick.
+    pub(crate) suggestions: Vec<klif_common::vm::Suggestion>,
+}
+
+impl HardwareState {
+    pub(crate) fn read(cfg: &HardwareCfg) -> HardwareState {
+        let info = klif_telemetry::hardware::detect(cfg);
+        let suggestions = klif_catalog::suggest::suggest(&info, klif_catalog::recommend::embedded_pool());
+        HardwareState { cfg: cfg.clone(), info, suggestions }
+    }
+}
+
 /// Cached bench summaries (`bench::latest` reads files: refreshed every few seconds outside the state lock).
 #[derive(Default)]
 pub(crate) struct BenchCache {
@@ -253,8 +273,12 @@ pub(crate) struct Inner {
     ulps: Mutex<BTreeMap<String, Option<UlpsSetting>>>,
     /// The GPU ids telemetry measures now.
     gpu_ids: Mutex<Vec<String>>,
+    /// The machine inventory behind `ViewModel.hardware`.
+    hardware: Mutex<HardwareState>,
     /// `[nodes.*]` as the hub was last configured with.
     nodes_sig: Mutex<String>,
+    /// Best values per model file and backend (`crate::records`; its locks are leaves).
+    records: crate::records::Records,
     /// `engine.lock`, held for the engine's lifetime.
     engine_lock: Mutex<Option<File>>,
     state_dir: PathBuf,
@@ -296,6 +320,11 @@ fn fallback_vm(host: HostInfo) -> ViewModel {
         host,
         presets: Vec::new(),
         recommendations: Vec::new(),
+        hardware: Default::default(),
+        suggestions: Vec::new(),
+        records: Vec::new(),
+        record_events: Vec::new(),
+        records_rev: 0,
         downloads: Vec::new(),
         config: ConfigInfo::default(),
         nodes: Vec::new(),
@@ -368,6 +397,7 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
     let telemetry = Telemetry::start(adapters, cfg.telemetry.warn_below_gib);
     let nodes = NodeHub::start(&cfg);
     let nodes_sig = watch::nodes_signature(&cfg);
+    let hardware = HardwareState::read(&cfg.hardware);
 
     let st = State {
         selected: persisted.selected.clone(),
@@ -420,7 +450,9 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
         servers: Mutex::new(Servers::default()),
         ulps: Mutex::new(BTreeMap::new()),
         gpu_ids: Mutex::new(gpu_ids),
+        hardware: Mutex::new(hardware),
         nodes_sig: Mutex::new(nodes_sig),
+        records: crate::records::Records::open(&data_dir, &crate::records::machine_name(&cfg)),
         engine_lock: Mutex::new(Some(lock_file)),
         state_dir,
         data_dir,
@@ -588,6 +620,8 @@ impl Inner {
             };
             *lock(&self.published) = Published { vm: vm.clone(), focus };
             self.flush();
+            // records.json / history: written only when a record broke since.
+            self.records.flush();
             vm
         };
         self.publish(vm);
@@ -805,6 +839,7 @@ impl Inner {
         }
         lock(&self.st).dirty = true;
         self.flush();
+        self.records.shutdown();
         // Dropping the telemetry joins its threads. Servers are left running by design.
         let t = lock(&self.telemetry).take();
         drop(t);

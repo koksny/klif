@@ -41,7 +41,7 @@ export type SystemStatus =
 export type Availability = 'ready' | 'unsupported' | 'invalid' | 'exe-missing' | 'model-missing' | 'busy';
 
 /** The server family a preset launches (telemetry, defaults, managed env). */
-export type AdapterId = 'llama.cpp' | 'sd.cpp' | 'vllm' | 'openai' | 'generic';
+export type AdapterId = 'llama.cpp' | 'sd.cpp' | 'vllm' | 'openai' | 'audiocpp' | 'generic';
 
 /** How KLIF decides the server is ready. 'auto' = the adapter's default chain. */
 export type HealthCheck = { type: 'auto' } | { type: 'http'; path: string } | { type: 'tcp' };
@@ -52,7 +52,7 @@ export interface ModelRef {
   name: string;
   /** "IQ3_S" ("" unknown) */
   quant: string;
-  /** Adapter label, e.g. "llama.cpp", "sd.cpp", "vllm", "openai", "generic". */
+  /** Adapter label, e.g. "llama.cpp", "sd.cpp", "vllm", "openai", "audiocpp", "generic". */
   engine: string;
   /** Display text: "HIP", "Vulkan", "CUDA", "Metal", "CPU" or free text; "" when unknown. Compare case-insensitively. */
   backend: string;
@@ -168,6 +168,10 @@ export interface BenchSummary {
   prefillTps?: number;
   decodeTps?: number;
   secondsPerImage?: number;
+  /** TTS: audio seconds per wall second. */
+  ttsRtf?: number;
+  /** STT: audio seconds per wall second. */
+  sttRtf?: number;
   peakVramGiB?: number;
   spillMiB?: number;
   backendBuild?: string;
@@ -221,7 +225,7 @@ export interface ParamSpec {
 export interface PresetSpec {
   name?: string;
   adapter?: AdapterId;
-  /** Default: image for sd.cpp, llm for llama.cpp/vllm/openai; REQUIRED for generic. */
+  /** Default: image for sd.cpp (video: set it), llm for llama.cpp/vllm/openai, tts for audiocpp; REQUIRED for generic. */
   kind?: SystemKind;
   /** Absolute path, or a name on PATH (.exe/.com only). Empty for an external preset. */
   command?: string;
@@ -506,6 +510,10 @@ export interface ImageJob {
   width: number;
   height: number;
   edit: boolean;
+  /** Sampling steps, when the log showed them. */
+  steps?: number;
+  /** A video job (sd.cpp `generate_video WxHxT`): its frame count. */
+  frames?: number;
 }
 
 export interface ImageLive {
@@ -523,6 +531,8 @@ export interface ImageLive {
   /** Finished jobs this session, oldest first, up to 24. */
   recent: ImageJob[];
   imagesThisSession: number;
+  /** Frames of the video job in flight (or the last one), for sd.cpp video. */
+  frames?: number;
 }
 
 /** What KLIF can tell about a server without a dedicated parser (tts / stt / video, generic, openai). */
@@ -533,6 +543,8 @@ export interface GenericLive {
   lastActivityS?: number;
   /** The model id the server reports (/v1/models). */
   modelId?: string;
+  /** Whether the model's weights are resident (audio.cpp /v1/models `loaded`); absent: the server does not say. */
+  modelLoaded?: boolean;
 }
 
 export interface Session {
@@ -545,7 +557,8 @@ export interface Session {
   apiKeySet: boolean;
   loading: LoadProgress | null;
   fault: Fault | null;
-  /** The live part is ONE of llm / image / generic (the others are null), by kind. */
+  /** The live part is ONE of llm / image / generic (the others are null), by kind. Exception: a video System on
+   *  sd.cpp has generic AND image (steps, the job in flight, recent jobs with their frames). */
   llm: LlmLive | null;
   image: ImageLive | null;
   generic: GenericLive | null;
@@ -628,7 +641,7 @@ export interface HostInfo {
   /** True when the native title bar is hidden and the skin must draw window controls. */
   frameless: boolean;
   maximized: boolean;
-  /** "0.3.0" */
+  /** "0.3.1" */
   appVersion: string;
   /**
    * Panel mode = the read-only mini layout on the small status screen (e.g. a 3.5" 960x640 monitor).
@@ -643,6 +656,144 @@ export interface HostInfo {
     target?: string;
   };
 }
+
+// ----------------------------------------------------------------------------------------- hardware
+
+/** One GPU or CPU of a machine with its theoretical peak FP32 throughput (vm.rs ComputeDevice). */
+export interface ComputeDevice {
+  /** "VEN:DEV", "VEN:DEV#n" or "cpu". */
+  id: string;
+  /** "RX 9070 XT", "Ryzen 9 9950X3D". */
+  name: string;
+  kind: 'gpu' | 'cpu';
+  integrated: boolean;
+  /** In the memory pool and the TFLOPS total. */
+  counted: boolean;
+  vramGiB?: number;
+  /** The part of vramGiB that is system memory (a counted integrated GPU), already inside ramTotalGiB. */
+  sharedGiB?: number;
+  /** "GDDR6", "HBM3", "LPDDR5X (unified)". */
+  memoryType?: string;
+  tflopsFp32?: number;
+  tflopsSource: 'table' | 'config' | 'computed' | 'unknown';
+  /** "64 CU, 2970 MHz" / "16 cores, AVX-512, 4.3 GHz". */
+  detail?: string;
+}
+
+/** A machine's static compute and memory facts. */
+export interface HardwareInfo {
+  gpus: ComputeDevice[];
+  cpu?: ComputeDevice;
+  ramTotalGiB: number;
+  /** Sum of the counted GPUs' memory. */
+  vramPoolGiB: number;
+  /** The largest single counted GPU. */
+  largestGpuGiB: number;
+  /** The pool is unified memory (only an integrated GPU). */
+  unified: boolean;
+  /** Sum over counted devices with a known number. */
+  tflopsFp32: number;
+  /** Counted devices without a number ("+?"). */
+  tflopsUnknown: number;
+}
+
+// -------------------------------------------------------------------------------------- suggestions
+
+export type SuggestSlot = 'fast' | 'deep' | 'max' | 'image' | 'tts' | 'stt' | 'video';
+
+/** The suggested model for one slot on this machine (an estimate; rec absent = nothing fits). */
+export interface Suggestion {
+  slot: SuggestSlot;
+  kind: SystemKind;
+  class?: LlmClass;
+  /** Recommendation id to download / adopt. */
+  rec?: string;
+  model: string;
+  quant: string;
+  ctx?: number;
+  /** KV cache type: "f16", "q8_0". */
+  kv?: string;
+  estVramGiB: number;
+  estRamGiB: number;
+  budgetVramGiB: number;
+  budgetRamGiB: number;
+  /** "experts in RAM". */
+  placement?: string;
+  note?: string;
+}
+
+// ------------------------------------------------------------------------------------------ records
+
+/** *Tps / *Rtf: higher is better; *S: lower is better. */
+export type RecordMetric = 'decodeTps' | 'prefillTps' | 'ttftS' | 'imageS' | 'ttsRtf' | 'sttRtf' | 'videoS';
+
+/** The exact model file a record belongs to. */
+export interface RecordModel {
+  /** SHA-256 of the model file; absent until hashed. */
+  sha256?: string;
+  file: string;
+  name: string;
+  quant?: string;
+  /** "repo@sha" when the file matches a known recommendation file. */
+  source?: string;
+  sizeBytes?: number;
+}
+
+/** One best value and the conditions it was reached under. */
+export interface RecordValue {
+  value: number;
+  /** Epoch seconds. */
+  at: number;
+  source: 'live' | 'bench';
+  /** The context the server was launched with. */
+  ctx?: number;
+  promptTokens?: number;
+  cachedTokens?: number;
+  genTokens?: number;
+  kv?: string;
+  width?: number;
+  height?: number;
+  steps?: number;
+  /** Video frames of the job (videoS). */
+  frames?: number;
+  gpus: string[];
+  backendBuild?: string;
+  preset?: string;
+  klifVersion: string;
+  /** The machine's FP32 TFLOPS total at the time. */
+  tflopsFp32?: number;
+}
+
+/** Best values of one model file on one backend on one machine. */
+export interface RecordEntry {
+  key: string;
+  /** Remote node id; absent = this machine. */
+  node?: string;
+  /** `[node] name`, else "This machine". */
+  machine: string;
+  kind: SystemKind;
+  model: RecordModel;
+  /** "HIP", "Vulkan", "CUDA", "CPU", "Metal", "" unknown. */
+  backend: string;
+  best: Partial<Record<RecordMetric, RecordValue>>;
+}
+
+/** A broken record (the last few, newest last). */
+export interface RecordEvent {
+  key: string;
+  metric: RecordMetric | null;
+  /** The previous best; absent for the first value. */
+  old?: number;
+  new: number;
+  at: number;
+}
+
+/**
+ * One line of a record's climb, as `klif_records_history` returns it (Vec<RecordEvent>, oldest first): every time
+ * the record `key` was broken. A node's entry comes back keyed "<node>/<key>". `metric` is null only for a line
+ * written without one (older files); the first value of a metric has no `old`.
+ */
+export type RecordHistoryLine = RecordEvent;
 
 // -------------------------------------------------------------------------------------------- nodes
 
@@ -661,6 +812,7 @@ export interface NodeView {
   allow: string[];
   gpus: GpuMemory[];
   machine?: MachineStats;
+  hardware?: HardwareInfo;
   /** Its presets (masked), node = this node's id. */
   presets: PresetInfo[];
   error?: string;
@@ -691,6 +843,16 @@ export interface ViewModel {
   /** Local presets (remote ones: nodes[n].presets). */
   presets: PresetInfo[];
   recommendations: RecommendationInfo[];
+  /** This machine's compute and memory. */
+  hardware: HardwareInfo;
+  /** The suggested model per slot for this machine (estimates). */
+  suggestions: Suggestion[];
+  /** Best values per model file and backend, this machine and the nodes. */
+  records: RecordEntry[];
+  /** The last broken records, newest last. */
+  recordEvents: RecordEvent[];
+  /** Changes whenever records / recordEvents change (absent: unknown). */
+  recordsRev?: number;
   downloads: DownloadInfo[];
   config: ConfigInfo;
   nodes: NodeView[];
@@ -729,7 +891,11 @@ export type EngineAction =
   | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean }
   | { type: 'downloadRecommendation'; id: string; node?: string }
   | { type: 'cancelDownload'; id: string; node?: string }
-  | { type: 'adoptRecommendation'; id: string; system?: SystemId };
+  | { type: 'adoptRecommendation'; id: string; system?: SystemId; ctx?: number; kv?: string }
+  /** Remove a junk record (the key as that machine knows it; node = a remote node's entry). */
+  | { type: 'forgetRecord'; key: string; node?: string };
+// Serde shape: Action::ForgetRecord { key, node? } (klif_common::vm), tagged "forgetRecord"; needs the node's "edit"
+// right when it is a remote entry.
 
 /**
  * Everything a skin can ask the shell to do. Skins never talk to the core directly. Engine actions return a
@@ -767,7 +933,16 @@ export interface Actions {
   updateSystem(system: SystemId, patch: { label?: string; moveTo?: number; exclusive?: boolean }, call?: CallOpts): Promise<void>;
   downloadRecommendation(id: string, node?: string, call?: CallOpts): Promise<void>;
   cancelDownload(id: string, node?: string, call?: CallOpts): Promise<void>;
-  adoptRecommendation(id: string, system?: SystemId, call?: CallOpts): Promise<void>;
+  /**
+   * A preset from a recommendation (set on `system`). `fit` = the context and KV type of a suggestion card; without
+   * them the engine uses this machine's suggestion of that recommendation, else its defaults.
+   */
+  adoptRecommendation(id: string, system?: SystemId, opts?: { fit?: { ctx?: number; kv?: string } } & CallOpts): Promise<void>;
+  /**
+   * Remove a junk record (RecordEntry.key as that machine knows it: for a remote entry drop the "<node>/" prefix and
+   * pass the node). A remote node must grant "edit".
+   */
+  forgetRecord(key: string, node?: string, call?: CallOpts): Promise<void>;
   // ---- shell actions ----
   openEndpoint(system?: SystemId): void;
   copyEndpoint(system?: SystemId): void;
@@ -775,6 +950,8 @@ export interface Actions {
   toggleConsole(open?: boolean): void;
   /** Open the Tune drawer on a System, or in add mode ("Add System"). */
   openTune(system?: SystemId, opts?: { add?: boolean }): void;
+  /** Open the Records screen (the best each model reached). Full-size skins put a button for it next to Tune. */
+  openRecords(): void;
   /** Window chrome; only meaningful when vm.host.frameless. Skins mark their header with
    *  data-tauri-drag-region so the window can be dragged by it. */
   minimize(): void;
@@ -788,13 +965,24 @@ export interface Actions {
 }
 
 /**
- * Config-level calls for the Tune drawer (`player.config`). Native: klif_preset_get, klif_command_preview,
- * klif_set_api_key, klif_open_config, klif_open_logs. Mock: computed by the mock catalog. Errors reject with a
- * sentence.
+ * Config-level calls for the Tune drawer and the Records screen (`player.config`). Native: klif_preset_get,
+ * klif_command_preview, klif_set_api_key, klif_open_config, klif_open_logs, klif_records_history, klif_save_image.
+ * Mock: computed by the mock catalog. Errors reject with a sentence.
  */
 export interface ConfigApi {
   /** One preset in full (secrets masked); `node` = a remote node's preset. */
   presetGet(id: string, node?: string): Promise<PresetDetail | null>;
+  /**
+   * The climb of one record: every time `key` (a RecordEntry.key as published, "<node>/<key>" for a remote entry)
+   * was broken, oldest first, optionally of one metric. Rejects with a sentence (no such record; the node could
+   * not answer).
+   */
+  recordsHistory(key: string, metric?: RecordMetric): Promise<RecordHistoryLine[]>;
+  /**
+   * Save a rendered PNG or GIF (the export card of a record). Native: into the user's Pictures folder, subfolder
+   * KLIF, never overwriting; resolves with the full path. Browser (mock): downloads the file; resolves null.
+   */
+  saveImage(fileName: string, data: Blob): Promise<string | null>;
   /** The command an unsaved preset spec would run for `system` (debounced preview in Tune). */
   commandPreview(spec: PresetSpec, system?: SystemId): Promise<CommandView>;
   /** Set (string) or clear (null) the API key natively; the key is never echoed back. */

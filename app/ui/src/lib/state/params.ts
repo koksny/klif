@@ -1,6 +1,6 @@
 // URL contract (skin agents depend on it; keep exactly):
 //   ?skin=<id>&size=full|mini|auto&scenario=<name>&speed=<n>&shot=1
-// Extras: t=<sim seconds to start at>, run=1 (keep ticking even with shot=1), drawer=console|tune,
+// Extras: t=<sim seconds to start at>, run=1 (keep ticking even with shot=1), drawer=console|tune|records,
 //         system=<System id for the tune drawer> (slot= is the old name), add=1 (the drawer opens in add mode),
 //         tier=off|calm|ambient|live (pin the tier), seed=<n>,
 //         frameless=1 (host.frameless: the skin draws its own window controls).
@@ -17,7 +17,7 @@ export interface Params {
   shot: boolean;
   t: number | null;
   run: boolean;
-  drawer: 'console' | 'tune' | null;
+  drawer: 'console' | 'tune' | 'records' | null;
   /** The System the Tune drawer opens on. */
   system: SystemId | null;
   /** The Tune drawer opens in add mode ("Add System"). */
@@ -56,7 +56,7 @@ export function parseParams(search: string): Params {
       return t !== null && t >= 0 ? t : null;
     })(),
     run: q.get('run') === '1',
-    drawer: drawer === 'console' || drawer === 'tune' ? drawer : null,
+    drawer: drawer === 'console' || drawer === 'tune' || drawer === 'records' ? drawer : null,
     system: system !== null && SYSTEM_ID.test(system) ? system : null,
     add: q.get('add') === '1' || q.get('add') === 'true',
     tier: TIERS.includes(tier as Tier) ? (tier as Tier) : null,

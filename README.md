@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0-5AB6EB" alt="Version 0.3.0">
+  <img src="https://img.shields.io/badge/version-0.3.1-5AB6EB" alt="Version 0.3.1">
   <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/GPU-AMD%20HIP%20%7C%20Vulkan-5AB6EB" alt="AMD GPUs, HIP and Vulkan">
@@ -99,9 +99,13 @@ The animations come from the browser mock engine with recorded timings, the same
   KLIF reads for telemetry.
 - **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys and nodes, with `--json` and a
   stable `schemaVersion`. [docs/cli.md](docs/cli.md)
-- **Recommendations, with a disclaimer.** KLIF can suggest models per kind and class and download them from
-  huggingface.co when you ask. The suggestions are starting points measured on one machine; benchmark and calibrate
-  on yours (`klif-cli bench <system>`). Each model keeps its own license.
+- **Models that fit this machine.** KLIF knows every GPU and the CPU, their theoretical FP32 TFLOPS and the VRAM
+  and RAM they add up to, and suggests a model from its embedded pool for each System: quant, context and KV type
+  sized to the memory that System may use. It downloads from huggingface.co only when you ask. The suggestions are
+  estimates; benchmark and calibrate on your machine (`klif-cli bench <system>`). Each model keeps its own license.
+- **Records.** The best decode and prefill speed, time to first token and time per image that each model file
+  reached on each backend, from everyday use, on a Records screen with cards you can share as images. Every skin
+  celebrates a new one.
 
 ## Requirements
 
@@ -157,7 +161,9 @@ how to report a false positive.
 ## For coding agents
 
 KLIF is meant to be driven by agents as much as by hand. [AGENTS.md](AGENTS.md) is the briefing: the repo map, the
-`klif.toml` schema, the `klif-cli` JSON contract, the bench-and-calibrate loop, and the safety rules.
+`klif.toml` schema, the `klif-cli` JSON contract, the bench-and-calibrate loop, and the safety rules. An Agent Skill,
+[skills/klif/SKILL.md](skills/klif/SKILL.md), ships in the release folder too: `klif-cli help --json` lists every
+command, `klif-cli schema` gives the JSON Schema of every output, and `klif-cli watch` replaces polling loops.
 
 Good jobs for an agent:
 

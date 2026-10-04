@@ -20,6 +20,11 @@ ureq = { workspace = true, features = ["native-tls"] }
 sha2.workspace = true
 # Control-channel and node tokens.
 getrandom.workspace = true
+# `klif-cli schema` (see klif-common's `schema` feature).
+schemars = { version = "1", optional = true }
+
+[features]
+schema = ["dep:schemars", "klif-common/schema"]
 
 [target.'cfg(windows)'.dependencies]
 # GetLocalTime for session names (yyyyMMdd-HHmmss-fff, local time).

@@ -48,6 +48,8 @@ export interface World {
   downloaded: string[];
   /** Selected System at the start. */
   selected: string;
+  /** False: no records yet (a fresh install). Default true: the mock machine's records (records.ts). */
+  records?: boolean;
 }
 
 const SYS = {
@@ -133,5 +135,6 @@ export function emptyWorld(): World {
     onConflict: 'ask',
     downloaded: [],
     selected: '',
+    records: false,
   };
 }

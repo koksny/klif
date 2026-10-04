@@ -7,6 +7,10 @@
 //! KLIF patches (`diffusion_engine.cpp` / `image.cpp`, `[INFO   ]` tags, eager load, `preprocess ref[N]`
 //! before an edit job, `default LoRA: name:1.00 (...)` at startup and `default LoRA applied: name:1.00`
 //! before every job the server's `--default-lora` applies to).
+//!
+//! Video (sd-server with `vid_gen`, e.g. MiniMax H3): `generate_video WxHxT` starts a job (T = frames), the
+//! carriage-return-rewritten sampling bar moves it (the tailer splits CR / LF and drops `ESC[K`), `generate_video
+//! completed in X.XXs` ends it. Video jobs are `ImageJob`s with `frames` set.
 
 use crate::llama::Steps;
 use crate::text::{redact, round_to, strip_sd_tag};
@@ -47,12 +51,21 @@ re!(D20, r"^sd-server (\S+) zakonczyl dzialanie z kodem (-?\d+)\.\s*$");
 // The same starter exit line in English ("sd-server exited with code 1.", "sd-server HIP929 exited with code -1").
 re!(D20B, r"(?i)^sd-server(?: (\S+))? (?:exited|ended|stopped) with (?:exit )?code (-?\d+)\.?\s*$");
 re!(D26, r"^\s*\|([=>]+)\s*\|\s+(\d+)/(\d+) - ([\d.]+)(s/it|it/s)\s*$");
+// Video jobs (src/pipeline/video.cpp; any source-file prefix): start, sampling done, end.
+re!(V01, r"^(?:\w+\.cpp:\d+\s+-\s+)?generate_video (\d+)x(\d+)x(\d+)\s*$");
+re!(V02, r"^(?:\w+\.cpp:\d+\s+-\s+)?generate_video completed in ([\d.]+)s\s*$");
+re!(V03, r"^(?:\w+\.cpp:\d+\s+-\s+)?sampling(?:\([^)]*\))? completed, taking ([\d.]+)s\s*$");
 re!(E01, r"^ggml_cuda_init: found (\d+) ROCm devices");
 re!(E02, r"^\s+Device (\d+): (.+?), (gfx\w+)(?::\S+)? \((0x[0-9a-f]+)\), VMM: (\w+), Wave Size: (\d+), VRAM: (\d+) MiB");
 re!(E04, r"ROCm error: (.+)$");
 re!(E05, r"^(.+ggml-cuda\.cu):(\d+): ROCm error\s*$");
 re!(E06, r"ggml_cuda_compute_forward: (\w+) failed$");
 re!(E07, r"^ggml_cuda_init: failed to initialize ROCm: (.+?)\s*$");
+// The compute backend (records): a CUDA build's device table, Vulkan's, and sd.cpp's own "Using X backend" (a HIP
+// build says CUDA there, so the ROCm device table wins).
+re!(E08, r"^ggml_cuda_init: found \d+ CUDA devices");
+re!(E09, r"^ggml_vulkan: Found \d+ Vulkan devices");
+re!(E10, r"- Using (CUDA|ROCm|HIP|Vulkan|Metal|SYCL|OpenCL|CPU) backend\b");
 // The starters' own refusals before the server runs ("ERROR: Brak C:\...\x.dll", "ERROR: port 1234 jest zajety ...").
 re!(S01, r"^ERROR: Brak (.+?)\s*$");
 re!(S02, r"^ERROR: port (\d+) jest zaj[eę]ty");
@@ -72,6 +85,8 @@ struct Job {
     edit: bool,
     /// The server's default LoRA was applied to this job (`default LoRA applied: ...` before it).
     default_lora: bool,
+    /// Frames of a video job (`generate_video WxHxT`).
+    frames: Option<u32>,
     step: u32,
     steps: u32,
     s_per_it: f64,
@@ -89,6 +104,7 @@ pub struct SdParser {
     pub device_name: Option<String>,
     job: Option<Job>,
     last_size: (u32, u32, bool),
+    last_frames: Option<u32>,
     last_steps: u32,
     pub recent: VecDeque<ImageJob>,
     pub images: u64,
@@ -106,6 +122,8 @@ pub struct SdParser {
     pub default_lora_jobs: u64,
     /// ROCm devices the server sees (`ggml_cuda_init: found N ROCm devices`).
     rocm_devices: Option<u32>,
+    /// The compute backend another line named (CUDA / Vulkan device tables, "Using X backend").
+    backend: Option<String>,
     /// A `preprocess ref[N]` / `default LoRA applied` line arrived for the job that starts next.
     pending_ref: bool,
     pending_lora: bool,
@@ -127,6 +145,7 @@ impl SdParser {
             device_name: None,
             job: None,
             last_size: (0, 0, false),
+            last_frames: None,
             last_steps: 0,
             recent: VecDeque::new(),
             images: 0,
@@ -140,9 +159,19 @@ impl SdParser {
             default_lora: None,
             default_lora_jobs: 0,
             rocm_devices: None,
+            backend: None,
             pending_ref: false,
             pending_lora: false,
         }
+    }
+
+    /// The compute backend: "HIP" when the server listed ROCm devices, else what a CUDA / Vulkan device table or
+    /// sd.cpp's "Using X backend" line said.
+    pub fn compute_backend(&self) -> Option<String> {
+        if self.rocm_devices.is_some() {
+            return Some("HIP".into());
+        }
+        self.backend.clone()
     }
 
     fn push_error(&mut self, line: &str) {
@@ -201,11 +230,14 @@ impl SdParser {
             }
             return;
         }
-        if let Some(c) = D07.captures(msg) {
+        let start = D07
+            .captures(msg)
+            .map(|c| (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0), None))
+            .or_else(|| V01.captures(msg).map(|c| (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0), c[3].parse::<u32>().ok())));
+        if let Some((w, h, frames)) = start {
             if self.job.is_some() {
                 self.aborted_jobs += 1;
             }
-            let (w, h) = (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0));
             // master-929 logs the reference preprocessing (and KLIF's default-LoRA line) before the job line.
             let edit = std::mem::take(&mut self.pending_ref);
             let default_lora = std::mem::take(&mut self.pending_lora);
@@ -215,6 +247,7 @@ impl SdParser {
                 height: h,
                 edit,
                 default_lora,
+                frames,
                 step: 0,
                 steps: self.last_steps,
                 s_per_it: 0.0,
@@ -222,6 +255,7 @@ impl SdParser {
                 decoding: false,
             });
             self.last_size = (w, h, edit);
+            self.last_frames = frames;
             return;
         }
         if D17.is_match(msg) {
@@ -261,13 +295,19 @@ impl SdParser {
             }
             return;
         }
+        if V03.is_match(msg) {
+            if let Some(j) = self.job.as_mut().filter(|j| j.frames.is_some()) {
+                j.step = j.steps;
+            }
+            return;
+        }
         if D15.is_match(msg) {
             if let Some(j) = self.job.as_mut() {
                 j.decoding = true;
             }
             return;
         }
-        if let Some(c) = D16.captures(msg) {
+        if let Some(c) = D16.captures(msg).or_else(|| V02.captures(msg)) {
             let secs: f64 = c[1].parse().unwrap_or(0.0);
             if let Some(j) = self.job.take() {
                 self.recent.push_back(ImageJob {
@@ -276,11 +316,14 @@ impl SdParser {
                     width: j.width,
                     height: j.height,
                     edit: j.edit,
+                    steps: (j.steps > 0).then_some(j.steps),
+                    frames: j.frames,
                 });
                 while self.recent.len() > 24 {
                     self.recent.pop_front();
                 }
                 self.last_size = (j.width, j.height, j.edit);
+                self.last_frames = j.frames;
                 if j.default_lora {
                     self.default_lora_jobs += 1;
                 }
@@ -319,6 +362,20 @@ impl SdParser {
             self.device_name = Some(c[1].trim().to_string());
             self.steps.detail[1] = self.device_detail.clone();
             self.steps.reach(1);
+            return;
+        }
+        if E08.is_match(msg) {
+            self.backend = Some("CUDA".into());
+            return;
+        }
+        if E09.is_match(msg) {
+            self.backend = Some("Vulkan".into());
+            return;
+        }
+        if let Some(c) = E10.captures(msg) {
+            if self.backend.is_none() {
+                self.backend = Some(crate::llama::backend_of_device(&c[1]));
+            }
             return;
         }
         if let Some(c) = E01.captures(msg) {
@@ -442,6 +499,7 @@ impl SdParser {
                 edit: j.edit,
                 recent: self.recent.iter().cloned().collect(),
                 images_this_session: self.images,
+                frames: j.frames,
             },
             None => ImageLive {
                 activity: ImageActivity::Idle,
@@ -454,6 +512,7 @@ impl SdParser {
                 edit: self.last_size.2,
                 recent: self.recent.iter().cloned().collect(),
                 images_this_session: self.images,
+                frames: self.last_frames,
             },
         }
     }

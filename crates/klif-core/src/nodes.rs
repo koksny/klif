@@ -21,7 +21,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use klif_common::config::{Config, RemoteNodeCfg, TokenRef};
-use klif_common::vm::{Action, LlmClass, NodeState, NodeView, Right, SystemKind, ViewModel};
+use klif_common::vm::{Action, LlmClass, NodeState, NodeView, RecordEntry, RecordEvent, Right, SystemKind, ViewModel};
 use klif_common::{now_s, Secret};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -463,6 +463,9 @@ struct Client {
     wake: Mutex<bool>,
     cv: Condvar,
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// The node's records as last received, with their revision: a snapshot that names the same revision carries
+    /// none (they did not change), and these are used.
+    records: Mutex<Option<(u64, Vec<RecordEntry>, Vec<RecordEvent>)>>,
 }
 
 impl Client {
@@ -477,6 +480,7 @@ impl Client {
             allow: Vec::new(),
             gpus: Vec::new(),
             machine: None,
+            hardware: None,
             presets: Vec::new(),
             error: None,
         };
@@ -495,7 +499,29 @@ impl Client {
             wake: Mutex::new(false),
             cv: Condvar::new(),
             thread: Mutex::new(None),
+            records: Mutex::new(None),
         }
+    }
+
+    /// The revision of the records this client holds (sent with `snapshot`).
+    fn records_rev(&self) -> Option<u64> {
+        lock(&self.records).as_ref().map(|r| r.0)
+    }
+
+    /// Fill in the records a snapshot left out (unchanged since the revision we sent), else remember the new ones.
+    /// A node of an older 0.3 sends none and no revision: nothing is kept.
+    fn with_records(&self, mut vm: ViewModel, sent: Option<u64>) -> ViewModel {
+        let mut held = lock(&self.records);
+        let unchanged = vm.records_rev != 0 && sent == Some(vm.records_rev) && vm.records.is_empty() && vm.record_events.is_empty();
+        if unchanged && held.as_ref().is_some_and(|h| h.0 == vm.records_rev) {
+            if let Some((_, records, events)) = held.as_ref() {
+                vm.records = records.clone();
+                vm.record_events = events.clone();
+            }
+        } else {
+            *held = (vm.records_rev != 0).then(|| (vm.records_rev, vm.records.clone(), vm.record_events.clone()));
+        }
+        vm
     }
 
     fn stopped(&self) -> bool {
@@ -694,6 +720,8 @@ impl Client {
             st.view.latency_ms = Some((latency.as_secs_f64() * 10_000.0).round() / 10.0);
             st.view.gpus = vm.gpus.clone();
             st.view.machine = Some(vm.machine.clone());
+            // A node of an older 0.3 sends no inventory (the empty default): nothing to show then.
+            st.view.hardware = Some(vm.hardware.clone()).filter(|h| !h.gpus.is_empty() || h.cpu.is_some());
             st.view.presets = vm
                 .presets
                 .iter()
@@ -721,8 +749,10 @@ impl Client {
             st.view.latency_ms = None;
             st.view.gpus.clear();
             st.view.machine = None;
+            st.view.hardware = None;
             st.view.presets.clear();
             st.vm = None;
+            *lock(&self.records) = None;
             if down.refused {
                 st.cached.clear();
                 st.cached_at = None;
@@ -802,13 +832,18 @@ fn run(c: Arc<Client>, hub: Arc<HubShared>) {
         }
         let t0 = Instant::now();
         let focus = lock(&c.focus).clone();
-        let params = match &focus {
+        let mut params = match &focus {
             Some(f) => json!({ "focus": f }),
             None => json!({}),
         };
+        let sent = c.records_rev();
+        if let Some(r) = sent {
+            params["recordsRev"] = json!(r);
+        }
         match c.request("snapshot", params, POLL_TIMEOUT) {
             Ok(v) => match serde_json::from_value::<ViewModel>(v) {
                 Ok(vm) => {
+                    let vm = c.with_records(vm, sent);
                     if c.lost_instance(&hub) {
                         backoff = MAX_BACKOFF;
                         c.sleep_until(Instant::now() + backoff);

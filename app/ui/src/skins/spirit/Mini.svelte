@@ -368,6 +368,9 @@
   .act .g.red {
     color: var(--red);
   }
+  .act.stop .g.red {
+    color: var(--warn);
+  }
   .act.hot {
     color: var(--red);
   }

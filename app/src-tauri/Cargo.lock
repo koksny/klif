@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "klif"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "klif-catalog"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "klif-common"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "indexmap 2.14.2",
@@ -1964,7 +1964,7 @@ dependencies = [
 
 [[package]]
 name = "klif-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "klif-supervisor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
@@ -1993,13 +1993,15 @@ dependencies = [
 
 [[package]]
 name = "klif-telemetry"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
+ "log",
  "regex",
  "serde",
  "serde_json",
+ "toml 0.9.12+spec-1.1.0",
  "ureq",
  "windows",
 ]

@@ -3,13 +3,13 @@
 //! `klif_catalog::store::upsert_preset`), so a secret never passes through klif-cli unless the caller sets it.
 
 use crate::args::Args;
-use crate::cmds::{act, find, human_command, sys_value};
+use crate::cmds::{act, find, human_command};
 use crate::conn;
 use crate::out::{refused, table, val, CliError, CliResult, Out};
+use crate::outputs::*;
 use crate::resolve::resolve;
 use klif_core::klif_common::config::{validate_preset_id, LoadedConfig, PresetCfg, PRESET_KEYS};
 use klif_core::klif_common::vm::{Action, AdapterId, PresetInfo, SystemKind, ViewModel};
-use serde_json::json;
 use std::collections::BTreeMap;
 
 pub fn run(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
@@ -51,7 +51,7 @@ fn list(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             .map(|s| s.id.to_string())
             .collect()
     };
-    let doc = json!({ "node": node, "presets": presets });
+    let doc = val(&PresetsListDoc { node: node.clone(), presets: presets.to_vec() });
     out.doc(doc, || {
         if presets.is_empty() {
             return "No presets yet ([presets.<id>] in klif.toml, or klif-cli presets save / set).".into();
@@ -112,7 +112,7 @@ fn show(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
         .preset(&id, node.as_deref())
         .map_err(refused)?
         .ok_or_else(|| CliError::new("not_found", format!("There is no preset \"{id}\"{}.", node.as_deref().map(|n| format!(" on node {n}")).unwrap_or_default())))?;
-    out.doc(json!({ "node": node, "preset": detail }), || {
+    out.doc(val(&PresetsShowDoc { node: node.clone(), preset: detail.clone() }), || {
         let i = &detail.info;
         let mut s = format!(
             "{} ({}) · {} · {} · {}{}\n",
@@ -153,7 +153,7 @@ fn use_preset(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     act(&conn, Action::UsePreset { system: id.clone(), preset: preset.clone() })?;
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
-    out.doc(json!({ "system": s.as_ref().map(sys_value) }), || format!("{id} now uses preset {preset} (applies on the next launch)."));
+    out.doc(val(&PresetsUseDoc { system: s.as_ref().map(SysBrief::of) }), || format!("{id} now uses preset {preset} (applies on the next launch)."));
     Ok(())
 }
 
@@ -168,7 +168,7 @@ fn param(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     act(&conn, Action::SetParam { system: id.clone(), name: name.clone(), value: value.clone() })?;
     let vm = conn.snapshot(None)?;
     let params = find(&vm, &id).map(|s| s.params.clone()).unwrap_or_default();
-    out.doc(json!({ "system": id, "params": params }), || format!("{id}: {name} = {value} (applies on the next launch)."));
+    out.doc(val(&PresetsParamDoc { system: id.clone(), params }), || format!("{id}: {name} = {value} (applies on the next launch)."));
     Ok(())
 }
 
@@ -237,7 +237,8 @@ fn finish_saved(conn: &conn::Conn, out: Out, id: &str, node: Option<&str>, warni
         }
     };
     let issues = detail.as_ref().map(|d| d.command.issues.clone()).unwrap_or_default();
-    out.doc(json!({ "saved": id, "node": node, "usedFor": used_for, "warnings": warnings, "preset": detail }), || {
+    let doc = PresetsSaveDoc { saved: id.to_string(), node: node.map(str::to_string), used_for: used_for.clone(), warnings, preset: detail };
+    out.doc(val(&doc), || {
         let mut s = format!("Saved preset {id}{}.", used_for.as_deref().map(|u| format!(" and selected it for {u}")).unwrap_or_default());
         for i in &issues {
             s.push_str(&format!("\n{}: {}", if i.is_error() { "error" } else { "warn" }, i.text));
@@ -346,7 +347,7 @@ fn apply(spec: &mut PresetCfg, kv: &str) -> CliResult {
         }
         "adapter" => {
             spec.adapter = AdapterId::parse(v)
-                .ok_or_else(|| CliError::usage(format!("adapter must be llama.cpp, sd.cpp, vllm, openai or generic, not \"{v}\".")))?
+                .ok_or_else(|| CliError::usage(format!("adapter must be llama.cpp, sd.cpp, vllm, openai, audiocpp or generic, not \"{v}\".")))?
         }
         "managed" => spec.managed = parse_bool(key, v)?,
         "api_key" => spec.api_key = parse_bool(key, v)?,
@@ -399,7 +400,7 @@ fn delete(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     }
     let conn = conn::connect(loaded)?;
     act(&conn, Action::DeletePreset { id: id.clone(), node: node.clone() })?;
-    out.doc(json!({ "deleted": id, "node": node }), || format!("Deleted preset {id}."));
+    out.doc(val(&PresetsDeleteDoc { deleted: id.clone(), node: node.clone() }), || format!("Deleted preset {id}."));
     Ok(())
 }
 

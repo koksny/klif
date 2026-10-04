@@ -337,6 +337,7 @@
       <button class="btn w7" onclick={() => actions.restart(selSlot?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>RESTART</button>
     {/if}
     <button class="btn w4" onclick={() => actions.openTune(selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="btn w7 rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">RECORDS</span></button>
     <button class="btn w8" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
     <button class="btn w8" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'FULL LOG' : 'CONSOLE'}</button>
   </footer>
@@ -959,6 +960,30 @@
   }
   .btn.w8 {
     width: 10em;
+  }
+  /* Records: the label, or (window too narrow for the row to hold it) just the icon */
+  .btn.rec .ri {
+    display: none;
+    width: calc(var(--u) * 15px);
+    height: calc(var(--u) * 15px);
+    min-width: 12px;
+    min-height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  @media (max-width: 939px) {
+    .btn.rec {
+      width: calc(var(--u) * 30px);
+    }
+    .btn.rec .rl {
+      display: none;
+    }
+    .btn.rec .ri {
+      display: block;
+    }
   }
   .chip:hover:not(:disabled),
   .btn:hover:not(:disabled) {

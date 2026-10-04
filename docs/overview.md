@@ -116,6 +116,8 @@ The UI reaches the engine through Tauri commands (`app/src-tauri/src/commands.rs
 | `klif_act` | Run an engine action (launch, stop, usePreset, savePreset, addSystem, ...). Only a short summary is logged |
 | `klif_preset_get` | One preset, secrets masked (`id`, optional `node`) |
 | `klif_command_preview` | The exact command and issues for an unsaved preset draft |
+| `klif_records_history` | The climb of one record (`key`, optional `metric`): every broken record, oldest first |
+| `klif_save_image` | Save the Records export card (`name`, base64 `data`): a PNG or GIF into `Pictures\KLIF`, a safe name, never overwriting (`-2`, `-3`, ...); returns the full path |
 | `klif_set_api_key` | Store or clear the KLIF API key; the value is wiped after use and never echoed |
 | `klif_open_config`, `klif_open_logs` | Open `klif.toml` (creating it if needed) or the logs folder |
 | `klif_open_endpoint`, `klif_copy_endpoint`, `klif_copy_api_key` | Open or copy a System's URL (LLMs with `/v1`); copy the key (local Systems only) |

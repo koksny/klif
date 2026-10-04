@@ -1,8 +1,8 @@
 <script lang="ts">
   // Controls: the same buttons in the same places in every phase; a phase only changes what they say and
   // whether they are enabled. [endpoint :port] [API key] ... [primary: Launch / Cancel / Stop / Stopping /
-  // Restart after a fault, one fixed width] [Restart, or Dismiss after a fault] [Tune, always] [Endpoint or
-  // Web UI] [Console, or Full log after a fault]. The last console line under it.
+  // Restart after a fault, one fixed width] [Restart, or Dismiss after a fault] [Tune, always] [Records, icon only,
+  // always] [Endpoint or Web UI] [Console, or Full log after a fault]. The last console line under it.
   import type { Actions, ViewModel } from '../../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
   import { blockView, selectedSystem, sessionKind } from '../util';
@@ -110,6 +110,10 @@
         ><path d="M3.5 6h13M3.5 14h13" class="ln" /><circle cx="7.5" cy="6" r="2" class="knob" /><circle cx="12.5" cy="14" r="2" class="knob" /></svg
       >
       <span>Tune</span>
+    </button>
+    <!-- Icon only: this row is exactly full at every width, so Records takes the space of its icon. -->
+    <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16.5V10h4v6.5M8 16.5V4h4v12.5M12 16.5V8h4v8.5" class="ln" /></svg>
     </button>
     <button class="btn w-ep" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={online ? '' : 'The endpoint is not up'}>
       <svg viewBox="0 0 20 20" aria-hidden="true"
@@ -235,11 +239,15 @@
     color: var(--muted);
   }
   .btn.stop {
-    border-color: rgba(232, 100, 90, 0.75);
-    color: #f3a49c;
+    border-color: rgba(242, 163, 58, 0.7);
+    color: #f6c27a;
+  }
+  .btn.stop:hover:not(:disabled) {
+    border-color: var(--amber);
+    background: rgba(242, 163, 58, 0.1);
   }
   .btn.stop .fill {
-    fill: var(--danger);
+    fill: var(--amber);
   }
   .btn.stop:disabled {
     opacity: 0.6;
@@ -265,6 +273,11 @@
   .btn.tune {
     border-color: #2f5a75;
     color: var(--sky);
+  }
+  .btn.rec {
+    width: max(28px, calc(var(--u) * 30));
+    padding: 0;
+    justify-content: center;
   }
   svg {
     width: max(14px, calc(var(--u) * 16));

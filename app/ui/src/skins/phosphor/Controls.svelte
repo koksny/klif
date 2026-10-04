@@ -1,7 +1,7 @@
 <script lang="ts">
   // Controls bar: the same buttons in the same places in every phase; a phase only changes what they say
   // and whether they are enabled.
-  //   [:port] [API key] ............ [PRIMARY] [Restart | Dismiss] [Tune] [Endpoint | Web UI] [Console | Full log]
+  //   [:port] [API key] ............ [PRIMARY] [Restart | Dismiss] [Tune] [Records] [Endpoint | Web UI] [Console | Full log]
   // PRIMARY has one fixed width: Launch <TIER> (idle) / Cancel (loading) / Stop (live) / Stopping (disabled) /
   // Restart <TIER> after a fault. Tune is always enabled: on a running tier the drawer offers "Restart to apply".
   import type { Actions, Session, System, ViewModel } from '../../lib/model/types';
@@ -89,6 +89,9 @@
   {/if}
   <button class="btn tune w3" onclick={() => actions.openTune(selected?.id)} title={tuneTip}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" /><circle cx="10" cy="4" r="1.6" class="knob" /><circle cx="5.5" cy="8" r="1.6" class="knob" /><circle cx="9.5" cy="12" r="1.6" class="knob" /></svg>Tune
+  </button>
+  <button class="btn wr" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">Records</span>
   </button>
   <button class="btn w4" onclick={() => actions.openEndpoint(selected?.id)} disabled={!online} title={image ? 'Open the image server web UI' : 'Open the endpoint'}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4" /><path d="M13.5 2.5L7.5 8.5" /><path d="M12 9.5v3.2a.8.8 0 0 1-.8.8H3.3a.8.8 0 0 1-.8-.8V4.8a.8.8 0 0 1 .8-.8h3.2" /></svg>{image ? 'Web UI' : 'Endpoint'}
@@ -186,6 +189,23 @@
     width: max(66px, calc(84px * var(--k)));
     justify-content: center;
   }
+  /* Records: icon only while the row is short of room (below ~1240 px wide), the label from there up */
+  .btn.wr {
+    width: max(30px, calc(34px * var(--k)));
+    padding: 0;
+    justify-content: center;
+  }
+  .btn.wr .rl {
+    display: none;
+  }
+  @media (min-width: 1240px) {
+    .btn.wr {
+      width: max(92px, calc(110px * var(--k)));
+    }
+    .btn.wr .rl {
+      display: inline;
+    }
+  }
   .btn.w4 {
     width: max(90px, calc(108px * var(--k)));
     justify-content: center;
@@ -239,15 +259,15 @@
     text-shadow: none;
   }
   .btn.stop {
-    color: #ee6f65;
-    border-color: var(--ph-danger);
-    background: rgba(60, 14, 14, 0.25);
-    box-shadow: 0 0 10px rgba(229, 97, 92, 0.22);
+    color: #f0c46a;
+    border-color: var(--ph-amber);
+    background: rgba(58, 40, 8, 0.25);
+    box-shadow: 0 0 10px rgba(232, 176, 74, 0.22);
     text-shadow: none;
   }
   .btn.stop:hover:not(:disabled) {
-    border-color: #ff8a80;
-    background: rgba(90, 20, 20, 0.35);
+    border-color: #ffd27a;
+    background: rgba(88, 60, 12, 0.35);
   }
   .btn.fix {
     color: #ff8f88;

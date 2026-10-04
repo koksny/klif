@@ -38,6 +38,8 @@ class UiState {
   vh = $state(typeof innerHeight === 'undefined' ? 1152 : innerHeight);
 
   consoleOpen = $state(false);
+  /** The Records screen (the best each model reached); full size only, like Tune. */
+  recordsOpen = $state(false);
   tuneOpen = $state(false);
   /** The System the Tune drawer shows (null: the selected one). */
   tuneSystem = $state<SystemId | null>(null);
@@ -86,6 +88,7 @@ class UiState {
     this.skinId = skinMeta(wanted).id;
     this.tierPin = this.params.tier;
     if (this.params.drawer === 'console') this.consoleOpen = true;
+    if (this.params.drawer === 'records') this.recordsOpen = true;
     if (this.params.drawer === 'tune') {
       this.tuneOpen = true;
       this.tuneSystem = this.params.system;
@@ -149,9 +152,28 @@ class UiState {
     this.tuneAdd = false;
   }
 
+  /** Open the Records screen (full size only: the mini layouts never mount it). */
+  openRecords() {
+    this.recordsOpen = true;
+  }
+
+  closeRecords() {
+    this.recordsOpen = false;
+  }
+
+  /** The R shortcut. */
+  toggleRecords(open?: boolean) {
+    this.recordsOpen = open ?? !this.recordsOpen;
+  }
+
   /** Escape. Drawers are hidden in mini (Tune keeps its drafts there), so mini closes nothing. */
   closeDrawers(): boolean {
     if (this.size !== 'full') return false;
+    // Records covers the window, so it goes first (Tune and the console sit under it).
+    if (this.recordsOpen) {
+      this.recordsOpen = false;
+      return true;
+    }
     if (this.tuneOpen) {
       this.closeTune();
       return true;

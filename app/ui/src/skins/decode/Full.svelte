@@ -10,7 +10,7 @@
   //   dormant   - (live, vram.dormant set) frozen amber; waking: it thaws as the VRAM comes back
   //   fault     - red glitch, the context dissolves, the hero shows the fault and the log tail
   // Controls keep their places: the primary button (Launch / Cancel / Stop / Restart after a fault), Restart
-  // (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log after a fault).
+  // (Dismiss after a fault), Tune (always), Records (always), Endpoint / Web UI, Console (Full log after a fault).
   import type { RequestRecord, ViewModel, Actions, LoadStep } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
   import { strip } from '../../lib/shell/SystemTabs/scroll';
@@ -368,6 +368,7 @@
       <button class="btn" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>↻ restart</button>
     {/if}
     <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>≡ tune</button>
+    <button class="btn" onclick={() => actions.openRecords()} title="Records: the best each model reached">▲ records</button>
     <button class="btn" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>↗ {kind === 'image' ? 'web ui' : 'endpoint'}</button>
     <button class="btn" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>&gt;_ {faulted ? 'full log' : 'console'}</button>
   </footer>
@@ -1024,8 +1025,12 @@
     color: var(--muted);
   }
   .btn.stop {
-    border-color: var(--red);
-    color: var(--red);
+    border-color: var(--ice);
+    color: var(--ice);
+  }
+  .btn.stop:hover:not(:disabled) {
+    border-color: var(--arc);
+    color: var(--arc);
   }
   .btn.hot {
     background: var(--red);
@@ -1033,7 +1038,6 @@
     color: #12030a;
     font-weight: 700;
   }
-  .btn.stop:hover:not(:disabled),
   .btn.hot:hover:not(:disabled) {
     border-color: #ff8fa3;
   }

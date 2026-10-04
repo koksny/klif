@@ -13,7 +13,8 @@
        (http://tauri.localhost) instead of tauri.conf.json's devUrl. Without it a release build still loads
        the dev server.
     4. repo root:     cargo build --release -p klif-cli                  -> klif-cli.exe
-    5. Copies both to OutDir, optionally signs them (-Sign), prints their SHA256.
+    5. Copies both to OutDir, optionally signs them (-Sign), prints their SHA256. The Agent Skill that teaches a
+       coding agent to drive KLIF with klif-cli (skills\klif\SKILL.md) is copied to OutDir\skills\klif\SKILL.md.
 
     Paths stay out of the binaries: both builds run with --remap-path-prefix for the repo root, CARGO_HOME
     (default %USERPROFILE%\.cargo) and the user profile (RUSTFLAGS), debug info is stripped and /PDBALTPATH keeps
@@ -66,6 +67,8 @@ $shellTarget = Join-Path $TargetDir 'shell'
 $cliTarget = Join-Path $TargetDir 'cli'
 $outShell = Join-Path $OutDir 'klif.exe'
 $outCli = Join-Path $OutDir 'klif-cli.exe'
+$skillSrc = Join-Path $repo 'skills\klif\SKILL.md'
+$outSkill = Join-Path $OutDir 'skills\klif\SKILL.md'
 
 # Native tools (npm, cargo) write progress to stderr. Under ErrorActionPreference=Stop, PowerShell 5.1
 # turns redirected stderr lines into terminating NativeCommandErrors, so judge them by exit code only.
@@ -218,6 +221,7 @@ if (-not $SkipUi) {
 
 Step 'Checks'
 $version = Assert-Versions
+if (-not (Test-Path -LiteralPath $skillSrc)) { throw "The Agent Skill is missing: $skillSrc." }
 Write-Host "version: $version (all five places agree)"
 Assert-NoPrivate $OutDir 'The output folder'
 $uiDist = Join-Path $uiDir 'dist'
@@ -327,6 +331,8 @@ Step "Copy to $OutDir"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 Copy-Item -LiteralPath $builtShell -Destination $outShell -Force
 Copy-Item -LiteralPath $builtCli -Destination $outCli -Force
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outSkill) | Out-Null
+Copy-Item -LiteralPath $skillSrc -Destination $outSkill -Force
 Assert-NoPrivate $OutDir 'The output folder'
 foreach ($exe in @($outShell, $outCli)) { Assert-NoPowerShellText $exe }
 
@@ -346,6 +352,7 @@ foreach ($f in @($outShell, $outCli)) {
 }
 Write-Host ('built:  {0:N0} s total ({1} s UI, {2:N0} s Rust + copy)' -f $sw.Elapsed.TotalSeconds, $uiSeconds, ($sw.Elapsed.TotalSeconds - $uiSeconds))
 Write-Host ('out:    ' + $OutDir)
+Write-Host ('skill:  ' + $outSkill + ' (the Agent Skill for klif-cli)')
 $cfg = Join-Path $repo '.local\klif.toml'
 if (Test-Path -LiteralPath $cfg) {
     Write-Host ('config: ' + $cfg + ' (found from the exe by walking up to the repo root)')

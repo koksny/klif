@@ -8,6 +8,9 @@
 //!   use, speculative acceptance), `/v1/models` (`max_model_len`), `/version`.
 //! - `OpenAi`: any OpenAI-compatible server: `/health` -> `/v1/models` -> TCP, `/metrics` if it answers
 //!   Prometheus text, `/v1/models` for the model id and context.
+//! - `AudioCpp`: audio.cpp `audiocpp_server` (TTS): `/health`, `/v1/models` every few seconds (`loaded`), the
+//!   listening / failed lines and, with `--log`, one debug line per request (count, activity) -> `GenericLive`.
+//! - `SdCpp` with kind video: the same parser reads `generate_video WxHxT` jobs; ready = `/sdcpp/v1/capabilities`.
 //! - `Generic`: any other server (TTS / STT / video...): TCP or the preset's HTTP health, log-activity busy pulses,
 //!   `/metrics` if it answers Prometheus text, request counters -> `GenericLive`.
 //!
@@ -18,6 +21,7 @@
 use crate::llama::{Activity, LlamaParser, Req};
 use crate::probe::{ModelsInfo, SlotSample};
 use crate::prom::{self, Sample};
+use crate::audiocpp::{self, AudioCppLog, AudioLine};
 use crate::sd::SdParser;
 use crate::steps::{self, step_label, Steps, STEP_IDS};
 use crate::tail::{Segment, Stream};
@@ -115,6 +119,8 @@ pub struct ProbeWants {
     pub metrics: Option<f64>,
     /// vLLM `/version` (once).
     pub version: bool,
+    /// Re-read `/v1/models` this often (s) after it answered (audio.cpp loads and unloads models); None = once.
+    pub models_every: Option<f64>,
 }
 
 /// A probe answer for the adapter (health goes through the tracker).
@@ -173,6 +179,10 @@ pub trait BackendAdapter: Send {
     fn backend_build(&self) -> Option<String> {
         None
     }
+    /// The compute backend the server's log names ("HIP", "Vulkan", "CUDA", "CPU", "Metal"), for records.
+    fn compute_backend(&self) -> Option<String> {
+        None
+    }
     /// Fill the adapter-specific parts of the signals (live shapes, faults, arch...).
     fn fill(&self, now: f64, sig: &mut SessionSignals);
     /// Median decode speed over the session's finished requests (LLM).
@@ -202,6 +212,7 @@ pub fn for_ctx(id: AdapterId, ctx: AdapterCtx) -> Box<dyn BackendAdapter> {
         AdapterId::SdCpp => Box::new(SdCpp::new(ctx)),
         AdapterId::Vllm => Box::new(Vllm::new(ctx)),
         AdapterId::OpenAi => Box::new(OpenAi::new(ctx)),
+        AdapterId::AudioCpp => Box::new(AudioCpp::new(ctx)),
         AdapterId::Generic => Box::new(Generic::new(ctx)),
     }
 }
@@ -799,6 +810,7 @@ impl BackendAdapter for LlamaCpp {
             models: ready && self.models.is_none(),
             metrics: if ready && self.ctx.metrics { Some(2.0) } else { None },
             version: false,
+            models_every: None,
         }
     }
     fn feed(&mut self, seg: &Segment) {
@@ -860,6 +872,9 @@ impl BackendAdapter for LlamaCpp {
     fn backend_build(&self) -> Option<String> {
         self.p.build_label()
     }
+    fn compute_backend(&self) -> Option<String> {
+        self.p.compute_backend()
+    }
     fn fill(&self, now: f64, sig: &mut SessionSignals) {
         let p = &self.p;
         let live = self.llm_live(now);
@@ -870,6 +885,7 @@ impl BackendAdapter for LlamaCpp {
                 requests_total: total.or(Some(live.totals.requests)),
                 last_activity_s: self.last_line.map(|t| round_to((now - t).max(0.0), 1)),
                 model_id: self.models.as_ref().and_then(|m| m.id.clone()),
+                model_loaded: None,
             });
         }
         sig.llm = Some(live);
@@ -911,7 +927,8 @@ fn six_steps(mut steps: Steps, image: bool, health: Health, ctx: &AdapterCtx) ->
 
 // ------------------------------------------------------------------------------------------ sd.cpp
 
-/// sd.cpp `sd-server`: logs + TCP.
+/// sd.cpp `sd-server`: logs + TCP (kind video: `GET /sdcpp/v1/capabilities`, which answers once the context is
+/// built; sd-server has no /health).
 pub struct SdCpp {
     ctx: AdapterCtx,
     p: SdParser,
@@ -934,8 +951,12 @@ impl BackendAdapter for SdCpp {
     fn id(&self) -> AdapterId {
         AdapterId::SdCpp
     }
-    fn default_health(&self, _kind: SystemKind) -> HealthCheck {
-        HealthCheck::Tcp
+    fn default_health(&self, kind: SystemKind) -> HealthCheck {
+        match kind {
+            // Video needs a current sd-server (vid_gen): its capabilities route answers when it is ready.
+            SystemKind::Video => HealthCheck::Http { path: "/sdcpp/v1/capabilities".into() },
+            _ => HealthCheck::Tcp,
+        }
     }
     fn reports_spill(&self) -> bool {
         false
@@ -951,6 +972,9 @@ impl BackendAdapter for SdCpp {
         let p = &self.p;
         match probe {
             Some(Health::Ready) => return Health::Ready,
+            // sd-server listens only after its context is built: an answer after `listening on:` is a ready server
+            // (an older build without the capabilities route answers 404).
+            Some(Health::Loading) if self.ctx.kind == SystemKind::Video && p.listening.is_some() => return Health::Ready,
             Some(Health::Loading) => return Health::Loading,
             Some(Health::Down) => {
                 // No listener: still loading, unless it already listened once or crashed.
@@ -982,6 +1006,9 @@ impl BackendAdapter for SdCpp {
     fn reported_devices(&self) -> Vec<String> {
         self.p.device_name.clone().into_iter().collect()
     }
+    fn compute_backend(&self) -> Option<String> {
+        self.p.compute_backend()
+    }
     fn fill(&self, now: f64, sig: &mut SessionSignals) {
         let p = &self.p;
         let image = p.live(now);
@@ -991,6 +1018,7 @@ impl BackendAdapter for SdCpp {
                 requests_total: Some(p.images),
                 last_activity_s: self.last_line.map(|t| round_to((now - t).max(0.0), 1)),
                 model_id: None,
+                model_loaded: None,
             });
         }
         sig.image = Some(image);
@@ -1022,6 +1050,7 @@ fn short_paths(msg: &str) -> String {
 enum Flavor {
     Vllm,
     OpenAi,
+    AudioCpp,
     Generic,
 }
 
@@ -1165,6 +1194,7 @@ impl ApiServer {
                 (Flavor::Vllm, Some(v)) => format!("vLLM {v}"),
                 (Flavor::Vllm, None) => "vLLM".into(),
                 (Flavor::OpenAi, _) => "OpenAI-compatible".into(),
+                (Flavor::AudioCpp, _) => "audio.cpp".into(),
                 (Flavor::Generic, _) => "generic".into(),
             });
         }
@@ -1255,6 +1285,7 @@ impl ApiServer {
             requests_total: total,
             last_activity_s: self.last_activity().map(|t| round_to((now - t).max(0.0), 1)),
             model_id: self.models.as_ref().and_then(|m| m.id.clone()),
+            model_loaded: None,
         });
         if self.ctx.kind == SystemKind::Llm {
             // Without metrics this is the idle shape with what is known (context from /v1/models or the preset).
@@ -1276,6 +1307,7 @@ impl ApiServer {
                 edit: false,
                 recent: Vec::new(),
                 images_this_session: total.unwrap_or(0),
+                frames: None,
             });
         }
         sig.error_tail = self.error_tail.iter().cloned().collect();
@@ -1289,6 +1321,7 @@ impl ApiServer {
             models: ready && self.models.is_none() && self.flavor != Flavor::Generic,
             metrics: if ready { metrics_default } else { None },
             version: ready && self.flavor == Flavor::Vllm && self.version.is_none(),
+            models_every: None,
         }
     }
 
@@ -1392,3 +1425,121 @@ macro_rules! api_impl {
 api_impl!(Vllm, AdapterId::Vllm, HealthCheck::Http { path: "/health".into() }, true, 0.5, Some(1.0));
 api_impl!(OpenAi, AdapterId::OpenAi, HealthCheck::Auto, true, 0.5, Some(2.0));
 api_impl!(Generic, AdapterId::Generic, HealthCheck::Tcp, false, 1.0, Some(2.0));
+
+// ------------------------------------------------------------------------------------------ audio.cpp
+
+/// How often an audio.cpp session's `/v1/models` is read again (lazy loading and `--idle-unload-ms` change `loaded`).
+const AUDIOCPP_MODELS_S: f64 = 3.0;
+
+/// audio.cpp `audiocpp_server` (TTS): `/health`, `/v1/models` every few seconds (whether the weights are resident),
+/// the listening / failed lines and, with `--log`, one debug line per request (request count, activity; the debug
+/// lines of KLIF's own probes are hidden). Per-request timing is only in the responses, so its records come from
+/// `klif-cli bench`.
+pub struct AudioCpp {
+    s: ApiServer,
+    p: AudioCppLog,
+    /// When `/v1/models` last answered (epoch s).
+    models_at: Option<f64>,
+}
+
+impl Default for AudioCpp {
+    fn default() -> Self {
+        Self::new(AdapterCtx { kind: SystemKind::Tts, ..AdapterCtx::default() })
+    }
+}
+
+impl AudioCpp {
+    pub fn new(ctx: AdapterCtx) -> Self {
+        AudioCpp { s: ApiServer::new(ctx, Flavor::AudioCpp), p: AudioCppLog::default(), models_at: None }
+    }
+
+    /// What the log said so far (replays and tools).
+    pub fn log(&self) -> &AudioCppLog {
+        &self.p
+    }
+}
+
+impl BackendAdapter for AudioCpp {
+    fn id(&self) -> AdapterId {
+        AdapterId::AudioCpp
+    }
+    fn default_health(&self, _kind: SystemKind) -> HealthCheck {
+        HealthCheck::Http { path: "/health".into() }
+    }
+    fn reports_spill(&self) -> bool {
+        false
+    }
+    fn probe_period(&self) -> f64 {
+        1.0
+    }
+    fn probe_wants(&self, health: Health) -> ProbeWants {
+        ProbeWants { models: health == Health::Ready, models_every: Some(AUDIOCPP_MODELS_S), ..ProbeWants::default() }
+    }
+    fn feed(&mut self, seg: &Segment) {
+        match self.p.feed(&seg.text, seg.at) {
+            // KLIF's own probes: no activity.
+            AudioLine::Probe => {}
+            AudioLine::Fatal(msg) => {
+                // ApiServer::feed keeps error lines itself (the rule below); keep this one either way.
+                let low = seg.text.to_ascii_lowercase();
+                let kept = low.contains("error") && (seg.stream == Stream::Err || low.contains("[error") || low.starts_with("error"));
+                self.s.feed(seg);
+                if !kept {
+                    self.s.push_error(&seg.text);
+                }
+                if self.s.fatal_hint.is_none() {
+                    self.s.fatal_hint = Some(format!("audiocpp_server failed: {}", short_paths(msg.trim())));
+                    self.s.steps.fail_active();
+                }
+            }
+            _ => {
+                self.s.feed(seg);
+                // Model load failures ("model <id> ...") name no "error" on stderr.
+                let low = seg.text.to_ascii_lowercase();
+                if seg.stream == Stream::Err && low.contains("fail") && !low.contains("error") {
+                    self.s.push_error(&seg.text);
+                }
+            }
+        }
+    }
+    fn console_keep(&self, line: &str) -> bool {
+        !self.s.is_probe(line) && !audiocpp::is_probe_line(line)
+    }
+    fn tick(&mut self, now: f64) {
+        self.s.tick(now)
+    }
+    fn on_health(&mut self, _at: f64, h: Health) {
+        self.s.on_health(h)
+    }
+    fn apply(&mut self, at: f64, r: ProbeResult) {
+        if matches!(r, ProbeResult::Models(_)) {
+            self.models_at = Some(at);
+        }
+        self.s.apply(at, r)
+    }
+    fn health(&self, probe: Option<Health>) -> Health {
+        match probe {
+            None if self.p.fatal.is_some() => Health::Down,
+            // Without probes (a replay), the listening line is the ready signal.
+            None if self.p.listening.is_some() && !self.p.stopped => Health::Ready,
+            _ => self.s.health(probe),
+        }
+    }
+    fn steps_view(&self, health: Health) -> (Vec<LoadStep>, f64) {
+        self.s.steps_view(health)
+    }
+    fn busy_since(&self, now: f64) -> Option<f64> {
+        self.s.busy_since(now)
+    }
+    fn fill(&self, now: f64, sig: &mut SessionSignals) {
+        self.s.fill(now, sig);
+        let m = self.s.models.as_ref();
+        // The idle timer's notice is newer than the last /v1/models answer: nothing is resident now.
+        let unloaded = self.p.unloaded_at.is_some_and(|u| self.models_at.is_none_or(|m| u > m));
+        if let Some(g) = sig.generic.as_mut() {
+            g.requests_total = self.p.requests.or(g.requests_total);
+            g.model_id = m.and_then(|m| m.loaded_id.clone().or_else(|| m.id.clone()));
+            g.model_loaded = if unloaded { Some(false) } else { m.and_then(|m| m.loaded) };
+        }
+    }
+}

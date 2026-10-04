@@ -37,8 +37,10 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The methods the protocol knows (anything else: `unknown_method`).
-const METHODS: [&str; 8] = ["hello", "snapshot", "status", "act", "plan", "preset", "command_preview", "diag"];
+/// The methods the protocol knows (anything else: `unknown_method`). `bench` (klif-cli's bench window for the
+/// records) is local only, like every method `Right::for_method` does not name.
+const METHODS: [&str; 10] =
+    ["hello", "snapshot", "status", "act", "plan", "preset", "command_preview", "diag", "bench", "records_history"];
 
 /// Connection limits and timeouts of one server.
 #[derive(Debug, Clone, Copy)]
@@ -868,14 +870,16 @@ fn dispatch(shared: &Shared, req: &Request, nonce: &str) -> Response {
             };
             let vm = h.snapshot_focus(focus.as_ref());
             if net {
-                to_value(id, &network_view(vm, focus.as_ref()))
+                // The records travel only when they changed since the revision the hub holds.
+                let have = req.params.get("recordsRev").and_then(Value::as_u64);
+                to_value(id, &network_view(vm, focus.as_ref(), have))
             } else {
                 to_value(id, &vm)
             }
         }
         "status" => {
             let vm = h.snapshot();
-            let vm = if net { network_view(vm, None) } else { vm };
+            let vm = if net { network_view(vm, None, None) } else { vm };
             to_value(id, &wire::status_of(&vm))
         }
         "act" => {
@@ -934,13 +938,62 @@ fn dispatch(shared: &Shared, req: &Request, nonce: &str) -> Response {
             }
         }
         "diag" => Response::success(id, h.diag()),
+        "records_history" => {
+            let Some(key) = req.params.get("key").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) else {
+                return bad(id, "records_history needs {\"key\": record key, \"metric\"?: metric}.");
+            };
+            let metric = match req.params.get("metric") {
+                None | Some(Value::Null) => None,
+                Some(v) => match serde_json::from_value::<klif_common::vm::RecordMetric>(v.clone()) {
+                    Ok(m) => Some(m),
+                    Err(_) => return bad(id, "\"metric\" must be a record metric (decodeTps, prefillTps, ttftS, imageS, ttsRtf, sttRtf, videoS)."),
+                },
+            };
+            // A network peer sees this machine's records only; the local channel may name a node's key.
+            let points = if net { h.records_history_local(key, metric) } else { h.records_history(key, metric) };
+            match points {
+                Ok(p) => to_value(id, &p),
+                Err(e) => refused(id, e),
+            }
+        }
+        "bench" => {
+            let system = match param_system(req, "system", net) {
+                Ok(Some(s)) => s,
+                Ok(None) => return bad(id, "bench needs {\"system\": id, \"phase\": \"start\" | \"end\"}."),
+                Err(r) => return r,
+            };
+            let start = match req.params.get("phase").and_then(Value::as_str) {
+                Some("start") => true,
+                Some("end") => false,
+                _ => return bad(id, "\"phase\" must be \"start\" or \"end\"."),
+            };
+            let record = match req.params.get("record") {
+                None | Some(Value::Null) => None,
+                Some(v) => match serde_json::from_value::<crate::bench::BenchRecord>(v.clone()) {
+                    Ok(r) => Some(r),
+                    Err(e) => return bad(id, format!("The bench result could not be read: {e}.")),
+                },
+            };
+            match h.bench_mark(&system, start, record.as_ref()) {
+                Ok(()) => Response::success(id, Value::Null),
+                Err(e) => refused(id, e),
+            }
+        }
         _ => Response::failure(id, code::UNKNOWN_METHOD, format!("Unknown method \"{method}\".")),
     }
 }
 
 /// What a network peer sees (SPEC 16.14): this machine's LOCAL Systems only, no nodes / recommendations /
 /// downloads, config blanked (no paths), and the session / console conveniences only for a focused local System.
-fn network_view(mut vm: ViewModel, focus: Option<&SystemId>) -> ViewModel {
+/// Records: this machine's only, and none at all when the peer already holds `records_rev` (`have`).
+fn network_view(mut vm: ViewModel, focus: Option<&SystemId>, have: Option<u64>) -> ViewModel {
+    vm.records.retain(|r| r.node.is_none());
+    let local: std::collections::BTreeSet<&str> = vm.records.iter().map(|r| r.key.as_str()).collect();
+    vm.record_events.retain(|e| local.contains(e.key.as_str()));
+    if vm.records_rev != 0 && have == Some(vm.records_rev) {
+        vm.records.clear();
+        vm.record_events.clear();
+    }
     vm.systems.retain(|s| s.node.is_none() && !s.id.is_remote());
     for s in &mut vm.systems {
         s.conflicts.retain(|c| !c.is_remote());

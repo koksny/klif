@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use klif_common::config::{Config, LoadedConfig, PresetCfg};
-use klif_common::vm::{Action, CommandView, PresetDetail, SystemId, ViewModel};
+use klif_common::vm::{Action, CommandView, PresetDetail, RecordEvent, RecordMetric, SystemId, ViewModel};
 use klif_common::Secret;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::bench::BenchRecord;
 use crate::wire::{self, CallError, Connection, ControlFile, Hello};
 use crate::EngineHandle;
 
@@ -25,12 +26,16 @@ pub trait EngineLink {
     /// A preset in full (masked); `node` = a remote node's preset.
     fn preset(&self, id: &str, node: Option<&str>) -> Result<Option<PresetDetail>>;
     fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> Result<CommandView>;
+    /// The climb of a record key (a key of `ViewModel.records`), oldest first; a node's key is asked of that node.
+    fn records_history(&self, key: &str, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>>;
     fn diag(&self) -> Result<Value>;
     /// The API key (read locally; never sent over the control channel).
     fn api_key(&self) -> Option<Secret>;
     fn state_dir(&self) -> PathBuf;
     fn data_dir(&self) -> PathBuf;
     fn config_path(&self) -> Option<PathBuf>;
+    /// Open (`start`) or close a bench window on a local System for the records; the end carries the result.
+    fn bench_mark(&self, system: &SystemId, start: bool, record: Option<&BenchRecord>) -> Result<()>;
 }
 
 impl EngineLink for EngineHandle {
@@ -49,6 +54,9 @@ impl EngineLink for EngineHandle {
     fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> Result<CommandView> {
         Ok(EngineHandle::command_preview(self, spec, system))
     }
+    fn records_history(&self, key: &str, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>> {
+        EngineHandle::records_history(self, key, metric)
+    }
     fn diag(&self) -> Result<Value> {
         Ok(EngineHandle::diag(self))
     }
@@ -63,6 +71,9 @@ impl EngineLink for EngineHandle {
     }
     fn config_path(&self) -> Option<PathBuf> {
         EngineHandle::config_path(self)
+    }
+    fn bench_mark(&self, system: &SystemId, start: bool, record: Option<&BenchRecord>) -> Result<()> {
+        EngineHandle::bench_mark(self, system, start, record)
     }
 }
 
@@ -252,6 +263,9 @@ impl EngineLink for ControlClient {
         };
         self.call_as("command_preview", params)
     }
+    fn records_history(&self, key: &str, metric: Option<RecordMetric>) -> Result<Vec<RecordEvent>> {
+        self.call_as("records_history", json!({ "key": key, "metric": metric }))
+    }
     fn diag(&self) -> Result<Value> {
         self.call("diag", json!({}))
     }
@@ -266,5 +280,9 @@ impl EngineLink for ControlClient {
     }
     fn config_path(&self) -> Option<PathBuf> {
         self.cfg.source.clone()
+    }
+    fn bench_mark(&self, system: &SystemId, start: bool, record: Option<&BenchRecord>) -> Result<()> {
+        let params = json!({ "system": system, "phase": if start { "start" } else { "end" }, "record": record });
+        self.call("bench", params).map(|_| ())
     }
 }

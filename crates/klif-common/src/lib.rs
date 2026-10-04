@@ -15,7 +15,7 @@ pub mod vm;
 
 pub use secret::Secret;
 
-/// The KLIF version (workspace version), e.g. "0.3.0".
+/// The KLIF version (workspace version), e.g. "0.3.1".
 pub const KLIF_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Seconds since the Unix epoch as f64 (the view model's time unit).

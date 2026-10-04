@@ -20,6 +20,12 @@ import type {
   PresetDetail,
   PresetInfo,
   PresetSpec,
+  RecordEntry,
+  RecordEvent,
+  RecordHistoryLine,
+  RecordMetric,
+  RecordModel,
+  RecordValue,
   Session,
   System,
   SystemId,
@@ -64,6 +70,8 @@ import { LlmSim } from './llmSim';
 import { bootDurations, familyOf, imageConfig, llmConfig, ramFootprintGiB } from './profiles';
 import { clamp, createRng, hashSeed, type Rng } from './rng';
 import type { GpuDef, World, WorldNode } from './world';
+import { MOCK_HARDWARE, MOCK_SUGGESTIONS } from './hardware';
+import { mockRecordSet, roundMetric } from './records';
 
 const SUB = 0.5; // max simulation sub-step in seconds
 const STOP_S = 2.4;
@@ -80,6 +88,8 @@ const SWELL_PEAK_GIB = 0.93;
 const BASELINE_TAU_S = 4;
 /** Simulated download speed (bytes per second). */
 const DOWNLOAD_BPS = 420 * 1024 * 1024;
+/** The core keeps the last 8 broken records for the "new record" moment. */
+const MAX_RECORD_EVENTS = 8;
 
 const LAYER_IDS: VramLayerId[] = ['other', 'weights', 'kv', 'buffers', 'draft', 'projector'];
 /** When demand exceeds the edge, the allocator demotes these to shared memory first (compute buffers, KV...). */
@@ -91,6 +101,7 @@ export interface EngineHooks {
   /** Panel mode in a browser: switch the layout override between the mini panel and the full window. */
   togglePanel(): void;
   openTune(system?: SystemId, opts?: { add?: boolean }): void;
+  openRecords(): void;
   copy(text: string, toastText: string): void;
   openUrl(url: string): void;
 }
@@ -410,6 +421,15 @@ export class MockEngine {
   private ram = RAM_BASE;
   private nodeCpu = 4;
 
+  // Records: this machine's and the node's best values, the last broken ones and the climb behind them. Entries are
+  // replaced, never mutated, so a published snapshot keeps the values it was taken with.
+  private records: RecordEntry[] = [];
+  private recordEvents: RecordEvent[] = [];
+  private recordLines: RecordHistoryLine[] = [];
+  private recordsRev = 1;
+  /** Scenario `record`: a running LLM System breaks its decode record every `every` simulated seconds. */
+  private recordRaise: { every: number; next: number } | null = null;
+
   constructor(
     private readonly epoch0: number,
     seed: number,
@@ -446,6 +466,13 @@ export class MockEngine {
     }));
     this.selected = world.selected && this.systems.some((s) => s.id === world.selected) ? world.selected : (this.systems[0]?.id ?? '');
     for (const s of this.systems) this.syncExternal(s);
+    // A fresh install has no records yet.
+    if (world.records !== false) {
+      const set = mockRecordSet(epoch0);
+      this.records = set.entries;
+      this.recordEvents = set.events;
+      this.recordLines = set.history;
+    }
   }
 
   // ---- public control (scenarios, player) -----------------------------------------------------------
@@ -501,6 +528,13 @@ export class MockEngine {
     n.state = state;
     n.error = state === 'online' ? undefined : (error ?? 'Connection timed out.');
     n.latencyMs = state === 'online' ? 4 : undefined;
+    // A node that is not online publishes no records.
+    this.recordsRev++;
+  }
+
+  /** Scenario `record`: from now on a running LLM System breaks its decode record every `everyS` simulated seconds. */
+  raiseRecords(everyS = 12) {
+    this.recordRaise = { every: everyS, next: this.t + everyS };
   }
 
   // ---- lookups ---------------------------------------------------------------------------------------
@@ -809,7 +843,7 @@ export class MockEngine {
     if (!n) throw new Error('That download is not running.');
   }
 
-  adoptRecommendation(id: string, system?: SystemId) {
+  adoptRecommendation(id: string, system?: SystemId, fit?: { ctx?: number; kv?: string }) {
     const rec = recDef(id);
     if (!rec) throw new Error(`There is no recommendation "${id}".`);
     const s = this.sysOrThrow(system);
@@ -826,11 +860,39 @@ export class MockEngine {
     const base =
       cur && adapterOf(cur) === rec.adapter && !isExternal(cur) ? cur : Object.values(this.presets).find((p) => adapterOf(p) === rec.adapter && !isExternal(p) && p.command);
     const made = presetFromRecommendation(rec, base);
+    // A suggestion's context and KV type (as the engine writes them: ctx, and -ctk / -ctv replaced or added).
+    if (fit?.ctx !== undefined) made.spec.ctx = fit.ctx;
+    if (fit?.kv && rec.adapter === 'llama.cpp') {
+      const args = [...(made.spec.args ?? [])];
+      for (const flag of ['-ctk', '-ctv']) {
+        const i = args.indexOf(flag);
+        if (i >= 0 && i + 1 < args.length) args[i + 1] = fit.kv;
+        else args.push(flag, fit.kv);
+      }
+      made.spec.args = args;
+    }
     let pid = made.id;
     for (let n = 2; this.presets[pid]; n++) pid = `${made.id}-${n}`;
     this.presets[pid] = made.spec;
     this.cfgRev++;
     this.usePreset(s.id, pid);
+  }
+
+  /**
+   * Remove a junk record. `key` is the key as that machine knows it (a node's entry: without the "<node>/" prefix,
+   * `node` set; the prefixed form is accepted too). A node must grant "edit".
+   */
+  forgetRecord(key: string, node?: string) {
+    // A node the world does not model (the records fiction of the browser mock) is treated as granting edit.
+    if (node && this.nodes.some((n) => n.id === node)) this.requireEdit(node);
+    const k = key.trim();
+    const published = node && !k.startsWith(`${node}/`) ? `${node}/${k}` : k;
+    const e = this.records.find((r) => r.key === published && r.node === node);
+    if (!e) throw new Error(node ? `There is no record "${k}" on ${this.nodes.find((n) => n.id === node)?.name ?? node}.` : `There is no record "${k}" on this machine.`);
+    this.records = this.records.filter((r) => r !== e);
+    this.recordEvents = this.recordEvents.filter((ev) => ev.key !== e.key);
+    this.recordLines = this.recordLines.filter((l) => l.key !== e.key);
+    this.recordsRev++;
   }
 
   // ---- shell-ish actions the player forwards ----------------------------------------------------------
@@ -875,6 +937,19 @@ export class MockEngine {
     const gpu = this.gpus.find((g) => g.node === node)?.def.name ?? '';
     const masked = maskSpec(spec);
     return { id, spec: masked, command: cmd, info: presetInfo(id, spec, cmd, gpu, {}, node), specHash: specHash(masked, undefined) };
+  }
+
+  /** The climb of one record (klif_records_history): every broken record of `key`, oldest first. */
+  recordsHistory(key: string, metric?: RecordMetric): RecordHistoryLine[] {
+    const k = key.trim();
+    const e = this.records.find((r) => r.key === k);
+    if (!e) throw new Error(`There is no record "${k}" on this machine.`);
+    const node = e.node ? this.nodes.find((n) => n.id === e.node) : undefined;
+    if (node && node.state !== 'online') throw new Error(`${node.name} is not reachable.`);
+    return this.recordLines
+      .filter((l) => l.key === k && l.metric !== null && (!metric || l.metric === metric))
+      .sort((a, b) => a.at - b.at)
+      .map((l) => ({ ...l }));
   }
 
   commandPreview(spec: PresetSpec, system?: SystemId): CommandView {
@@ -1174,6 +1249,65 @@ export class MockEngine {
     }
     this.stepDownloads(h);
     this.stepResources(h);
+    this.stepRecords();
+  }
+
+  /** Scenario `record`: break the running System's decode record on schedule. */
+  private stepRecords() {
+    const r = this.recordRaise;
+    if (!r || this.t < r.next) return;
+    r.next = this.t + r.every;
+    this.raiseDecodeRecord();
+  }
+
+  /** A live local LLM System (the selected one first) beats its decode record: entry, event and history move. */
+  private raiseDecodeRecord() {
+    const live = this.systems.filter((x) => !x.node && x.kind === 'llm' && x.rt?.phase === 'live' && x.rt.llm);
+    const sys = live.find((x) => x.id === this.selected) ?? live[0];
+    const rt = sys?.rt;
+    if (!sys || !rt || !rt.llm) return;
+    const spec = this.specOf(sys);
+    const file = (spec?.model ?? '').split(/[\\/]/).pop() || rt.model.name;
+    const backend = rt.model.backend;
+    const local = (e: RecordEntry) => !e.node && e.kind === 'llm' && e.backend.toLowerCase() === backend.toLowerCase();
+    // The entry of the file this System runs, else of the same model (and quant) on this backend.
+    let entry =
+      this.records.find((e) => local(e) && e.model.file.toLowerCase() === file.toLowerCase()) ??
+      this.records.find((e) => local(e) && e.model.name === rt.model.name && (!rt.model.quant || e.model.quant === rt.model.quant)) ??
+      this.records.find((e) => local(e) && e.model.name === rt.model.name);
+    const at = Math.round(this.epoch0 + this.t);
+    const rng = createRng(hashSeed(`${this.seed}:record:${this.recordLines.length}`));
+    const old = entry?.best.decodeTps?.value;
+    const base = old ?? Math.max(20, rt.llm.medianDecodeTps());
+    const next = Math.max(roundMetric('decodeTps', base * (1 + rng.range(0.006, 0.022))), r2(base) + 0.01);
+    const best: RecordValue = {
+      value: next,
+      at,
+      source: 'live',
+      ...(rt.model.ctxTokens ? { ctx: rt.model.ctxTokens } : {}),
+      ...(rt.model.kvType ? { kv: rt.model.kvType } : {}),
+      promptTokens: rng.int(900, 3200),
+      genTokens: rng.int(300, 1400),
+      gpus: spec ? gpuList(spec, rt.gpu.id) : [rt.gpu.id],
+      backendBuild: 'b9112',
+      ...(sys.preset ? { preset: sys.preset } : {}),
+      klifVersion: '0.3.1',
+      tflopsFp32: MOCK_HARDWARE.tflopsFp32,
+    };
+    if (entry) {
+      const prev = entry;
+      entry = { ...prev, best: { ...prev.best, decodeTps: best } };
+      this.records = this.records.map((e) => (e === prev ? entry! : e));
+    } else {
+      const sizeBytes = Math.round((spec ? (factsOf(spec)?.weightsGiB ?? 0) : 0) * GIB) || undefined;
+      const model: RecordModel = { file, name: rt.model.name, ...(rt.model.quant ? { quant: rt.model.quant } : {}), ...(sizeBytes ? { sizeBytes } : {}) };
+      entry = { key: `This machine|${file}:${sizeBytes ?? 0}|${backend}`, machine: 'This machine', kind: 'llm', model, backend, best: { decodeTps: best } };
+      this.records = [...this.records, entry];
+    }
+    const line: RecordHistoryLine = { key: entry.key, metric: 'decodeTps', ...(old !== undefined ? { old } : {}), new: next, at };
+    this.recordLines = [...this.recordLines, line];
+    this.recordEvents = [...this.recordEvents, { ...line }].slice(-MAX_RECORD_EVENTS);
+    this.recordsRev++;
   }
 
   private stepBoot(s: SessionRt) {
@@ -1572,7 +1706,7 @@ export class MockEngine {
         presets: online ? this.presetList(n.id) : [],
       };
       if (online) {
-        nv.version = '0.3.0';
+        nv.version = '0.3.1';
         nv.latencyMs = n.latencyMs ?? 4;
         nv.machine = { ramUsedGiB: 22.4, ramTotalGiB: n.ramTotalGiB, ramType: 'DDR5', cpuName: n.cpuName, cpuPct: Math.round(this.nodeCpu) };
       }
@@ -1606,10 +1740,32 @@ export class MockEngine {
       host: { ...this.host },
       presets: localPresets,
       recommendations: recommendationInfos(this.presets, this.downloaded),
+      hardware: MOCK_HARDWARE,
+      suggestions: MOCK_SUGGESTIONS,
+      records: this.recordView().records,
+      recordEvents: this.recordView().events,
+      recordsRev: this.recordsRev,
       downloads,
       config,
       nodes,
     };
+  }
+
+  private recView: { rev: number; records: RecordEntry[]; events: RecordEvent[] } | null = null;
+
+  /**
+   * What the view model publishes: this machine's records and those of the nodes that publish them. A node the
+   * world models is hidden while it is not online (the real core drops its entries); a node the world does not
+   * model is simply shown (the browser mock keeps one fiction for every scenario).
+   */
+  private recordView(): { records: RecordEntry[]; events: RecordEvent[] } {
+    if (this.recView && this.recView.rev === this.recordsRev) return this.recView;
+    const hidden = new Set(this.nodes.filter((n) => n.state !== 'online').map((n) => n.id));
+    const records = this.records.filter((e) => !e.node || !hidden.has(e.node));
+    const keys = new Set(records.map((e) => e.key));
+    const events = this.recordEvents.filter((ev) => keys.has(ev.key));
+    this.recView = { rev: this.recordsRev, records, events };
+    return this.recView;
   }
 
   private presetList(node: string | undefined): PresetInfo[] {

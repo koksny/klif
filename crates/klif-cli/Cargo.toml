@@ -9,7 +9,7 @@ publish = false
 build = "build.rs"
 
 [dependencies]
-klif-core = { path = "../klif-core" }
+klif-core = { path = "../klif-core", features = ["schema"] }
 # diag reads the RAM type from SMBIOS: only klif-cli enables the reader, so klif.exe never contains it.
 klif-telemetry = { path = "../klif-telemetry", features = ["smbios"] }
 serde.workspace = true
@@ -19,6 +19,8 @@ log.workspace = true
 ureq = { workspace = true, features = ["native-tls"] }
 # `presets save --file f.toml` and `presets show` (TOML in and out).
 toml.workspace = true
+# `klif-cli schema`: JSON Schema of every command's output.
+schemars = "1"
 
 # klif-cli.exe VERSIONINFO + manifest (build.rs).
 [target.'cfg(windows)'.build-dependencies]

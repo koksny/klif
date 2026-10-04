@@ -5,8 +5,10 @@
   import ConsoleDrawer from './lib/shell/ConsoleDrawer.svelte';
   import DevBar from './lib/shell/DevBar.svelte';
   import { installKeys } from './lib/shell/keys';
+  import RecordsView from './lib/shell/records/RecordsView.svelte';
   import SkinHost from './lib/shell/SkinHost.svelte';
   import { installTierDriver, refreshTier } from './lib/shell/tier';
+  import RecordMoment from './lib/shell/RecordMoment.svelte';
   import Toast from './lib/shell/Toast.svelte';
   import TuneDrawer from './lib/shell/TuneDrawer.svelte';
   import { player } from './lib/state/player.svelte';
@@ -57,6 +59,9 @@
       <!-- Mini/panel never shows Tune, but an open drawer stays mounted (hidden) so its unapplied drafts survive a
            switch to mini and back; they are only ever dropped through the drawer's discard confirm. -->
       {#if ui.tuneOpen}<div class="tune-host" class:off={ui.size !== 'full'}><TuneDrawer /></div>{/if}
+      <!-- Records is a full-window screen over the skin (and over Tune and the console): full size only, and not
+           mounted in mini, so closing it by switching layout loses nothing but its view state. -->
+      {#if ui.recordsOpen && ui.size === 'full'}<RecordsView />{/if}
     </div>
   {:else}
     <!-- Native host before the core's first view model: no invented numbers, just the window. -->
@@ -65,6 +70,8 @@
     </div>
   {/if}
   <!-- Every layout: a refusal of a mini Launch / Stop / Restart is otherwise invisible. -->
+  <!-- Every layout: a broken record is celebrated on the panel too. -->
+  {#if player.ready}<RecordMoment />{/if}
   <Toast />
   {#if ui.devbar && !ui.shot}<DevBar />{/if}
 </div>

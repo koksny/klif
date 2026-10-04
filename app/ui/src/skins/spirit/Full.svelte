@@ -10,7 +10,7 @@
   //   dormant   - ‖ PAUSE, hero dimmed with the paged-out GiB, battery segments paged out
   //   fault     - ■ ERR, the corner brackets turn red, ERR + fault title, the log tail bottom left
   // Controls keep their places: the primary act (Launch / Cancel / Stop / Restart after a fault), Restart
-  // (Dismiss after a fault), Tune (always), Endpoint / Web UI, Console (Full log after a fault).
+  // (Dismiss after a fault), Tune (always), Records, Endpoint / Web UI, Console (Full log after a fault).
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { canLaunch } from '../../lib/model/systems';
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
@@ -248,6 +248,7 @@
       <button class="br w1" onclick={() => actions.restart(o.selSlot?.id)} disabled={!s || o.busy || !o.mine} title="Stop and launch again with the current settings">RESTART</button>
     {/if}
     <button class="br w2" onclick={() => actions.openTune(o.selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="br w1 rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">RECORDS</span></button>
     <button class="br w3" onclick={() => actions.openEndpoint(o.selSlot?.id)} disabled={!o.online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
     <button class="br w3" class:hot={faulted} onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'FULL LOG' : 'CONSOLE'}</button>
   </footer>
@@ -1081,6 +1082,30 @@
   .w3 {
     width: calc(var(--u) * 116px);
   }
+  /* Records: the label, or (window too narrow for the row to hold it) just the icon */
+  .rec .ri {
+    display: none;
+    width: calc(var(--u) * 15px);
+    height: calc(var(--u) * 15px);
+    min-width: 12px;
+    min-height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  @media (max-width: 939px) {
+    .br.rec {
+      width: calc(var(--u) * 32px);
+    }
+    .rec .rl {
+      display: none;
+    }
+    .rec .ri {
+      display: block;
+    }
+  }
   .br.hot {
     color: #ff8a8a;
   }
@@ -1111,6 +1136,11 @@
   .act .g.red {
     color: var(--red);
     filter: drop-shadow(0 0 4px rgba(255, 59, 59, 0.7));
+  }
+  /* Stop is an action, not an alarm: the HUD's amber, not the REC red */
+  .act.stop .g.red {
+    color: var(--warn);
+    filter: drop-shadow(0 0 4px rgba(255, 179, 71, 0.6));
   }
   .act:hover:not(:disabled) {
     background: var(--ink);

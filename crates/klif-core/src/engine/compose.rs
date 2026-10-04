@@ -452,6 +452,7 @@ impl Inner {
             d.infos.values().map(|(i, _)| i.clone()).collect()
         };
         lock(&self.bench).wanted = bench_wanted;
+        let (records, record_events, records_rev) = self.records_view(cfg, remote);
         let mut issues = cfg_issues;
         issues.extend(st.engine_issues.iter().cloned());
         let config = ConfigInfo {
@@ -462,6 +463,11 @@ impl Inner {
             api_key: key_info,
             models_dir: cfg.models_dir().map(|p| p.display().to_string()),
             on_conflict: cfg.launch.on_conflict,
+        };
+        // The inventory and its suggestions under one guard (a second lock inside the literal would deadlock).
+        let (hardware, suggestions) = {
+            let h = lock(&self.hardware);
+            (h.info.clone(), h.suggestions.clone())
         };
         let mut vm = ViewModel {
             now,
@@ -475,6 +481,11 @@ impl Inner {
             host: st.host.clone(),
             presets,
             recommendations,
+            hardware,
+            suggestions,
+            records,
+            record_events,
+            records_rev,
             downloads,
             config,
             nodes: remote.iter().map(|r| r.view.clone()).collect(),

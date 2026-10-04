@@ -16,9 +16,11 @@
 //!   the env forms LLAMA_ARG_LOG_PREFIX/TIMESTAMPS = false, LLAMA_ARG_LOG_JSONL = true, LLAMA_ARG_LOG_VERBOSITY < 4.
 //! - sd.cpp: `--listen-port`, `--listen-ip`, `--diffusion-model` / `-m/--model`, `-W/--width` + `-H/--height` →
 //!   "WxH", `--llm_vision` → vision, `--ref-image-args` / `--default-lora` → mode "Edit", `--offload-to-cpu`,
-//!   component weights (`--vae`, `--clip_l`, `--clip_g`, `--t5xxl`, `--llm`, `--llm_vision`).
+//!   component weights (`--vae`, `--audio-vae` (video), `--clip_l`, `--clip_g`, `--t5xxl`, `--llm`, `--llm_vision`).
 //! - vllm: `--port`, `--host`, `--max-model-len`, `--model` or the token after `serve`, `--kv-cache-dtype`,
 //!   `--speculative-config` (method), `--quantization`, `--cpu-offload-gb N>0`; /metrics always.
+//! - audiocpp: `--port`, `--host`, `--backend vulkan|hip|rocm|cuda|cpu|metal` (the compute backend, for records; the
+//!   models are in its `--config` JSON, so the preset's `model` names the file).
 //! - openai / generic: `--port`, `--host` (the common convention; KLIF cannot know more).
 //!
 //! In llama.cpp the environment is read before argv, so an argument wins over its env equivalent.
@@ -57,6 +59,8 @@ pub struct ArgFacts {
     pub extra_weights: Vec<String>,
     /// vllm `--quantization`.
     pub quant: Option<String>,
+    /// audiocpp `--backend`, as a display label ("Vulkan", "HIP", "CUDA", "CPU", "Metal").
+    pub backend: Option<String>,
     /// llama.cpp settings that break KLIF's log telemetry, as (field, sentence) pairs.
     pub log_breakers: Vec<(String, String)>,
 }
@@ -97,6 +101,8 @@ enum F {
     SpecConfig,
     Quantization,
     CpuOffloadGb,
+    // audiocpp
+    Backend,
 }
 
 /// One flag: its spellings (normalised), whether it takes a value, what it means, its env equivalent.
@@ -150,7 +156,7 @@ const SDCPP: &[Flag] = &[
     fl(&["--llm-vision"], true, F::LlmVision, None),
     fl(&["--ref-image-args", "--default-lora"], true, F::Edit, None),
     fl(&["--offload-to-cpu"], false, F::OffloadToCpu, None),
-    fl(&["--vae", "--clip-l", "--clip-g", "--t5xxl", "--llm"], true, F::ExtraWeights, None),
+    fl(&["--vae", "--audio-vae", "--clip-l", "--clip-g", "--t5xxl", "--llm"], true, F::ExtraWeights, None),
 ];
 
 const VLLM: &[Flag] = &[
@@ -164,6 +170,9 @@ const VLLM: &[Flag] = &[
     fl(&["--cpu-offload-gb"], true, F::CpuOffloadGb, None),
 ];
 
+const AUDIOCPP: &[Flag] =
+    &[fl(&["--port"], true, F::Port, None), fl(&["--host"], true, F::Host, None), fl(&["--backend"], true, F::Backend, None)];
+
 const GENERIC: &[Flag] = &[fl(&["--port"], true, F::Port, None), fl(&["--host"], true, F::Host, None)];
 
 fn table(adapter: AdapterId) -> &'static [Flag] {
@@ -171,6 +180,7 @@ fn table(adapter: AdapterId) -> &'static [Flag] {
         AdapterId::LlamaCpp => LLAMA,
         AdapterId::SdCpp => SDCPP,
         AdapterId::Vllm => VLLM,
+        AdapterId::AudioCpp => AUDIOCPP,
         AdapterId::OpenAi | AdapterId::Generic => GENERIC,
     }
 }
@@ -380,6 +390,7 @@ pub fn from_args(adapter: AdapterId, args: &[String], env: &BTreeMap<String, Str
                 }
             }
             F::Quantization => out.quant = v.map(str::to_string),
+            F::Backend => out.backend = v.filter(|b| !b.is_empty() && !b.contains('{')).map(backend_label),
             F::CpuOffloadGb => {
                 if v.and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) > 0.0 {
                     out.cpu_offload = true;
@@ -435,6 +446,18 @@ pub fn from_args(adapter: AdapterId, args: &[String], env: &BTreeMap<String, Str
         out.spec_mode = Some(spec_parts.join("+"));
     }
     out
+}
+
+/// A `--backend` value as KLIF shows backends: "vulkan" -> "Vulkan", "hip" / "rocm" -> "HIP", "cuda" -> "CUDA".
+fn backend_label(v: &str) -> String {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "vulkan" => "Vulkan".into(),
+        "hip" | "rocm" => "HIP".into(),
+        "cuda" => "CUDA".into(),
+        "cpu" => "CPU".into(),
+        "metal" => "Metal".into(),
+        _ => v.trim().to_string(),
+    }
 }
 
 fn push_unique(v: &mut Vec<String>, s: String) {

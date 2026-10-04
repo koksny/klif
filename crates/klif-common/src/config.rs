@@ -66,6 +66,7 @@ pub struct Config {
     pub paths: PathsCfg,
     pub security: SecurityCfg,
     pub launch: LaunchCfg,
+    pub hardware: HardwareCfg,
     /// `[node]`: this machine as a node others connect to (None = not reachable from the network).
     pub node: Option<NodeCfg>,
     /// `[nodes.<id>]`: remote nodes shown here, in file order.
@@ -228,6 +229,7 @@ impl ApiKeySource {
 
 /// `[launch] on_conflict`: what Launch does when other Systems must stop first (SPEC section 5).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum OnConflict {
     /// Refuse with a sentence naming the conflicts (the UI offers "Stop X & Launch").
@@ -241,6 +243,60 @@ pub enum OnConflict {
 #[serde(default)]
 pub struct LaunchCfg {
     pub on_conflict: OnConflict,
+}
+
+/// `[hardware]`: corrections to the machine inventory (which devices count, and their TFLOPS). Ids are "VEN:DEV"
+/// (upper-case hex), "VEN:DEV#n" for the n-th identical GPU, or "cpu"; [`HardwareCfg::clean`] writes them that way.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HardwareCfg {
+    /// Devices left out of the memory pool and the TFLOPS total.
+    pub exclude: Vec<String>,
+    /// Devices counted although KLIF would not (an integrated GPU on a machine that also has a discrete one).
+    pub include: Vec<String>,
+    /// Peak FP32 TFLOPS per device, for a card the table lacks or gets wrong: `{ "1002:7550" = 48.7, cpu = 4.4 }`.
+    pub tflops: BTreeMap<String, f64>,
+}
+
+impl HardwareCfg {
+    /// Normalize the ids and drop what cannot be used (a malformed id, a TFLOPS value that is not a positive
+    /// number), each with a warning; the rest of the section still works.
+    fn clean(&mut self, issues: &mut Vec<Issue>) {
+        for (key, list) in [("exclude", &mut self.exclude), ("include", &mut self.include)] {
+            let mut kept = Vec::new();
+            for raw in std::mem::take(list) {
+                match normalize_gpu_id(&raw) {
+                    Some(id) => {
+                        if !kept.contains(&id) {
+                            kept.push(id);
+                        }
+                    }
+                    None => issues.push(Issue::warn(
+                        Some(&format!("hardware.{key}")),
+                        format!("[hardware] {key}: \"{raw}\" is not a device id (VEN:DEV, VEN:DEV#n or cpu); it is ignored."),
+                    )),
+                }
+            }
+            *list = kept;
+        }
+        let mut tflops = BTreeMap::new();
+        for (raw, value) in std::mem::take(&mut self.tflops) {
+            match normalize_gpu_id(&raw) {
+                Some(id) if value.is_finite() && value > 0.0 => {
+                    tflops.insert(id, value);
+                }
+                Some(_) => issues.push(Issue::warn(
+                    Some("hardware.tflops"),
+                    format!("[hardware] tflops: \"{raw}\" needs a number above 0; it is ignored."),
+                )),
+                None => issues.push(Issue::warn(
+                    Some("hardware.tflops"),
+                    format!("[hardware] tflops: \"{raw}\" is not a device id (VEN:DEV, VEN:DEV#n or cpu); it is ignored."),
+                )),
+            }
+        }
+        self.tflops = tflops;
+    }
 }
 
 /// A right a node grants remote clients besides viewing.
@@ -391,6 +447,7 @@ pub const SYSTEM_KEYS: &[&str] = &["label", "kind", "class", "preset", "params",
 
 /// `[presets.<id>.params.<NAME>]`: one independent launch option (no Cartesian product of presets).
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct ParamCfg {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -416,6 +473,7 @@ impl ParamCfg {
 /// `choices.<value> = { label?, vars = {k=v}, args = [..], env = {k=v} }`. `{p.NAME}` (a whole arg token)
 /// expands to `args`; `{p.NAME.VAR}` to `vars.VAR`; `env` merges into the preset env.
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct ParamChoice {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,6 +491,7 @@ pub struct ParamChoice {
 /// hand: `managed` and `api_key` default to TRUE and the adapter to llama.cpp, also for every field missing from a
 /// file or a UI draft (`#[serde(default)]`).
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct PresetCfg {
     /// Display name (default: the id).
@@ -1077,6 +1136,7 @@ impl Config {
             paths: PathsCfg::default(),
             security: SecurityCfg::default(),
             launch: LaunchCfg::default(),
+            hardware: HardwareCfg::default(),
             node: None,
             nodes: Vec::new(),
             systems: Vec::new(),
@@ -1110,6 +1170,8 @@ impl Config {
         cfg.paths = section(&mut raw, "paths", &mut issues);
         cfg.security = section(&mut raw, "security", &mut issues);
         cfg.launch = section(&mut raw, "launch", &mut issues);
+        cfg.hardware = section(&mut raw, "hardware", &mut issues);
+        cfg.hardware.clean(&mut issues);
         if parse_api_key_source(&cfg.security.api_key).is_none() {
             // Never echo the value: it may be the key itself.
             issues.push(Issue::error(

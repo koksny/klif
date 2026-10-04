@@ -7,10 +7,10 @@
 //!
 //! A round: the health check (the preset's `health`, else the adapter's default: llama.cpp / vLLM `/health`,
 //! sd.cpp / generic TCP, OpenAI-compatible `/health` -> `/v1/models` -> TCP), then what the adapter wants while
-//! ready (llama.cpp `/slots`; `/v1/models` once; `/metrics` at its own period; vLLM `/version` once). The API
-//! key (only present for KLIF-launched llama.cpp / vLLM, SPEC 16.12) goes to `/slots`, `/v1/models` and
-//! `/metrics` of the System's own host, never to `/health`, `/version` or a TCP check. A 401 backs off that
-//! endpoint for 30 s (each failed call writes a line in the server's log); 404 / 501 / non-Prometheus text
+//! ready (llama.cpp `/slots`; `/v1/models` once, audio.cpp every few seconds; `/metrics` at its own period; vLLM
+//! `/version` once). The API key (only present for KLIF-launched llama.cpp / vLLM, SPEC 16.12) goes to `/slots`,
+//! `/v1/models` and `/metrics` of the System's own host, never to `/health`, `/version` or a TCP check. A 401 backs
+//! off that endpoint for 30 s (each failed call writes a line in the server's log); 404 / 501 / non-Prometheus text
 //! disables it for the session. Results are applied only while the key still has the same generation.
 
 use crate::backend::{HealthPlan, ProbeResult, ProbeWants};
@@ -59,6 +59,8 @@ struct KeyState {
     /// Consecutive /metrics failures while the server is ready (3 = it has none: off for the session).
     metrics_fails: u32,
     models_due: f64,
+    /// Re-read `/v1/models` this often after an answer (audio.cpp: loaded / unloaded); None = once.
+    models_every: Option<f64>,
     version_tries: u32,
     /// OpenAI-compatible chain: 0 = /health, 1 = /v1/models, 2 = TCP.
     chain_step: u8,
@@ -102,6 +104,7 @@ impl KeyState {
             metrics_off: false,
             metrics_fails: 0,
             models_due: 0.0,
+            models_every: None,
             version_tries: 0,
             chain_step: 0,
         }
@@ -217,7 +220,8 @@ fn scheduler(shared: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, jobs: Sender<Job
                 ks.due = now + BACKOFF_MAX_S;
                 continue;
             }
-            let ProbeWants { slots, models, metrics, version } = wants;
+            let ProbeWants { slots, models, metrics, version, models_every } = wants;
+            ks.models_every = models_every;
             let job = Job {
                 key: key.clone(),
                 generation: ks.generation,
@@ -295,7 +299,10 @@ fn finish(keys: &mut BTreeMap<String, KeyState>, shared: &Arc<Mutex<Shared>>, d:
         None => {}
     }
     if d.models_ok == Some(true) {
-        ks.models_due = f64::INFINITY;
+        ks.models_due = match ks.models_every {
+            Some(p) => now + p.max(1.0),
+            None => f64::INFINITY,
+        };
     }
     if d.version_done {
         ks.version_tries = u32::MAX;

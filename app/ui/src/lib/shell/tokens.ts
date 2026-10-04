@@ -13,6 +13,7 @@ export function applyTokens(t: SkinTokens) {
   s.setProperty('--k-accent-ink', t.accentInk);
   s.setProperty('--k-warn', t.warn);
   s.setProperty('--k-danger', t.danger);
+  s.setProperty('--k-record', t.record ?? t.warn);
   s.setProperty('--k-font-ui', t.fontUi);
   s.setProperty('--k-font-data', t.fontData);
   s.setProperty('--k-font-display', t.fontDisplay);

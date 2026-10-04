@@ -445,8 +445,8 @@
   }
   .act.stop {
     background: transparent;
-    border-color: var(--red);
-    color: var(--red);
+    border-color: var(--ice);
+    color: var(--ice);
   }
   /* An external server: a quiet note in the control's place. */
   .act.ext,

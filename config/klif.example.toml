@@ -10,7 +10,7 @@
 # How the file is organised:
 #   [systems.<id>]   one tab, one server at a time, in the order you write them here.
 #   [presets.<id>]   one launch command (program, arguments, environment). A System points at one preset.
-#   [net] [gpu] [ui] [telemetry] [paths] [security] [launch]   machine-wide settings.
+#   [net] [gpu] [ui] [telemetry] [paths] [security] [launch] [hardware]   machine-wide settings.
 #   [node] / [nodes.<id>]   optional, for several machines (examples at the end, commented out).
 #
 # KLIF edits this file when you change something in the Tune drawer or with klif-cli. It keeps your comments and
@@ -67,6 +67,15 @@ api_key = "file"
 #   "stop"  stop them first, then launch. A System that is busy generating is never stopped without an explicit
 #           choice (klif-cli launch --stop-others, or the "Stop ... & launch" button).
 on_conflict = "ask"
+
+# KLIF reads this machine's GPUs, CPU and RAM and adds up their theoretical peak FP32 TFLOPS (klif-cli hardware).
+# Every discrete GPU counts, whatever the vendor; an integrated GPU only counts on a machine that has no discrete
+# one. Correct it here when KLIF is wrong. Ids are "VEN:DEV" (hex, as in [gpu]), "VEN:DEV#1" for the second
+# identical card, or "cpu".
+# [hardware]
+# exclude = ["10DE:2684#1", "cpu"]                    # leave a card (or the CPU) out of the pool and the total
+# include = ["1002:164E"]                             # count an integrated GPU although a discrete one exists
+# tflops = { "1002:7550" = 48.7, cpu = 4.4 }          # peak FP32 TFLOPS for a card the built-in table lacks or gets wrong
 
 # ------------------------------------------------------------------------------------------------ Systems
 # Tab order = the order of these tables. Systems are independent: each has its own server, session and logs.
@@ -129,7 +138,7 @@ preset = "chat-box"
 # Flag names follow current llama.cpp; check llama-server --help for your build.
 [presets.fast-8b]
 name = "Fast 8B"
-adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | openai | generic
+adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | openai | audiocpp | generic
 command = 'D:\llama.cpp\llama-server.exe'   # absolute path, or a program name on PATH; .exe/.com only
 args = [
   "-m", "{model}",
@@ -216,6 +225,80 @@ port = 8880
 health = "/health"             # "/path" = HTTP, "tcp" = a listening port; absent = TCP for generic
 gpu = "cpu"                    # "VEN:DEV" or "cpu": which GPU it counts against (display and fit only)
 backend = "CPU"
+
+# The three presets below are commented out: uncomment one, put your own paths in, and point a System at it
+# (`kind` and `preset` in its [systems.<id>] table). KLIF does not ship these servers; install them yourself.
+#
+# audio.cpp (text to speech): one audiocpp_server.exe serves VoxCPM2, Qwen3-TTS, Chatterbox and Kokoro (GGUF) on the
+# OpenAI route /v1/audio/speech. Its models are listed in a JSON file (--config); `model` names the same GGUF so KLIF
+# knows the file (name, size, records). A minimal D:\audio.cpp\voxcpm2.json:
+#   { "lazy_load": true, "max_loaded_models": 1,
+#     "models": [ { "id": "voxcpm2", "family": "voxcpm2", "task": "tts", "mode": "offline",
+#                   "path": "D:\\models\\VoxCPM2-GGUF\\voxcpm2-q8_0.gguf" } ] }
+# "{p.backend.dir}" picks the build (the official zip is Vulkan; HIP builds are separate downloads), "--backend"
+# is also what the records call the backend. "--log" prints one line per request, which KLIF counts (--log-file
+# writes a file KLIF does not read). TTS records come from: klif-cli bench <system> --yes
+#
+# [presets.voxcpm2]
+# name = "VoxCPM2"
+# adapter = "audiocpp"           # kind defaults to tts
+# command = '{p.backend.dir}\audiocpp_server.exe'
+# args = ["--config", 'D:\audio.cpp\voxcpm2.json', "{p.backend}", "{p.voice}", "{p.unload}", "--log", "--host", "{host}", "--port", "{port}"]
+# port = 7060
+# model = 'D:\models\VoxCPM2-GGUF\voxcpm2-q8_0.gguf'
+# quant = "Q8_0"
+#
+# [presets.voxcpm2.params.backend]
+# label = "Backend"
+# default = "vulkan"
+# choices.vulkan = { label = "Vulkan", vars = { dir = 'D:\audio.cpp' }, args = ["--backend", "vulkan"] }
+# choices.hip = { label = "HIP", vars = { dir = 'D:\audio.cpp-hip' }, args = ["--backend", "hip"] }
+#
+# Voice cloning: with a voices folder, a request's "voice": "<name>" uses <folder>\<name>.wav.
+# [presets.voxcpm2.params.voice]
+# label = "Voices"
+# default = "model"
+# choices.model = { label = "Model voices only" }
+# choices.folder = { label = "Voices folder", args = ["--voice-dir", 'D:\voices'] }
+#
+# [presets.voxcpm2.params.unload]
+# label = "When idle"
+# default = "keep"
+# choices.keep = { label = "Keep the model loaded" }
+# choices.unload = { label = "Unload after 5 minutes", args = ["--idle-unload-ms", "300000"] }
+#
+# whisper.cpp (speech to text) through the generic adapter: whisper-server answers /health (503 while its model
+# loads) and logs nothing per request beyond the file name. --inference-path makes it OpenAI-compatible. The official
+# Windows zips are CPU / CUDA only; on AMD use a Vulkan or HIP build. Records come from:
+#   klif-cli bench <system> --audio <speech.wav> --yes
+#
+# [presets.whisper-turbo]
+# name = "Whisper large-v3 turbo"
+# adapter = "generic"
+# kind = "stt"
+# command = 'D:\whisper.cpp\whisper-server.exe'
+# args = ["-m", "{model}", "-t", "4", "-fa", "-l", "auto", "--inference-path", "/v1/audio/transcriptions", "--host", "{host}", "--port", "{port}"]
+# port = 7070
+# health = "/health"
+# model = 'D:\models\ggml-large-v3-turbo-q5_0.bin'
+# quant = "Q5_0"
+# backend = "Vulkan"
+#
+# stable-diffusion.cpp video with MiniMax H3 (video with its own stereo audio; jobs arrive on POST
+# /sdcpp/v1/vid_gen). LICENSE: the MiniMax H3 Community License grants no rights in the European Union, the United
+# Kingdom, South Korea or the United States; read it before you download or use the model. H3 is distilled
+# (--cfg-scale must be 1.0); "--backend te=cpu" and --offload-to-cpu keep the 32B text encoder off a 16 GB card.
+# KLIF reads every finished job from the log into a videoS record (size, frames, steps).
+#
+# [presets.video-h3]
+# name = "MiniMax H3"
+# adapter = "sd.cpp"
+# kind = "video"                 # sd.cpp defaults to image
+# command = 'D:\stable-diffusion.cpp\sd-server.exe'
+# args = ["--diffusion-model", "{model}", "--vae", 'D:\models\h3\minimax_h3_video_vae_fp16.safetensors', "--audio-vae", 'D:\models\h3\minimax_h3_audio_vae_fp32.safetensors', "--llm", 'D:\models\h3\qwen3vl_32b_minimax_h3-Q4_K_M.gguf', "--cfg-scale", "1.0", "--diffusion-fa", "--offload-to-cpu", "--backend", "te=cpu", "--listen-ip", "{host}", "--listen-port", "{port}"]
+# port = 1235
+# model = 'D:\models\h3\minimax_h3_fl2va_pruned-Q4_K.gguf'
+# quant = "Q4_K"
 
 # An external server: `endpoint` instead of `command`. KLIF never starts, stops or restarts it; it only shows
 # whether it answers and what it is doing. Launch and Stop are refused with a sentence.

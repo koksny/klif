@@ -3,12 +3,12 @@
 //! re-reads api-key.txt / node-token.txt when they change.
 
 use crate::args::Args;
-use crate::out::{note, CliError, CliResult, Out};
+use crate::out::{note, val, CliError, CliResult, Out};
+use crate::outputs::*;
 use klif_core::keys;
 use klif_core::klif_common::config::LoadedConfig;
 use klif_core::klif_common::Secret;
 use klif_core::nodes::node_token;
-use serde_json::json;
 use std::io::{BufRead, IsTerminal};
 
 pub fn key(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
@@ -19,7 +19,7 @@ pub fn key(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             args.done()?;
             let info = keys::info(cfg);
             let file = (info.source == "file").then(|| keys::key_file(cfg).display().to_string());
-            out.doc(json!({ "apiKey": info, "file": file }), || {
+            out.doc(val(&KeyStatusDoc { api_key: info.clone(), file: file.clone() }), || {
                 format!(
                     "API key: {} (source: {}{})",
                     if info.set { "set" } else { "not set" },
@@ -41,7 +41,7 @@ pub fn key(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             drop(line);
             keys::store(cfg, Some(&key)).map_err(|e| CliError::new("refused", format!("{e:#}")))?;
             let info = keys::info(cfg);
-            out.doc(json!({ "apiKey": info }), || "API key stored (the value is not shown). KLIF-launched servers get it on their next launch.".into());
+            out.doc(val(&KeyUpdateDoc { api_key: info }), || "API key stored (the value is not shown). KLIF-launched servers get it on their next launch.".into());
             Ok(())
         }
         "clear" => {
@@ -52,7 +52,7 @@ pub fn key(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             }
             keys::store(cfg, None).map_err(|e| CliError::new("refused", format!("{e:#}")))?;
             let info = keys::info(cfg);
-            out.doc(json!({ "apiKey": info }), || "API key removed.".into());
+            out.doc(val(&KeyUpdateDoc { api_key: info }), || "API key removed.".into());
             Ok(())
         }
         other => Err(CliError::usage(format!("Unknown key subcommand \"{other}\" (status, set, clear)."))),
@@ -71,17 +71,17 @@ pub fn node(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             let listen = node.and_then(|n| n.listen_addr());
             let allow: Vec<&str> = node.map(|n| n.allow.iter().map(|r| r.as_str()).collect()).unwrap_or_default();
             let name = node.and_then(|n| n.name.clone());
-            let doc = json!({
-                "node": {
-                    "configured": node.is_some(),
-                    "name": name,
-                    "listen": listen,
-                    "allow": allow,
-                    "tokenSet": token_set,
-                    "tokenFile": token_file.display().to_string(),
-                }
-            });
-            out.doc(doc, || {
+            let doc = NodeStatusDoc {
+                node: NodeStatus {
+                    configured: node.is_some(),
+                    name: name.clone(),
+                    listen: listen.clone(),
+                    allow: allow.iter().map(|a| a.to_string()).collect(),
+                    token_set,
+                    token_file: token_file.display().to_string(),
+                },
+            };
+            out.doc(val(&doc), || {
                 let mut s = match &listen {
                     Some(l) => format!("This machine listens for other KLIF nodes on {l} (rights: view{}).", allow.iter().map(|a| format!(", {a}")).collect::<String>()),
                     None => "This machine does not listen for other KLIF nodes ([node] listen is not set).".into(),
@@ -107,7 +107,7 @@ pub fn node(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             args.done()?;
             let exists = node_token::load(cfg).is_some();
             if !create {
-                out.doc(json!({ "tokenSet": exists, "tokenFile": token_file.display().to_string() }), || {
+                out.doc(val(&NodeTokenInfoDoc { token_set: exists, token_file: token_file.display().to_string() }), || {
                     if exists {
                         format!("A node token exists ({}); it is only shown when it is created.", token_file.display())
                     } else {
@@ -122,7 +122,7 @@ pub fn node(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
                 ));
             }
             let token = node_token::create(cfg).map_err(|e| CliError::new("io", format!("{e:#}")))?;
-            out.doc(json!({ "token": token.expose(), "tokenFile": token_file.display().to_string() }), || {
+            out.doc(val(&NodeTokenCreatedDoc { token: token.expose().to_string(), token_file: token_file.display().to_string() }), || {
                 note("Node token (shown once; put it into the other machine's token file, see [nodes.<id>] token):");
                 token.expose().to_string()
             });

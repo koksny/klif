@@ -3,11 +3,11 @@
 use crate::args::Args;
 use crate::conn::{self, Conn};
 use crate::out::{note, num, refused, table, val, CliError, CliResult, Out};
+use crate::outputs::*;
 use crate::resolve::{resolve, resolve_system};
 use klif_core::klif_common::config::LoadedConfig;
 use klif_core::klif_common::vm::{Action, CommandView, LlmClass, Phase, System, SystemId, SystemKind, SystemStatus, ViewModel};
 use klif_core::wire::{status_of, StatusJson, StatusSystem};
-use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
@@ -29,21 +29,6 @@ pub fn act(conn: &Conn, action: Action) -> CliResult {
     conn.link().act(action).map_err(refused)
 }
 
-/// The compact JSON of one System after an action.
-pub fn sys_value(s: &System) -> Value {
-    let mut v = json!({ "id": s.id, "label": s.label, "kind": s.kind, "status": s.status });
-    if let Some(r) = &s.reason {
-        v["reason"] = json!(r);
-    }
-    if let Some(p) = &s.preset {
-        v["preset"] = json!(p);
-    }
-    if let Some(e) = &s.endpoint {
-        v["endpoint"] = json!(e);
-    }
-    v
-}
-
 fn status_word(s: SystemStatus) -> &'static str {
     s.as_str()
 }
@@ -61,7 +46,7 @@ fn sys_line(s: &System) -> String {
     line
 }
 
-fn fault_error(s: &System) -> CliError {
+pub fn fault_error(s: &System) -> CliError {
     let f = s.session.as_ref().and_then(|x| x.fault.as_ref());
     let title = f.map(|f| f.title.clone()).or_else(|| s.reason.clone()).unwrap_or_else(|| "it faulted".into());
     let tail: Vec<String> = f.map(|f| f.log_tail.iter().rev().take(10).rev().cloned().collect()).unwrap_or_default();
@@ -263,22 +248,22 @@ pub fn diag(args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let ram_type = klif_telemetry::smbios_ram_type();
     #[cfg(not(windows))]
     let ram_type: Option<String> = None;
-    let cli = json!({
-        "version": klif_core::klif_common::KLIF_VERSION,
-        "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
-        "engine": conn.mode(),
-        "enginePid": conn.engine_pid(),
-        "config": {
-            "path": loc.path.display().to_string(),
-            "origin": loc.origin,
-            "exists": loc.exists,
-            "stateDir": loaded.cfg.state_dir.display().to_string(),
-            "dataDir": loaded.cfg.data_dir.display().to_string(),
+    let cli = DiagCli {
+        version: klif_core::klif_common::KLIF_VERSION.to_string(),
+        exe: std::env::current_exe().ok().map(|p| p.display().to_string()),
+        engine: conn.mode().to_string(),
+        engine_pid: conn.engine_pid(),
+        config: DiagConfig {
+            path: loc.path.display().to_string(),
+            origin: val(&loc.origin).as_str().unwrap_or("").to_string(),
+            exists: loc.exists,
+            state_dir: loaded.cfg.state_dir.display().to_string(),
+            data_dir: loaded.cfg.data_dir.display().to_string(),
         },
-        "configIssues": loaded.issues,
-        "smbiosRamType": ram_type,
-    });
-    let doc = json!({ "cli": cli, "engine": engine });
+        config_issues: loaded.issues.clone(),
+        smbios_ram_type: ram_type,
+    };
+    let doc = val(&DiagDoc { cli, engine });
     out.doc(doc.clone(), || serde_json::to_string_pretty(&doc).unwrap_or_default());
     Ok(())
 }
@@ -346,11 +331,8 @@ pub fn plan(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let cmd = conn.link().plan(&s.id).map_err(refused)?;
     // The plan is shown even when the System cannot start (exit 0); `launchable` says whether a launch would run.
     let refusal = launch_refusal(s, &cmd);
-    let mut doc = json!({ "system": s.id, "label": s.label, "preset": s.preset, "launchable": refusal.is_none(), "command": cmd });
-    if let Some(r) = &refusal {
-        doc["refused"] = json!(r);
-    }
-    out.doc(doc, || {
+    let doc = PlanDoc { system: s.id.clone(), label: s.label.clone(), preset: s.preset.clone(), launchable: refusal.is_none(), command: cmd.clone(), refused: refusal.clone() };
+    out.doc(val(&doc), || {
         let verdict = match &refusal {
             None => "launchable: yes".to_string(),
             Some(r) => format!("launchable: NO ({r})"),
@@ -389,7 +371,7 @@ pub fn select(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     act(&conn, Action::Select { system: id.clone() })?;
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
-    out.doc(json!({ "selected": vm.selected, "system": s.as_ref().map(sys_value) }), || {
+    out.doc(val(&SelectDoc { selected: vm.selected.clone(), system: s.as_ref().map(SysBrief::of) }), || {
         format!("Selected {}.", s.as_ref().map(|s| format!("{} ({})", s.label, s.id)).unwrap_or_else(|| id.to_string()))
     });
     Ok(())
@@ -416,7 +398,7 @@ pub fn launch(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     } else {
         wait_started(&conn, &id)?
     };
-    out.doc(json!({ "launched": true, "system": sys_value(&s) }), || sys_line(&s));
+    out.doc(val(&LaunchDoc { launched: true, system: SysBrief::of(&s) }), || sys_line(&s));
     Ok(())
 }
 
@@ -443,8 +425,8 @@ pub fn stop(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
         act(&conn, Action::Stop { system: Some(ids[0].clone()) })?;
     }
     let vm = wait_stopped(&conn, &ids)?;
-    let stopped: Vec<Value> = ids.iter().filter_map(|id| find(&vm, id)).map(sys_value).collect();
-    out.doc(json!({ "stopped": stopped }), || {
+    let stopped: Vec<SysBrief> = ids.iter().filter_map(|id| find(&vm, id)).map(SysBrief::of).collect();
+    out.doc(val(&StopDoc { stopped }), || {
         if ids.is_empty() {
             "Nothing was running.".to_string()
         } else {
@@ -468,7 +450,7 @@ pub fn restart(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let old_uptime = find(&vm, &id).and_then(|s| s.session.as_ref()).map(|x| x.uptime_s).unwrap_or(0.0);
     act(&conn, Action::Restart { system: Some(id.clone()) })?;
     let s = if wait { wait_live(&conn, &id, LAUNCH_WAIT, Some(old_uptime))? } else { wait_started(&conn, &id)? };
-    out.doc(json!({ "restarted": true, "system": sys_value(&s) }), || sys_line(&s));
+    out.doc(val(&RestartDoc { restarted: true, system: SysBrief::of(&s) }), || sys_line(&s));
     Ok(())
 }
 
@@ -481,7 +463,7 @@ pub fn dismiss(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     act(&conn, Action::Dismiss { system: Some(id.clone()) })?;
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
-    out.doc(json!({ "system": s.as_ref().map(sys_value) }), || s.as_ref().map(sys_line).unwrap_or_else(|| format!("Dismissed {id}.")));
+    out.doc(val(&DismissDoc { system: s.as_ref().map(SysBrief::of) }), || s.as_ref().map(sys_line).unwrap_or_else(|| format!("Dismissed {id}.")));
     Ok(())
 }
 
@@ -536,7 +518,7 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             args.done()?;
             let conn = conn::connect(loaded)?;
             let vm = conn.snapshot(None)?;
-            out.doc(json!({ "selected": vm.selected, "systems": vm.systems }), || human_systems(&vm));
+            out.doc(val(&SystemsListDoc { selected: vm.selected.clone(), systems: vm.systems.clone() }), || human_systems(&vm));
             Ok(())
         }
         "add" => {
@@ -570,7 +552,7 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
                 }
                 std::thread::sleep(Duration::from_millis(250));
             };
-            out.doc(json!({ "added": added.as_ref().map(sys_value) }), || match &added {
+            out.doc(val(&SystemsAddDoc { added: added.as_ref().map(SysBrief::of) }), || match &added {
                 Some(s) => format!("Added {} ({}).", s.label, s.id),
                 None => "Added (the new System is not visible yet).".into(),
             });
@@ -587,7 +569,7 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             let vm = conn.snapshot(None)?;
             let s = resolve_system(&vm, &arg)?.clone();
             act(&conn, Action::RemoveSystem { system: s.id.clone() })?;
-            out.doc(json!({ "removed": s.id }), || format!("Removed {} ({}).", s.label, s.id));
+            out.doc(val(&SystemsRemoveDoc { removed: s.id.clone() }), || format!("Removed {} ({}).", s.label, s.id));
             Ok(())
         }
         "rename" => {
@@ -624,7 +606,7 @@ fn update(loaded: &LoadedConfig, out: Out, arg: &str, label: Option<String>, mov
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
     let pos = vm.systems.iter().filter(|x| x.node.is_none()).position(|x| x.id == id);
-    out.doc(json!({ "system": s.as_ref().map(sys_value), "index": pos, "exclusive": s.as_ref().map(|s| s.exclusive) }), || match &s {
+    out.doc(val(&SystemsUpdateDoc { system: s.as_ref().map(SysBrief::of), index: pos, exclusive: s.as_ref().map(|s| s.exclusive) }), || match &s {
         Some(s) => format!(
             "{} ({}) · tab {} · exclusive {}",
             s.label,
@@ -647,7 +629,7 @@ pub fn nodes(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     }
     let conn = conn::connect(loaded)?;
     let vm = conn.snapshot(None)?;
-    out.doc(json!({ "nodes": vm.nodes }), || {
+    out.doc(val(&NodesListDoc { nodes: vm.nodes.clone() }), || {
         if vm.nodes.is_empty() {
             return "No remote nodes ([nodes.<id>] in klif.toml).".into();
         }
@@ -677,12 +659,12 @@ pub fn serve(args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let cfg = &loaded.cfg;
     let listen = cfg.node.as_ref().and_then(|n| n.listen_addr());
     out.doc(
-        json!({
-            "serving": true,
-            "pid": std::process::id(),
-            "config": cfg.source.as_ref().map(|p| p.display().to_string()),
-            "stateDir": cfg.state_dir.display().to_string(),
-            "network": listen,
+        val(&ServeDoc {
+            serving: true,
+            pid: std::process::id(),
+            config: cfg.source.as_ref().map(|p| p.display().to_string()),
+            state_dir: cfg.state_dir.display().to_string(),
+            network: listen.clone(),
         }),
         || {
             format!(

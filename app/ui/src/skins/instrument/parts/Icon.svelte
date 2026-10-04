@@ -1,7 +1,7 @@
 <script lang="ts">
   // Screen-printed line icons (24 x 24 grid).
   type Name =
-    | 'ram' | 'cpu' | 'restart' | 'open' | 'console' | 'stop' | 'play' | 'tune' | 'chev'
+    | 'ram' | 'cpu' | 'restart' | 'open' | 'console' | 'stop' | 'play' | 'tune' | 'records' | 'chev'
     | 'lock' | 'warn' | 'log' | 'back' | 'min' | 'max' | 'restore' | 'close' | 'screen' | 'window' | 'plus' | 'up' | 'down';
   let { name, size = '1em' }: { name: Name; size?: string } = $props();
 </script>
@@ -30,6 +30,8 @@
     <path d="M4 7h10 M18 7h2 M4 17h3 M11 17h9" />
     <circle cx="16" cy="7" r="2" />
     <circle cx="9" cy="17" r="2" />
+  {:else if name === 'records'}
+    <path d="M4 20v-8h5v8 M9 20V4h6v16 M15 20V9h5v11" />
   {:else if name === 'chev'}
     <path d="M9 6l6 6-6 6" />
   {:else if name === 'lock'}

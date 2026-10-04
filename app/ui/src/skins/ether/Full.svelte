@@ -9,7 +9,7 @@
   //   VRAM        a hairline with the gradient fill (idle: the selected tier's fit)
   //   detail      four cells (LLM: prefill, decode, context, speculative; image: last image, images, size, mode)
   //   timeline    the last 8 requests as capsules / the last 12 jobs as bars
-  //   controls    endpoint + key chips, the primary act (one width), Restart, Tune, Endpoint, Console
+  //   controls    endpoint + key chips, the primary act (one width), Restart, Tune, Records, Endpoint, Console
   //   console     the last log line
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem, systemLabel } from '../../lib/model/systems';
@@ -142,7 +142,7 @@
       return `${n ? `last ${n}` : `no finished ${what}`}, then ${diedInWork ? `the ${kind === 'image' ? 'job' : 'request'} that died` : 'the fault'}`;
     }
     if (!n) return `no finished ${what} yet`;
-    return kind === 'image' ? `bar height = time · last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : `last ${n} · prefill teal, decode magenta`;
+    return kind === 'image' ? `bar height = time · last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : `last ${n} · prefill teal, decode blue`;
   });
   const reqTitle = (r: RequestRecord) =>
     `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
@@ -314,6 +314,7 @@
         <button class="tbtn w1" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>Restart</button>
       {/if}
       <button class="tbtn w2" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
+      <button class="tbtn w1" onclick={() => actions.openRecords()} title="Records: the best each model reached">Records</button>
       <button class="tbtn w3" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'Web UI' : 'Endpoint'}</button>
       <button class="tbtn w3" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'Full log' : 'Console'}</button>
     </footer>
@@ -327,7 +328,7 @@
     --muted: #9a90a8;
     --sec: rgba(237, 232, 245, 0.5);
     --faint: rgba(237, 232, 245, 0.1);
-    --mag: #ff4fd8;
+    --blue: #7ab0ff; /* UI accents; pink stays only in the background and the blue-to-pink gradient bars */
     --teal: #4fc3d9;
     --warn: #ffb347;
     --danger: #ff5470;
@@ -451,8 +452,8 @@
     color: var(--ink);
   }
   .st.live i {
-    background: var(--mag);
-    box-shadow: 0 0 8px var(--mag), 0 0 2px var(--mag);
+    background: var(--blue);
+    box-shadow: 0 0 8px var(--blue), 0 0 2px var(--blue);
   }
   .st.sleep i {
     background: rgba(154, 144, 168, 0.4);
@@ -682,7 +683,7 @@
     font: 200 calc(var(--u) * 132px) / 1 var(--disp);
     letter-spacing: -0.02em;
     color: var(--ink);
-    text-shadow: 0 0 40px rgba(255, 79, 216, 0.22);
+    text-shadow: 0 0 40px rgba(122, 176, 255, 0.22);
     font-variant-numeric: tabular-nums;
   }
   .hu {
@@ -741,8 +742,8 @@
     box-shadow: none;
   }
   .steps i.active {
-    background: var(--mag);
-    box-shadow: 0 0 8px var(--mag);
+    background: var(--blue);
+    box-shadow: 0 0 8px var(--blue);
     animation: pulse 1.2s ease-in-out infinite;
   }
   .steps i.failed {
@@ -987,8 +988,8 @@
   }
   .cap6 .dec {
     flex: 1;
-    background: var(--mag);
-    box-shadow: 0 0 8px rgba(255, 79, 216, 0.5);
+    background: var(--blue);
+    box-shadow: 0 0 8px rgba(122, 176, 255, 0.5);
   }
   .req.empty .cap6 {
     box-shadow: inset 0 0 0 1px var(--faint);
@@ -1023,12 +1024,12 @@
     width: 46%;
     min-height: 2px;
     border-radius: 2px 2px 0 0;
-    background: var(--mag);
-    box-shadow: 0 0 8px rgba(255, 79, 216, 0.35);
+    background: var(--blue);
+    box-shadow: 0 0 8px rgba(122, 176, 255, 0.35);
   }
   .job i.edit {
-    background: repeating-linear-gradient(-45deg, var(--mag) 0 2px, rgba(255, 79, 216, 0.18) 2px 5px);
-    box-shadow: inset 0 0 0 1px var(--mag);
+    background: repeating-linear-gradient(-45deg, var(--blue) 0 2px, rgba(122, 176, 255, 0.18) 2px 5px);
+    box-shadow: inset 0 0 0 1px var(--blue);
   }
   .job.empty i {
     height: 1px;
@@ -1090,7 +1091,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    background: rgba(255, 79, 216, 0.08);
+    background: rgba(122, 176, 255, 0.08);
   }
   .act::before {
     content: '';
@@ -1110,8 +1111,8 @@
     pointer-events: none;
   }
   .act:hover:not(:disabled) {
-    background: rgba(255, 79, 216, 0.16);
-    box-shadow: 0 0 22px rgba(255, 79, 216, 0.18);
+    background: rgba(122, 176, 255, 0.16);
+    box-shadow: 0 0 22px rgba(122, 176, 255, 0.18);
   }
   .act.stop {
     background: rgba(0, 0, 0, 0.35);

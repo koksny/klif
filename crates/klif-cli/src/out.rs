@@ -8,6 +8,13 @@ use serde_json::{Map, Value};
 /// The CLI's JSON schema version.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Set by the commands that print JSON lines (`watch`, `logs --follow`): their failure document is one line too.
+static STREAMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_streaming() {
+    STREAMING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A failure: a stable code, one sentence, the process exit code.
 #[derive(Debug)]
 pub struct CliError {
@@ -65,6 +72,17 @@ impl Out {
         }
     }
 
+    /// One event of a stream (`watch`, `logs --follow`): with `--json` a compact JSON line carrying `schemaVersion`,
+    /// else `human()`. A reader that went away (a closed pipe) ends the command quietly.
+    pub fn event(&self, value: Value, human: impl FnOnce() -> String) {
+        use std::io::Write;
+        let text = if self.json { json_line(value) } else { human() };
+        let mut stdout = std::io::stdout().lock();
+        if writeln!(stdout, "{text}").and_then(|_| stdout.flush()).is_err() {
+            std::process::exit(0);
+        }
+    }
+
     /// The error document (JSON) or line (stderr).
     pub fn error(&self, e: &CliError) {
         if self.json {
@@ -73,7 +91,11 @@ impl Out {
             m.insert("message".into(), Value::String(e.message.clone()));
             let mut doc = Map::new();
             doc.insert("error".into(), Value::Object(m));
-            println!("{}", json_doc(Value::Object(doc)));
+            if STREAMING.load(std::sync::atomic::Ordering::Relaxed) {
+                println!("{}", json_line(Value::Object(doc)));
+            } else {
+                println!("{}", json_doc(Value::Object(doc)));
+            }
         } else {
             eprintln!("klif-cli: {}", e.message);
         }
@@ -83,6 +105,16 @@ impl Out {
 /// A progress / information line on stderr (both modes; stdout stays one document).
 pub fn note(msg: impl AsRef<str>) {
     eprintln!("{}", msg.as_ref());
+}
+
+/// One compact JSON line `{schemaVersion: 1, ...}` (stream events).
+pub fn json_line(value: Value) -> String {
+    let mut doc = Map::new();
+    doc.insert("schemaVersion".into(), Value::from(SCHEMA_VERSION));
+    if let Value::Object(m) = value {
+        doc.extend(m);
+    }
+    serde_json::to_string(&Value::Object(doc)).unwrap_or_else(|_| "{\"schemaVersion\":1}".into())
 }
 
 fn json_doc(value: Value) -> String {

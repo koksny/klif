@@ -185,7 +185,7 @@
     --dim: rgba(237, 232, 245, 0.5);
     --faint: rgba(237, 232, 245, 0.1);
     --muted: #9a90a8;
-    --mag: #ff4fd8;
+    --blue: #7ab0ff; /* UI accents; pink stays only in the background and the blue-to-pink gradient bars */
     --teal: #4fc3d9;
     --warn: #ffb347;
     --danger: #ff5470;
@@ -286,8 +286,8 @@
     color: var(--text);
   }
   .st.live i {
-    background: var(--mag);
-    box-shadow: 0 0 9px var(--mag);
+    background: var(--blue);
+    box-shadow: 0 0 9px var(--blue);
   }
   .st.sleep i {
     background: rgba(154, 144, 168, 0.4);
@@ -319,7 +319,7 @@
     width: 168px;
     height: 38px;
     border-radius: 19px;
-    background: rgba(255, 79, 216, 0.1);
+    background: rgba(122, 176, 255, 0.1);
     color: var(--text);
     font: 500 14px/1 var(--caps);
     letter-spacing: 0.16em;
@@ -484,7 +484,7 @@
     font: 200 92px/1 var(--hero);
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
-    text-shadow: 0 0 40px rgba(255, 79, 216, 0.22);
+    text-shadow: 0 0 40px rgba(122, 176, 255, 0.22);
   }
   .hv .u {
     font: 300 19px/1 var(--data);
@@ -524,8 +524,8 @@
     box-shadow: none;
   }
   .steps i.active {
-    background: var(--mag);
-    box-shadow: 0 0 8px var(--mag);
+    background: var(--blue);
+    box-shadow: 0 0 8px var(--blue);
     animation: pulse 1.2s ease-in-out infinite;
   }
   .steps i.failed {

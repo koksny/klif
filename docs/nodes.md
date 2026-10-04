@@ -78,7 +78,7 @@ The node's local Systems now appear after yours, as `render-box/s1`, `render-box
 
 | Right | Granted by | Allows |
 | --- | --- | --- |
-| view | always (to anyone with the token) | `hello`, `snapshot`, `status`, `preset` (secrets masked), `plan` (secrets masked) |
+| view | always (to anyone with the token) | `hello`, `snapshot`, `status`, `preset` (secrets masked), `plan` (secrets masked), `records_history` |
 | `launch` | `allow = ["launch"]` | Launch, Stop, StopAll, Restart, Dismiss, UsePreset, SetParam |
 | `edit` (implies `launch`) | `allow = ["edit"]` | SavePreset, DeletePreset, AddSystem, RemoveSystem, UpdateSystem, DownloadRecommendation, CancelDownload, AdoptRecommendation, and `command_preview` |
 | never over the network | | Select, `diag`, and anything unknown |
@@ -187,7 +187,9 @@ For people who write their own client (an agent, a dashboard). The same protocol
 - **Methods:** `hello` (-> `{schemaVersion, klifVersion, nodeName, allow, instanceId, proof}`), `snapshot` (`{focus?}`, the
   view model), `status` (the compact `StatusJson`), `act` (params = the action object, for example
   `{"type": "launch", "system": "s1", "stopOthers": true}`), `plan` (`{system}`), `preset` (`{id}`), `command_preview`
-  (`{spec, system?}`), `diag` (local channel only).
+  (`{spec, system?}`), `records_history` (`{key, metric?}`: the broken records of one of this machine's record keys,
+  oldest first, as the `RecordEvent`s of the view model; `klif-cli records history` asks the node that keeps an
+  entry), `diag` (local channel only).
 - **Error codes:** `bad_request`, `unauthorized` (wrong MAC or a rotated token; the connection closes about a second
   later), `bad_id`, `forbidden` (the connection's rights do not cover this method or action), `unknown_method`,
   `bad_params`, `refused` (the engine said no; `message` is its sentence), `too_large`, `busy` (too many

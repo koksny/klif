@@ -11,7 +11,7 @@
   //   timeline      request timeline / recent jobs; idle: empty frame, the last session in the caption
   //   controls      endpoint + API key chips, then Launch / Cancel / Stop / Restart (one place, one width),
   //                 Restart or Dismiss, Tune (always: a running tier gets "Restart to apply" in the drawer),
-  //                 Open endpoint / web UI, Console / Full log; the console line under it
+  //                 Records (icon only), Endpoint / Web UI, Console / Full log; the console line under it
   import { onMount, tick } from 'svelte';
   import type { Actions, SystemId, ViewModel } from '../../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
@@ -391,8 +391,12 @@
     >
       <Icon name="tune" size="calc(17 * var(--u))" />Tune
     </button>
+    <!-- Icon only: the row is full (the endpoint and key chips are what gives), so Records takes just its icon. -->
+    <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
+      <Icon name="records" size="calc(17 * var(--u))" />
+    </button>
     <button class="btn op" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
-      <Icon name="open" size="calc(16 * var(--u))" />{kind === 'image' ? 'Open web UI' : 'Open endpoint'}
+      <Icon name="open" size="calc(16 * var(--u))" />{kind === 'image' ? 'Web UI' : 'Endpoint'}
     </button>
     <button class="btn cn" onclick={() => actions.toggleConsole(view === 'fault' ? true : undefined)}>
       <Icon name={view === 'fault' ? 'log' : 'console'} size="calc(17 * var(--u))" />{view === 'fault' ? 'Full log' : 'Console'}
@@ -838,6 +842,8 @@
   }
   .key {
     width: calc(112 * var(--u));
+    /* The row is full: when it is short of room the endpoint chip (its port has space to spare) gives, not this one. */
+    flex-shrink: 0;
   }
   .key[disabled] .dots,
   .key[disabled] .copy {
@@ -930,8 +936,14 @@
   .rs {
     width: calc(94 * var(--u));
   }
+  .rec {
+    width: calc(30 * var(--u));
+    padding: 0;
+    justify-content: center;
+  }
   .op {
-    width: calc(130 * var(--u));
+    /* "Endpoint" / "Web UI" (was "Open endpoint": the row is full and Records needed its room). */
+    width: calc(98 * var(--u));
   }
   .cn {
     width: calc(98 * var(--u));

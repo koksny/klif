@@ -4,6 +4,9 @@
 //!   spill = Shared Usage) attributed per watched session, a 1 Hz history per GPU, the device power state and
 //!   the dormant detector (`dormant`: an AMD card slept with a model loaded and its VRAM was paged out).
 //! - Machine: CPU name (CPUID), CPU utility, RAM.
+//! - Hardware inventory (`hardware`): the static facts of the machine (GPUs from the DXGI adapters and the embedded
+//!   `data/gpus.toml`, the CPU from CPUID and the topology, RAM) with their theoretical peak FP32 TFLOPS. It never
+//!   creates a D3D12 device (that wakes a sleeping card) and has no live load.
 //! - Sessions (multi-watch, keyed by the System id): each key has its own tracker (`session::SessionTracker`),
 //!   generation counter, PIDs, log tails and console ring. The tracker's adapter (`backend::BackendAdapter`,
 //!   chosen by `WatchSpec.adapter`) parses logs and fuses probe answers into `SessionSignals`.
@@ -20,8 +23,12 @@
 //! a stub (no GPU / RAM numbers) and still compile. The SMBIOS RAM-type reader exists only with the `smbios`
 //! feature (klif-cli diag); the GUI shows `[telemetry] ram_type`.
 
+pub mod audiocpp;
 pub mod backend;
+pub mod cpu;
 pub mod dormant;
+pub mod gputable;
+pub mod hardware;
 pub mod llama;
 pub mod platform;
 pub mod probe;
@@ -55,7 +62,7 @@ pub use session::SessionTracker;
 // ------------------------------------------------------------------------------------------- adapters
 
 /// A resolved DXGI adapter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Adapter {
     pub name: String,
     pub vendor_id: u32,
@@ -63,6 +70,13 @@ pub struct Adapter {
     pub luid_high: i32,
     pub luid_low: u32,
     pub dedicated_bytes: u64,
+    /// PCI revision id (DXGI `Revision`): tells SKUs apart that share a device id.
+    pub revision: u32,
+    /// PCI subsystem id (DXGI `SubSysId`: subsystem device in the high 16 bits, subsystem vendor in the low 16).
+    pub subsys_id: u32,
+    /// System memory the adapter may share with the CPU (DXGI `SharedSystemMemory`): the memory an integrated GPU
+    /// uses besides its small dedicated carve-out.
+    pub shared_bytes: u64,
 }
 
 impl Adapter {
@@ -192,14 +206,7 @@ impl UlpsSetting {
 /// "VEN:DEV#n". None when the device is not found.
 pub fn ulps_setting(pci: &str) -> Option<UlpsSetting> {
     let (ven, dev, n) = parse_gpu_id(pci)?;
-    let a = find_adapter(pci).unwrap_or(Adapter {
-        name: String::new(),
-        vendor_id: ven,
-        device_id: dev,
-        luid_high: 0,
-        luid_low: 0,
-        dedicated_bytes: 0,
-    });
+    let a = find_adapter(pci).unwrap_or(Adapter { vendor_id: ven, device_id: dev, ..Adapter::default() });
     platform::gpu().ulps(&a, n)
 }
 
@@ -288,6 +295,8 @@ pub struct SessionSignals {
     pub arch: Option<ModelArch>,
     /// The server's build as it reports it, e.g. "b6500" (llama.cpp) or "0.6.3" (vLLM), for bench records.
     pub backend_build: Option<String>,
+    /// The compute backend the log names ("HIP", "Vulkan", "CUDA", "CPU", "Metal"), for records.
+    pub compute_backend: Option<String>,
     /// One sentence when the server loaded on a different device than `WatchSpec.expect_device`.
     pub device_mismatch: Option<String>,
     /// The session's console: both logs interleaved by arrival plus KLIF notes, redacted, newest last, up to 200.

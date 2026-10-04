@@ -2,6 +2,7 @@
 // view model: the four Systems of the operator's file (System 1/2/3, CGI) with their presets. Used as the first
 // frame and by the static "sample" scenario (screenshots).
 import { APP_VERSION } from '../mock/host';
+import { MOCK_HARDWARE, MOCK_RECORD_EVENTS, MOCK_RECORDS, MOCK_SUGGESTIONS } from '../mock/hardware';
 import {
   availabilityOf,
   buildCommand,
@@ -172,6 +173,10 @@ export const SAMPLE_VM: ViewModel = {
   host: { kind: 'browser', frameless: false, maximized: false, appVersion: APP_VERSION, panel: { available: true, active: false, target: '960x640' } },
   presets: presetInfos,
   recommendations: recommendationInfos(PRESETS, new Set()),
+  hardware: MOCK_HARDWARE,
+  suggestions: MOCK_SUGGESTIONS,
+  records: MOCK_RECORDS,
+  recordEvents: MOCK_RECORD_EVENTS,
   downloads: [],
   config: {
     path: '%APPDATA%\\KLIF\\klif.toml',

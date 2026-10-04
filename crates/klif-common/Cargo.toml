@@ -13,3 +13,9 @@ anyhow.workspace = true
 # Param choices keep their file order (ParamCfg.choices / PresetCfg.params): the first choice is the default when a
 # param has no `default`. Already in the build through toml's `preserve_order`; `serde` adds no new crate.
 indexmap = { version = "2", features = ["serde"] }
+# `klif-cli schema`: JSON Schema of the documents klif-cli prints. Only klif-cli turns the feature on (through
+# klif-core), so klif.exe does not carry it.
+schemars = { version = "1", optional = true, features = ["indexmap2"] }
+
+[features]
+schema = ["dep:schemars"]

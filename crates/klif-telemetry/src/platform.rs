@@ -4,8 +4,10 @@
 //! per-process `/proc/<pid>/fdinfo` `drm-memory-vram`; NVIDIA: NVML; macOS: IOKit / Metal). Owner: package D.
 //!
 //! The rest of the crate calls `gpu()` / `host()`, never `win::` directly, so non-Windows targets compile.
-//! The CPU name comes from CPUID on x86 / x86_64 on every OS (no registry read).
+//! The CPU name comes from CPUID on x86 / x86_64 on every OS (no registry read); the FP32 estimate (`cpu_facts`)
+//! adds the core topology and, on Windows, the base clock from the registry's `~MHz`.
 
+use crate::cpu::{self, CpuFacts};
 use crate::{Adapter, PowerState, UlpsSetting};
 
 /// GPU facts of the platform.
@@ -34,6 +36,11 @@ pub trait HostPlatform: Send + Sync {
     fn cpu_name(&self) -> Option<String>;
     /// (total bytes, available bytes).
     fn memory(&self) -> Option<(u64, u64)>;
+    /// The CPU's static facts for the FP32 estimate: CPUID, physical cores per efficiency class, base clock. The
+    /// default knows nothing.
+    fn cpu_facts(&self) -> Option<CpuFacts> {
+        None
+    }
 }
 
 /// Keeps a measurement query open; `read` is called at 1 Hz by the sampler thread.
@@ -108,6 +115,11 @@ impl HostPlatform for NoPlatform {
     }
     fn memory(&self) -> Option<(u64, u64)> {
         None
+    }
+    /// What CPUID alone tells (the brand and the SIMD flags): no topology and no clock, so no TFLOPS number.
+    fn cpu_facts(&self) -> Option<CpuFacts> {
+        let (brand, id) = (cpu_brand(), cpu::read_cpuid());
+        (brand.is_some() || id.is_some()).then(|| CpuFacts { brand: brand.unwrap_or_default(), id, ..CpuFacts::default() })
     }
 }
 
@@ -255,6 +267,14 @@ mod windows_impl {
         }
         fn memory(&self) -> Option<(u64, u64)> {
             win::memory_status()
+        }
+        fn cpu_facts(&self) -> Option<crate::cpu::CpuFacts> {
+            Some(crate::cpu::CpuFacts {
+                brand: super::cpu_brand().unwrap_or_default(),
+                id: crate::cpu::read_cpuid(),
+                base_mhz: win::cpu_base_mhz(),
+                classes: win::cpu_core_classes(),
+            })
         }
     }
 

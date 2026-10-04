@@ -118,6 +118,22 @@ pub fn split_ts(line: &str) -> Option<(f64, char, &str)> {
     Some((ts, lvl, &line[i + 3..]))
 }
 
+/// The compute backend of a ggml device name ("ROCm0" -> "HIP", "Vulkan1" -> "Vulkan", "CUDA0", "MTL0" / "Metal",
+/// "SYCL0", "CPU"); an unknown name is kept without its index.
+pub fn backend_of_device(dev: &str) -> String {
+    let base = dev.trim().trim_end_matches(|c: char| c.is_ascii_digit());
+    match base.to_ascii_lowercase().as_str() {
+        "rocm" | "hip" => "HIP".into(),
+        "cuda" => "CUDA".into(),
+        "vulkan" => "Vulkan".into(),
+        "mtl" | "metal" => "Metal".into(),
+        "sycl" => "SYCL".into(),
+        "opencl" => "OpenCL".into(),
+        "cpu" => "CPU".into(),
+        _ => base.to_string(),
+    }
+}
+
 fn cap_u64(c: &regex::Captures, i: usize) -> u64 {
     c.get(i).and_then(|m| m.as_str().parse().ok()).unwrap_or(0)
 }
@@ -313,6 +329,10 @@ pub struct LlamaParser {
     pub any_line: bool,
     // devices / composition
     devices: Vec<(String, String, u64, u64)>,
+    /// Every device the model is placed on (L11 `using device ROCm0`), in log order.
+    used_devs: Vec<String>,
+    /// The device list (L10) named a CPU device.
+    cpu_listed: bool,
     pub primary_dev: Option<String>,
     /// The primary device's description as the server names it (L11), e.g. "AMD Radeon RX 9070 XT".
     pub primary_desc: Option<String>,
@@ -371,6 +391,8 @@ impl LlamaParser {
             steps: Steps::default(),
             any_line: false,
             devices: Vec::new(),
+            used_devs: Vec::new(),
+            cpu_listed: false,
             primary_dev: None,
             primary_desc: None,
             primary_free_mib: None,
@@ -528,8 +550,13 @@ impl LlamaParser {
             if dev != "CPU" {
                 self.devices.push((dev, c[2].to_string(), cap_u64(&c, 3), cap_u64(&c, 4)));
                 self.steps.reach(1);
+            } else {
+                self.cpu_listed = true;
             }
         } else if let Some(c) = L11.captures(msg) {
+            if !self.used_devs.iter().any(|d| d == &c[1]) {
+                self.used_devs.push(c[1].to_string());
+            }
             self.primary_dev = Some(c[1].to_string());
             self.primary_desc = Some(c[2].trim().to_string());
             self.primary_free_mib = Some(cap_u64(&c, 4));
@@ -906,9 +933,10 @@ impl LlamaParser {
                 at: t.round(),
                 prompt_tokens: c + p,
                 cached_tokens: c,
-                prefill_s: round_to(prefill_s, 2),
+                // Millisecond precision (what llama.cpp prints): short prefills and TTFT records need it.
+                prefill_s: round_to(prefill_s, 3),
                 generated_tokens: gen,
-                decode_s: round_to(decode_s, 2),
+                decode_s: round_to(decode_s, 3),
             };
             self.records.push_back(rec);
             while self.records.len() > 12 {
@@ -942,6 +970,26 @@ impl LlamaParser {
     /// The server's build as it reports it ("b6500"), from the `common_params_print_info` banner.
     pub fn build_label(&self) -> Option<String> {
         self.build.as_ref().map(|b| format!("b{b}"))
+    }
+
+    /// The compute backend from the device names: the devices the model is placed on (L11), else the listed GPU
+    /// devices (L10), else "CPU" when only a CPU device was listed. "HIP", "Vulkan", "CUDA", "HIP+Vulkan"...
+    pub fn compute_backend(&self) -> Option<String> {
+        let devs: Vec<&str> = if self.used_devs.is_empty() {
+            self.devices.iter().map(|(d, _, _, _)| d.as_str()).collect()
+        } else {
+            self.used_devs.iter().map(String::as_str).collect()
+        };
+        let mut names: Vec<String> = Vec::new();
+        for n in devs.into_iter().map(backend_of_device) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        if names.is_empty() && self.cpu_listed {
+            names.push("CPU".into());
+        }
+        (!names.is_empty()).then(|| names.join("+"))
     }
 
     /// Activity from the log alone.
