@@ -1,4 +1,4 @@
-//! The suggested model per slot (System 1 / 2 / 3, image, tts, stt, video) for a machine: a pure function of its
+//! The suggested model per slot (System 1 / 2 / 3, image, tts, stt, video, music) for a machine: a pure function of its
 //! hardware inventory and the embedded pool (`recommend::Pool`). Every number is an estimate. Owner: package B.
 //!
 //! Fit of an LLM rung at a context and KV type: weights (the rung's file sizes) + KV (`KvCost::mib`) + the model's

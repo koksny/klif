@@ -39,6 +39,7 @@ export const KIND_LABEL: Record<SystemKind, string> = {
   tts: 'Speech',
   stt: 'Transcription',
   video: 'Video',
+  music: 'Music',
 };
 
 /** What a unit of work of this kind is called in counters. */
@@ -48,6 +49,7 @@ export const KIND_WORK: Record<SystemKind, string> = {
   tts: 'requests',
   stt: 'requests',
   video: 'clips',
+  music: 'songs',
 };
 
 export const STATUS_TEXT: Record<SystemStatus, string> = {

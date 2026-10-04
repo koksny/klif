@@ -20,6 +20,7 @@ mod presets;
 mod records_cmd;
 mod resolve;
 mod schema_cmd;
+mod settings_cmd;
 mod suggest_cmd;
 mod watch_cmd;
 
@@ -156,6 +157,7 @@ fn run(mut raw: Vec<String>, out: Out) -> CliResult {
         "stop" => cmds::stop(args, &loaded, out),
         "restart" => cmds::restart(args, &loaded, out),
         "dismiss" => cmds::dismiss(args, &loaded, out),
+        "settings" => settings_cmd::run(args, &loaded, out),
         "systems" => cmds::systems(args, &loaded, out),
         "nodes" => cmds::nodes(args, &loaded, out),
         "serve" => cmds::serve(args, &loaded, out),

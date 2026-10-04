@@ -3,7 +3,7 @@
 //! stderr notices (`[server] idle N ms: unloaded K model(s)`). With `--log` (stdout; `--log-file` writes a file KLIF
 //! does not read) it adds one `[SERVER_HTTP_DEBUG] http.headers method=M path=P ...` line per HTTP request, which
 //! gives the request count and the activity; KLIF's own probes (`GET /health`, `GET /v1/models`) are told apart by
-//! their path. Per-request timing is only in the responses (headers / `timing`), so TTS records come from
+//! their path. Per-request timing is only in the responses (headers / `timing`), so TTS and music records come from
 //! `klif-cli bench`.
 
 use regex::Regex;

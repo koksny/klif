@@ -106,6 +106,16 @@
     <span class="title" data-tauri-drag-region>Records</span>
     <span class="hint" data-tauri-drag-region>The best each model file reached on each backend</span>
     <span class="grow" data-tauri-drag-region></span>
+    <button
+      type="button"
+      class="moment"
+      role="switch"
+      aria-checked={vm.config.recordMoment}
+      title="Celebrate a broken record over the skin ([ui] record_moment)"
+      onclick={() => void player.actions.updateSettings({ recordMoment: !vm.config.recordMoment }).catch(() => {})}
+    >
+      <i></i>New record moment
+    </button>
     <button type="button" class="back" onclick={() => ui.closeRecords()} title="Back to the Systems (Esc)">← Systems</button>
     {#if vm.host.frameless}
       <button type="button" class="wc" onclick={() => player.actions.minimize()} aria-label="Minimize">—</button>
@@ -249,6 +259,48 @@
     border-radius: var(--k-radius, 6px);
     background: transparent;
     font-size: 12px;
+  }
+  .moment {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 6px;
+    border: 1px solid var(--k-line, #2c363c);
+    border-radius: 999px;
+    background: transparent;
+    font-size: 12px;
+    color: var(--k-muted, #8a8a8a);
+  }
+  .moment i {
+    position: relative;
+    width: 26px;
+    height: 14px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--k-ink, #eee) 12%, transparent);
+    transition: background 0.15s ease;
+  }
+  .moment i::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--k-muted, #8a8a8a);
+    transition:
+      transform 0.15s ease,
+      background 0.15s ease;
+  }
+  .moment[aria-checked='true'] {
+    color: var(--k-ink, #eee);
+  }
+  .moment[aria-checked='true'] i {
+    background: color-mix(in srgb, var(--k-record, #f2a33a) 35%, transparent);
+  }
+  .moment[aria-checked='true'] i::after {
+    transform: translateX(12px);
+    background: var(--k-record, #f2a33a);
   }
   .wc {
     width: 30px;

@@ -92,7 +92,11 @@
     tabindex={adding || tabs.length === 0 ? 0 : -1}
     aria-label="Add System"
     title="Add System"
-    onclick={onadd}>+</button
+    onclick={onadd}
+    ><!-- drawn, not the "+" character: a glyph sits off-centre by each skin font's own metrics --><svg
+      viewBox="0 0 12 12"
+      aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" /></svg
+    ></button
   >
 </div>
 
@@ -158,6 +162,14 @@
     flex: none;
     justify-content: center;
     min-width: 34px;
-    font-size: 15px;
+  }
+  .add svg {
+    display: block;
+    width: 11px;
+    height: 11px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
   }
 </style>

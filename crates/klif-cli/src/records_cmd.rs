@@ -11,7 +11,7 @@ use klif_core::klif_common::config::LoadedConfig;
 use klif_core::klif_common::vm::{Action, RecordEntry, RecordMetric, RecordValue, SystemKind, ViewModel};
 
 /// Every metric, in display order.
-const METRICS: [RecordMetric; 7] = [
+const METRICS: [RecordMetric; 8] = [
     RecordMetric::DecodeTps,
     RecordMetric::PrefillTps,
     RecordMetric::TtftS,
@@ -19,6 +19,7 @@ const METRICS: [RecordMetric; 7] = [
     RecordMetric::TtsRtf,
     RecordMetric::SttRtf,
     RecordMetric::VideoS,
+    RecordMetric::MusicRtf,
 ];
 
 pub(crate) fn metric_id(m: RecordMetric) -> &'static str {
@@ -30,6 +31,7 @@ pub(crate) fn metric_id(m: RecordMetric) -> &'static str {
         RecordMetric::TtsRtf => "ttsRtf",
         RecordMetric::SttRtf => "sttRtf",
         RecordMetric::VideoS => "videoS",
+        RecordMetric::MusicRtf => "musicRtf",
     }
 }
 
@@ -42,10 +44,11 @@ pub(crate) fn metric_title(m: RecordMetric) -> &'static str {
         RecordMetric::TtsRtf => "Speech, audio s per wall s (higher is better)",
         RecordMetric::SttRtf => "Transcription, audio s per wall s (higher is better)",
         RecordMetric::VideoS => "Seconds per video (lower is better)",
+        RecordMetric::MusicRtf => "Music, audio s per wall s (higher is better)",
     }
 }
 
-/// `decodeTps`, also `decode`, `prefill`, `ttft`, `image`, `tts`, `stt`, `video` (any case).
+/// `decodeTps`, also `decode`, `prefill`, `ttft`, `image`, `tts`, `stt`, `video`, `music` (any case).
 pub(crate) fn parse_metric(s: &str) -> CliResult<RecordMetric> {
     let t = s.trim().to_ascii_lowercase();
     METRICS
@@ -68,7 +71,7 @@ pub(crate) fn value_text(m: RecordMetric, v: f64) -> String {
         RecordMetric::DecodeTps | RecordMetric::PrefillTps => format!("{v:.1} tok/s"),
         RecordMetric::TtftS => format!("{v:.3} s"),
         RecordMetric::ImageS | RecordMetric::VideoS => format!("{v:.2} s"),
-        RecordMetric::TtsRtf | RecordMetric::SttRtf => format!("{v:.2}x"),
+        RecordMetric::TtsRtf | RecordMetric::SttRtf | RecordMetric::MusicRtf => format!("{v:.2}x"),
     }
 }
 
@@ -185,7 +188,7 @@ fn filtered<'a>(vm: &'a ViewModel, kind: Option<SystemKind>, metric: Option<Reco
 
 fn list(loaded: &LoadedConfig, out: Out, kind: Option<&str>, metric: Option<&str>, backend: Option<&str>, node: Option<&str>) -> CliResult {
     let kind = match kind {
-        Some(k) => Some(SystemKind::parse(k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video).")))?),
+        Some(k) => Some(SystemKind::parse(k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video, music).")))?),
         None => None,
     };
     let metric = metric.map(parse_metric).transpose()?;

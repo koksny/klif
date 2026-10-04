@@ -463,6 +463,7 @@ impl Inner {
             api_key: key_info,
             models_dir: cfg.models_dir().map(|p| p.display().to_string()),
             on_conflict: cfg.launch.on_conflict,
+            record_moment: cfg.ui.record_moment,
         };
         // The inventory and its suggestions under one guard (a second lock inside the literal would deadlock).
         let (hardware, suggestions) = {

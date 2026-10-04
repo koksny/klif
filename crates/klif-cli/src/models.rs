@@ -52,7 +52,7 @@ fn size_of(r: &RecommendationInfo) -> Option<u64> {
 fn list(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let kind = match args.opt("--kind")? {
         None => None,
-        Some(k) => Some(SystemKind::parse(&k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video).")))?),
+        Some(k) => Some(SystemKind::parse(&k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video, music).")))?),
     };
     args.done()?;
     let cfg = &loaded.cfg;

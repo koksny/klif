@@ -23,6 +23,7 @@
     { value: 'tts', label: 'Speech (TTS)' },
     { value: 'stt', label: 'Transcription (STT)' },
     { value: 'video', label: 'Video' },
+    { value: 'music', label: 'Music' },
   ];
   const CLASSES: { value: LlmClass | 'other'; label: string; sub: string }[] = [
     { value: 'fast', label: 'Fast', sub: 'System 1' },

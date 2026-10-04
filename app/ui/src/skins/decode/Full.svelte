@@ -577,6 +577,8 @@
     flex: none;
     width: calc(var(--u) * 40);
     display: grid;
+    /* one centred cell: .tier's three-column grid would park the + in its first column */
+    grid-template-columns: 1fr;
     place-items: center;
     padding: 0;
     color: var(--arc);

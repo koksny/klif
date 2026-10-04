@@ -1,5 +1,5 @@
-//! TTS and STT bench runs (`klif-cli bench <system>` on a tts / stt System). Both record audio seconds per wall
-//! second (`ttsRtf`, `sttRtf`: higher is better).
+//! TTS, STT and music bench runs (`klif-cli bench <system>` on a tts / stt / music System). All record audio seconds
+//! per wall second (`ttsRtf`, `sttRtf`, `musicRtf`: higher is better).
 //!
 //! TTS: fixed English texts to `POST /v1/audio/speech`. audio.cpp gets `response_format: "json"` and answers
 //! `timing {wall_ms, audio_duration_ms, rtf}`; its `rtf` is wall / audio, KLIF records audio / wall. Any other
@@ -10,6 +10,10 @@
 //! route: audio.cpp `/v1/audio/transcriptions`; whisper-server its `--inference-path` (below `--request-path`) when
 //! the command names one, else `/v1/audio/transcriptions`, then `/inference`. The audio length comes from the WAV
 //! header; the wall time is measured here unless the server reports `timing.wall_ms`.
+//!
+//! Music (audio.cpp only): a fixed instrumental prompt, 30 s, a fixed seed, to `POST /v1/tasks/run` with the model id
+//! `/v1/models` lists (task `gen`). The request is synchronous (minutes on a big model); the answer carries `timing
+//! {wall_ms, audio_duration_ms, rtf}` with `rtf` = wall / audio, so KLIF records the audio length over the wall time.
 
 use anyhow::{anyhow, bail, Context, Result};
 use klif_common::vm::{AdapterId, System, SystemId};
@@ -118,23 +122,32 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 
 // ------------------------------------------------------------------------------------------- models
 
+/// The `/v1/models` entries (none when the server does not list any).
+fn model_entries(agent: &ureq::Agent, t: &Target) -> Vec<Value> {
+    get_json(agent, t, "/v1/models").and_then(|v| v.get("data").and_then(Value::as_array).cloned()).unwrap_or_default()
+}
+
+/// The entry whose `task` fits (`want`), preferring a loaded one; else the first entry.
+fn pick_entry<'a>(listed: &'a [Value], want: &[&str]) -> Option<&'a Value> {
+    let fits = |m: &&Value| m.get("task").and_then(Value::as_str).is_none_or(|task| want.iter().any(|w| task.eq_ignore_ascii_case(w)));
+    let loaded = |m: &&Value| m.get("loaded").and_then(Value::as_bool).unwrap_or(false);
+    listed.iter().filter(fits).find(loaded).or_else(|| listed.iter().find(fits)).or_else(|| listed.first())
+}
+
+fn entry_id(m: &Value) -> Option<String> {
+    m.get("id").and_then(Value::as_str).map(str::to_string)
+}
+
+/// What the session reports as its model id (a server that lists no models).
+fn session_model(sys: &System) -> Option<String> {
+    sys.session.as_ref().and_then(|s| s.generic.as_ref()).and_then(|g| g.model_id.clone())
+}
+
 /// The model id to ask for: the `/v1/models` entry whose `task` fits (`want`), preferring a loaded one; else the
 /// first entry; else what the session reports; else `fallback`.
 fn pick_model(agent: &ureq::Agent, t: &Target, sys: &System, want: &[&str], fallback: &str) -> String {
-    let listed: Vec<Value> =
-        get_json(agent, t, "/v1/models").and_then(|v| v.get("data").and_then(Value::as_array).cloned()).unwrap_or_default();
-    let id = |m: &Value| m.get("id").and_then(Value::as_str).map(str::to_string);
-    let fits = |m: &&Value| m.get("task").and_then(Value::as_str).is_none_or(|task| want.iter().any(|w| task.eq_ignore_ascii_case(w)));
-    let loaded = |m: &&Value| m.get("loaded").and_then(Value::as_bool).unwrap_or(false);
-    listed
-        .iter()
-        .filter(fits)
-        .find(loaded)
-        .or_else(|| listed.iter().find(fits))
-        .or_else(|| listed.first())
-        .and_then(id)
-        .or_else(|| sys.session.as_ref().and_then(|s| s.generic.as_ref()).and_then(|g| g.model_id.clone()))
-        .unwrap_or_else(|| fallback.to_string())
+    let listed = model_entries(agent, t);
+    pick_entry(&listed, want).and_then(entry_id).or_else(|| session_model(sys)).unwrap_or_else(|| fallback.to_string())
 }
 
 fn num(v: Option<&Value>, key: &str) -> Option<f64> {
@@ -233,6 +246,111 @@ pub(super) fn bench_tts(
             audio_s: Some(round3(audio_s)),
             wall_s: Some(round3(wall_s)),
             tts_rtf: Some(round3(audio_s / wall_s)),
+            ..BenchRun::default()
+        });
+    }
+    Ok(runs)
+}
+
+// -------------------------------------------------------------------------------------------- music
+
+/// What every music run asks for: a short instrumental with a fixed seed (the steps and the guidance stay at the
+/// model's defaults, as the image bench keeps the server's launch defaults).
+const MUSIC_PROMPT: &str = "warm lo-fi hip hop with a soft rhodes piano, mellow drums and a deep bass line";
+const MUSIC_TAGS: &str = "lo-fi,hip hop,instrumental,rhodes piano";
+const MUSIC_SECONDS: u32 = 30;
+const MUSIC_SEED: u32 = 1234;
+
+/// The body of one `POST /v1/tasks/run` for a model of `family` (as `/v1/models` names it; None when it does not).
+/// ACE-Step marks an instrumental with the lyrics `[Instrumental]`; HeartMuLa wants lyrics, style tags and its own
+/// length option; Stable Audio takes a prompt and a length only.
+fn music_body(model: &str, family: Option<&str>) -> Value {
+    let mut request = json!({ "text": MUSIC_PROMPT, "duration_seconds": MUSIC_SECONDS, "seed": MUSIC_SEED });
+    if family != Some("stable_audio") {
+        request["lyrics"] = json!("[Instrumental]");
+    }
+    match family {
+        Some("ace_step") => request["task_route"] = json!("text2music"),
+        Some("heartmula") => request["options"] = json!({ "tags": MUSIC_TAGS, "duration_sec": MUSIC_SECONDS }),
+        _ => {}
+    }
+    json!({ "model": model, "request": request })
+}
+
+/// The server's sentence in `{"error": {"message", "code"}}` (audio.cpp: `server_busy`, `insufficient_memory`).
+fn error_text(v: &Value) -> Option<String> {
+    let err = v.get("error").filter(|e| !e.is_null())?;
+    let msg = err.get("message").and_then(Value::as_str).or_else(|| err.as_str()).map(str::to_string).unwrap_or_else(|| err.to_string());
+    Some(match err.get("code").and_then(Value::as_str) {
+        Some(code) if !msg.contains(code) => format!("{msg} ({code})"),
+        _ => msg,
+    })
+}
+
+/// One music request: (audio seconds, wall seconds) from the `timing` audio.cpp answers with (`wall_ms`,
+/// `audio_duration_ms`, and `rtf` = wall / audio, which is inverted when the audio length is missing), else from the
+/// WAV in the answer and the wall time measured here.
+fn compose(agent: ureq::Agent, url: String, key: Option<klif_common::Secret>, body: Value) -> Result<(f64, f64)> {
+    let t0 = Instant::now();
+    let resp = auth_body(agent.post(&url), &key).send_json(&body).map_err(|e| anyhow!("{url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = resp.into_body().with_config().limit(MAX_SPEECH_BYTES).read_to_vec().map_err(|e| anyhow!("{url}: {e}"))?;
+    let client_wall = t0.elapsed().as_secs_f64();
+    let v: Option<Value> = serde_json::from_slice(&bytes).ok();
+    let said = || {
+        v.as_ref().and_then(error_text).unwrap_or_else(|| one_line(&String::from_utf8_lossy(&bytes[..bytes.len().min(2048)]), 300))
+    };
+    match status {
+        200 => {}
+        404 | 405 => bail!("This server has no POST /v1/tasks/run, so its music bench is not supported."),
+        401 | 403 => bail!("The server refused the bench request ({status}): check the API key."),
+        503 => bail!("The music server is busy or out of memory: {}", one_line(&said(), 300)),
+        _ => bail!("The server answered {status}: {}", one_line(&said(), 300)),
+    }
+    let v = v.ok_or_else(|| anyhow!("The music server answered something other than JSON."))?;
+    if let Some(msg) = error_text(&v) {
+        bail!("The music server reported an error: {}", one_line(&msg, 300));
+    }
+    let timing = v.get("timing");
+    let wall = num(timing, "wall_ms").map(|ms| ms / 1000.0);
+    let audio = num(timing, "audio_duration_ms")
+        .map(|ms| ms / 1000.0)
+        .or_else(|| num(timing, "rtf").map(|rtf| wall.unwrap_or(client_wall) / rtf))
+        .or_else(|| v.get("audio").and_then(Value::as_str).and_then(base64_decode).and_then(|b| wav_seconds(&b)));
+    let audio = audio.ok_or_else(|| anyhow!("The music server answered without timing or audio KLIF can measure."))?;
+    Ok((audio, wall.unwrap_or(client_wall)))
+}
+
+pub(super) fn bench_music(
+    link: &dyn EngineLink,
+    id: &SystemId,
+    sys: &System,
+    agent: &ureq::Agent,
+    t: &Target,
+    opts: &BenchOpts,
+    peak: &mut Peak,
+) -> Result<Vec<BenchRun>> {
+    let label = sys.label.as_str();
+    let listed = model_entries(agent, t);
+    let entry = pick_entry(&listed, &["gen", "music", "sfx"]);
+    let model = entry.and_then(entry_id).or_else(|| session_model(sys)).unwrap_or_else(|| "music".to_string());
+    let family = entry.and_then(|m| m.get("family")).and_then(Value::as_str).map(str::to_string);
+    let url = format!("{}/v1/tasks/run", t.base);
+    log::info!("{label}: {MUSIC_SECONDS} s of music from {model} per run (a request answers when the clip is done)");
+    let mut runs = Vec::new();
+    for i in 0..opts.runs {
+        let body = music_body(&model, family.as_deref());
+        let (a, u, k) = (agent.clone(), url.clone(), t.key.clone());
+        let (audio_s, wall_s) =
+            with_sampling(link, id, peak, move || compose(a, u, k, body)).with_context(|| format!("Bench run {} of {label} failed", i + 1))?;
+        if !(audio_s > 0.0 && wall_s > 0.0) {
+            bail!("Bench run {} of {label}: the server returned no audio.", i + 1);
+        }
+        log_run(i, opts.runs, audio_s, wall_s);
+        runs.push(BenchRun {
+            audio_s: Some(round3(audio_s)),
+            wall_s: Some(round3(wall_s)),
+            music_rtf: Some(round3(audio_s / wall_s)),
             ..BenchRun::default()
         });
     }

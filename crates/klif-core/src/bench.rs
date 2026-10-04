@@ -9,7 +9,8 @@
 //! vLLM/OpenAI token counts. Image: `POST /v1/images/generations` (the sd.cpp server's OpenAI route; the image
 //! uses the server's launch defaults), seconds per image = wall time. TTS: fixed texts to `POST /v1/audio/speech`,
 //! STT: the `--audio <file.wav>` speech to the server's transcription route; both record audio seconds per wall
-//! second (`bench/audio.rs`). Video: not supported yet.
+//! second (`bench/audio.rs`). Music (audio.cpp): a fixed 30 s instrumental to `POST /v1/tasks/run`, audio seconds per
+//! wall second from its `timing` (`bench/audio.rs`). Video: not supported yet.
 //! Peak VRAM / spill / layers are sampled from the engine's view model (focused on the System) during the runs.
 //! Records (`crate::records`): the runs happen inside a bench window (`EngineLink::bench_mark`), so the requests the
 //! engine reads from the server's log count as bench records; the result is handed over at the end for servers
@@ -83,10 +84,10 @@ pub struct BenchRun {
     pub prompt_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gen_tokens: Option<u64>,
-    /// TTS / STT: seconds of audio produced / transcribed.
+    /// TTS / STT / music: seconds of audio produced / transcribed / composed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_s: Option<f64>,
-    /// TTS / STT: wall seconds of the request (the server's own timing when it reports one).
+    /// TTS / STT / music: wall seconds of the request (the server's own timing when it reports one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_s: Option<f64>,
     /// TTS: audio seconds per wall second.
@@ -95,6 +96,9 @@ pub struct BenchRun {
     /// STT: audio seconds per wall second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_rtf: Option<f64>,
+    /// Music: seconds of music per wall second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music_rtf: Option<f64>,
 }
 
 /// One bench of one preset.
@@ -153,7 +157,7 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
     let sys = find(&vm, system)?.clone();
     let label = sys.label.clone();
     match sys.kind {
-        SystemKind::Llm | SystemKind::Image | SystemKind::Tts => {}
+        SystemKind::Llm | SystemKind::Image | SystemKind::Tts | SystemKind::Music => {}
         // Fail before anything is launched: the speech file must be there and readable.
         SystemKind::Stt => match opts.audio.as_deref() {
             Some(p) => {
@@ -174,14 +178,10 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
         SystemStatus::Stopping => bail!("{label} is stopping; try again when it is offline."),
         _ => {}
     }
-    let adapter = sys
-        .session
-        .as_ref()
-        .and_then(|s| s.command.as_ref())
-        .or(sys.command.as_ref())
-        .map(|c| c.adapter)
-        .or_else(|| AdapterId::parse(&sys.model.engine))
-        .unwrap_or_default();
+    let adapter = adapter_of(&sys);
+    if sys.kind == SystemKind::Music && adapter != AdapterId::AudioCpp {
+        bail!("Music bench needs an audio.cpp server (POST /v1/tasks/run); {label} uses the {adapter} adapter, which is not supported yet.");
+    }
     if sys.kind == SystemKind::Image && !matches!(adapter, AdapterId::SdCpp | AdapterId::OpenAi) {
         bail!("Image bench needs an sd.cpp server (POST /v1/images/generations); {label} uses the {adapter} adapter, which is not supported yet.");
     }
@@ -240,6 +240,17 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
         stop_launched(link, system, &label);
     }
     result
+}
+
+/// The adapter a System runs: its session's command, else its preset's, else what the model's engine says.
+pub fn adapter_of(sys: &System) -> AdapterId {
+    sys.session
+        .as_ref()
+        .and_then(|s| s.command.as_ref())
+        .or(sys.command.as_ref())
+        .map(|c| c.adapter)
+        .or_else(|| AdapterId::parse(&sys.model.engine))
+        .unwrap_or_default()
 }
 
 fn find<'a>(vm: &'a ViewModel, id: &SystemId) -> Result<&'a System> {
@@ -477,6 +488,7 @@ fn measure(
         SystemKind::Image => (bench_image(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
         SystemKind::Tts => (audio::bench_tts(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
         SystemKind::Stt => (audio::bench_stt(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
+        SystemKind::Music => (audio::bench_music(link, id, &sys, &agent, &target, opts, &mut peak)?, None),
         _ => bench_llm(link, id, &sys, &agent, &target, opts, &mut peak)?,
     };
 
@@ -935,6 +947,7 @@ pub fn summarize(rec: &BenchRecord, stale: bool) -> BenchSummary {
         seconds_per_image: med(|r| r.seconds_per_image),
         tts_rtf: med(|r| r.tts_rtf),
         stt_rtf: med(|r| r.stt_rtf),
+        music_rtf: med(|r| r.music_rtf),
         peak_vram_gib: rec.peak_vram_gib,
         spill_mib: rec.spill_mib,
         backend_build: rec.backend_build.clone(),

@@ -15,7 +15,7 @@
 /** A System id: a local id from `[systems.<id>]` ("s1", "cgi", "tts"...) or "<node>/<id>" for a remote System. */
 export type SystemId = string;
 
-export type SystemKind = 'llm' | 'image' | 'tts' | 'stt' | 'video';
+export type SystemKind = 'llm' | 'image' | 'tts' | 'stt' | 'video' | 'music';
 
 /** LLM System class: fast = System 1, deep = System 2, max = System 3. */
 export type LlmClass = 'fast' | 'deep' | 'max';
@@ -172,6 +172,8 @@ export interface BenchSummary {
   ttsRtf?: number;
   /** STT: audio seconds per wall second. */
   sttRtf?: number;
+  /** Music: seconds of music per wall second. */
+  musicRtf?: number;
   peakVramGiB?: number;
   spillMiB?: number;
   backendBuild?: string;
@@ -225,7 +227,7 @@ export interface ParamSpec {
 export interface PresetSpec {
   name?: string;
   adapter?: AdapterId;
-  /** Default: image for sd.cpp (video: set it), llm for llama.cpp/vllm/openai, tts for audiocpp; REQUIRED for generic. */
+  /** Default: image for sd.cpp (video: set it), llm for llama.cpp/vllm/openai, tts for audiocpp (music: set it); REQUIRED for generic. */
   kind?: SystemKind;
   /** Absolute path, or a name on PATH (.exe/.com only). Empty for an external preset. */
   command?: string;
@@ -344,6 +346,8 @@ export interface ConfigInfo {
   /** `[paths] models_dir` (absent: downloads are refused until it is set). */
   modelsDir?: string;
   onConflict: OnConflict;
+  /** `[ui] record_moment`: show the "new record" moment (default on). */
+  recordMoment: boolean;
 }
 
 // ------------------------------------------------------------------------------------------- systems
@@ -701,7 +705,7 @@ export interface HardwareInfo {
 
 // -------------------------------------------------------------------------------------- suggestions
 
-export type SuggestSlot = 'fast' | 'deep' | 'max' | 'image' | 'tts' | 'stt' | 'video';
+export type SuggestSlot = 'fast' | 'deep' | 'max' | 'image' | 'tts' | 'stt' | 'video' | 'music';
 
 /** The suggested model for one slot on this machine (an estimate; rec absent = nothing fits). */
 export interface Suggestion {
@@ -727,7 +731,7 @@ export interface Suggestion {
 // ------------------------------------------------------------------------------------------ records
 
 /** *Tps / *Rtf: higher is better; *S: lower is better. */
-export type RecordMetric = 'decodeTps' | 'prefillTps' | 'ttftS' | 'imageS' | 'ttsRtf' | 'sttRtf' | 'videoS';
+export type RecordMetric = 'decodeTps' | 'prefillTps' | 'ttftS' | 'imageS' | 'ttsRtf' | 'sttRtf' | 'videoS' | 'musicRtf';
 
 /** The exact model file a record belongs to. */
 export interface RecordModel {
@@ -895,7 +899,8 @@ export type EngineAction =
   | { type: 'cancelDownload'; id: string; node?: string }
   | { type: 'adoptRecommendation'; id: string; system?: SystemId; ctx?: number; kv?: string }
   /** Remove a junk record (the key as that machine knows it; node = a remote node's entry). */
-  | { type: 'forgetRecord'; key: string; node?: string };
+  | { type: 'forgetRecord'; key: string; node?: string }
+  | { type: 'updateSettings'; recordMoment?: boolean };
 // Serde shape: Action::ForgetRecord { key, node? } (klif_common::vm), tagged "forgetRecord"; needs the node's "edit"
 // right when it is a remote entry.
 
@@ -945,6 +950,8 @@ export interface Actions {
    * pass the node). A remote node must grant "edit".
    */
   forgetRecord(key: string, node?: string, call?: CallOpts): Promise<void>;
+  /** This machine's display settings (`[ui]` in klif.toml). */
+  updateSettings(patch: { recordMoment?: boolean }, call?: CallOpts): Promise<void>;
   // ---- shell actions ----
   openEndpoint(system?: SystemId): void;
   copyEndpoint(system?: SystemId): void;

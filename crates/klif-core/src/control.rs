@@ -946,7 +946,7 @@ fn dispatch(shared: &Shared, req: &Request, nonce: &str) -> Response {
                 None | Some(Value::Null) => None,
                 Some(v) => match serde_json::from_value::<klif_common::vm::RecordMetric>(v.clone()) {
                     Ok(m) => Some(m),
-                    Err(_) => return bad(id, "\"metric\" must be a record metric (decodeTps, prefillTps, ttftS, imageS, ttsRtf, sttRtf, videoS)."),
+                    Err(_) => return bad(id, "\"metric\" must be a record metric (decodeTps, prefillTps, ttftS, imageS, ttsRtf, sttRtf, videoS, musicRtf)."),
                 },
             };
             // A network peer sees this machine's records only; the local channel may name a node's key.

@@ -409,6 +409,8 @@ export class MockEngine {
   private modelsDir?: string;
   private apiKeySet: boolean;
   private onConflict: ConfigInfo['onConflict'];
+  /** `[ui] record_moment` of the mock machine. */
+  private recordMoment = true;
   private downloaded: Set<string>;
   private downloads: Download[] = [];
   private rng: Rng;
@@ -882,6 +884,11 @@ export class MockEngine {
    * Remove a junk record. `key` is the key as that machine knows it (a node's entry: without the "<node>/" prefix,
    * `node` set; the prefixed form is accepted too). A node must grant "edit".
    */
+  /** Action UpdateSettings: `[ui] record_moment`. */
+  updateSettings(patch: { recordMoment?: boolean }) {
+    if (patch.recordMoment !== undefined) this.recordMoment = patch.recordMoment;
+  }
+
   forgetRecord(key: string, node?: string) {
     // A node the world does not model (the records fiction of the browser mock) is treated as granting edit.
     if (node && this.nodes.some((n) => n.id === node)) this.requireEdit(node);
@@ -1009,7 +1016,7 @@ export class MockEngine {
     const base =
       kind === 'llm'
         ? { fast: 'System 1', deep: 'System 2', max: 'System 3' }[cls!]
-        : { image: 'System CGI', tts: 'System TTS', stt: 'System STT', video: 'System Video' }[kind];
+        : { image: 'System CGI', tts: 'System TTS', stt: 'System STT', video: 'System Video', music: 'System Music' }[kind];
     if (!taken(base)) return base;
     for (let n = 2; ; n++) if (!taken(`${base} (${n})`)) return `${base} (${n})`;
   }
@@ -1737,6 +1744,7 @@ export class MockEngine {
       issues: [],
       apiKey: { source: 'file', set: this.apiKeySet },
       onConflict: this.onConflict,
+      recordMoment: this.recordMoment,
     };
     if (this.modelsDir) config.modelsDir = this.modelsDir;
     const downloads: DownloadInfo[] = this.downloads.map((d) => {

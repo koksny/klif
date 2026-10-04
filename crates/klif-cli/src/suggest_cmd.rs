@@ -18,7 +18,7 @@ its own license. KLIF downloads only from huggingface.co, and only when you ask 
 pub fn run(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let kind = match args.opt("--kind")? {
         None => None,
-        Some(k) => Some(SystemKind::parse(&k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video).")))?),
+        Some(k) => Some(SystemKind::parse(&k).ok_or_else(|| CliError::usage(format!("Unknown kind \"{k}\" (llm, image, tts, stt, video, music).")))?),
     };
     let class = match args.opt("--class")? {
         None => None,

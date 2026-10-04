@@ -16,6 +16,10 @@
 # - a preset made from a rung gets `model` from the first file with role "model" and `mmproj` from the one with role
 #   "mmproj"; args may name any other file as {file:<its name>} or {file:<its key>};
 # - args are a template: {ctx} and the -ctk / -ctv / -fitt values come from the suggestion when it is adopted;
+# - a model of the audiocpp adapter has no model flag: audio.cpp reads a server JSON that KLIF writes on adopt
+#   (`--config`, one file per rung). `audiocpp = { load_options = {..}, session_options = {..} }` carries the family
+#   options that JSON names for the model; keys are "<family>.<option>", values plain words (no paths, no secrets);
+#   the JSON's task follows the kind (tts -> "tts", music -> "gen");
 # - `measured` only when the local file's sha256 equals the hub file;
 # - no network / model-fetch flags in `args` (-hf --hf-repo -hff --hf-file -hft --hf-token -mu --model-url
 #   -dr --docker-repo, and their draft / vocoder / mmproj-url forms), no secret flags (--api-key), no env
@@ -28,7 +32,9 @@
 #   fixed_mib = cache cells that do not grow with the context (sliding windows), state_mib = recurrent state (F32).
 # The KV numbers come from each model's config.json and llama.cpp's cache layout (n_seq 1, ubatch 512); the comment
 # above each `kv` shows the arithmetic. Image rungs carry their own estimates: `min_vram_gib` (everything on the
-# GPU, 1024x1024) and `offload_vram_gib` + `offload_ram_gib` (with --offload-to-cpu).
+# GPU, 1024x1024) and `offload_vram_gib` + `offload_ram_gib` (with --offload-to-cpu). Speech, transcription and music
+# rungs carry `min_vram_gib` only (resident, with the compute buffers of a typical request); audio.cpp has no offload
+# flag KLIF could add, and the comment above each rung says where the number comes from.
 #
 # quality is about the effective bits of the rung (Q8_0 8, UD-Q6_K_XL 6.5, UD-Q5_K_XL 5.5, UD-Q4_K_XL 4.5,
 # UD-Q3_K_XL 3.5, UD-Q2_K_XL 2.5, UD-IQ2_XXS 2.2, UD-IQ1_* 1.7); Gemma's QAT 4-bit rung is 6.6, just above
@@ -51,6 +57,7 @@ image = ["krea-2-turbo", "qwen-image-2.1", "flux2-klein-9b", "flux2-klein-4b", "
 tts = ["voxcpm2", "qwen3-tts-1.7b-base", "chatterbox", "kokoro-82m"]
 stt = ["whisper-large-v3-turbo"]
 video = ["minimax-h3-fl2va"]   # its license grants no rights in the EU, UK, South Korea or the USA (see notes)
+music = ["ace-step-1.5-xl-turbo", "ace-step-1.5-turbo", "heartmula-3b", "stable-audio-3-small-music"]
 
 # Memory each tier may use (GiB). The VRAM pool is every counted GPU (integrated ones only without a discrete GPU);
 # gpu_margin_gib is left free on each counted GPU.
@@ -2077,3 +2084,112 @@ files = [
   { name = "vae/minimax_h3_video_vae_fp16.safetensors", role = "other", key = "vae", sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522", size = 5207808496 },
   { name = "vae/minimax_h3_audio_vae_fp32.safetensors", role = "other", key = "avae", sha256 = "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48", size = 605254808 },
 ]
+
+# -------------------------------------------------------------------------------------------------- music
+# Music and song generation on audio.cpp's audiocpp_server (task "gen"). Memory numbers are ESTIMATES: audio.cpp's own
+# reports are CUDA / Vulkan runs on NVIDIA cards (one Vulkan RTX 3090 report for the XL package); nothing here was run on
+# AMD. `audiocpp` carries the family's load / session options for the server JSON KLIF writes on adopt (keys
+# "<family>.<option>", plain-word values). A music request is synchronous and can take minutes, hence --busy-timeout-ms.
+
+[[model]]
+id = "ace-step-1.5-xl-turbo"
+kind = "music"
+name = "ACE-Step 1.5 XL Turbo"
+adapter = "audiocpp"
+license = "mit"
+family = "ace_step"
+params_total_b = 4
+hf_repo = "CaptainArni/audio.cpp-gguf"
+revision = "ac4d11eda6855ddedb16e42632e1a9376bfcfa81"
+port = 7080
+args = ["--config", "{models_dir}\\CaptainArni--audio.cpp-gguf\\ace-step-1.5-xl-turbo.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+audiocpp = { load_options = { "ace_step.dit_model_path" = "acestep-v15-xl-turbo" }, session_options = { "ace_step.mem_saver" = "true" } }
+notes = "ACE-Step 1.5 XL (4B DiT, turbo: 8 steps, no CFG; MIT) with its 1.7B planner, text encoder and VAE in one GGUF (DiT q8_0, the rest bf16: a fully quantised planner changes the song) on audio.cpp's audiocpp_server (Vulkan zip; HIP builds for RDNA3/4 are community zips). Vocal songs from lyrics or [Instrumental], 10 to 600 s, 48 kHz stereo. The GGUF comes from the community mirror named in audio.cpp's own model spec. A request answers when the song is done (no progress, no cancel) and can take minutes: --busy-timeout-ms 900000 lets a second request wait that long (the default is 5 minutes). The first request loads the weights. KLIF writes the server JSON (task gen, ace_step.dit_model_path, ace_step.mem_saver) when you adopt it."
+
+# Q8_0 DiT, rest BF16; weights 9.97 GiB, ESTIMATE (unmeasured on AMD): audio.cpp's XL Q8-DiT Vulkan run on an RTX 3090 (docs/reports/ace_step_xl_vulkan.md) peaked at 12.6 to 14.4 GiB per song with mem_saver, the top of that range is used
+[[model.quant]]
+id = "q8-dit"
+label = "Q8_0 DiT (planner, encoder, VAE bf16)"
+quality = 8
+min_vram_gib = 14.4
+files = [
+  { name = "ACE-Step1.5-GGUF/xl-turbo-q8dit/ace-step-1.5-xl-turbo-q8dit.gguf", role = "model", sha256 = "60ddf6d4ebec685c89fb451af8a7983aca65c58baa6aa6e5e25d168b4b7613f8", size = 10710565056 },
+]
+
+[[model]]
+id = "ace-step-1.5-turbo"
+kind = "music"
+name = "ACE-Step 1.5 Turbo"
+adapter = "audiocpp"
+license = "mit"
+family = "ace_step"
+params_total_b = 2
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7080
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\ace-step-1.5-turbo.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+audiocpp = { session_options = { "ace_step.mem_saver" = "true" } }
+notes = "ACE-Step 1.5 (2B DiT, turbo: 8 steps, no CFG; MIT) with its 1.7B planner, text encoder and VAE in one bf16 GGUF on audio.cpp's audiocpp_server (Vulkan zip; HIP builds for RDNA3/4 are community zips). Vocal songs from lyrics or [Instrumental], 10 to 600 s, 48 kHz stereo; the fastest and smallest song model of the pool. The fully q8_0 GGUF is not offered: audio.cpp grades its planner sampling as unreliable. A request answers when the song is done (no progress, no cancel) and can take minutes: --busy-timeout-ms 900000 lets a second request wait that long (the default is 5 minutes). The first request loads the weights. KLIF writes the server JSON (task gen, ace_step.mem_saver) when you adopt it."
+
+# BF16; weights 9.40 GiB, ESTIMATE (unmeasured on AMD): audio.cpp's ACE-Step run on CUDA (120 s, native weights) kept 10,332 MiB resident with mem_saver (19,540 MiB without) and peaked at 20,098 MiB; weights + 2.6 GiB assumes mem_saver and songs of about a minute
+[[model.quant]]
+id = "bf16"
+label = "BF16"
+quality = 16
+bits = 16
+min_vram_gib = 12
+files = [
+  { name = "ACE-Step1.5-GGUF/turbo/ace-step-1.5-turbo-bf16.gguf", role = "model", sha256 = "93974239a29a1a821b3cc1b1ca7e1c6229b1a900a0e44a1a9770bb2271d2be5f", size = 10090398272 },
+]
+
+[[model]]
+id = "heartmula-3b"
+kind = "music"
+name = "HeartMuLa 3B"
+adapter = "audiocpp"
+license = "apache-2.0"
+family = "heartmula"
+params_total_b = 3
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7080
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\heartmula-3b.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+audiocpp = { session_options = { "heartmula.mem_saver" = "true" } }
+notes = "HeartMuLa-oss-3B with its HeartCodec in one GGUF (q8_0; Apache-2.0) on audio.cpp's audiocpp_server. Vocal songs from lyrics plus comma-separated style tags (zh, en, ja, ko, es), 120 s by default, 48 kHz stereo; no reference-audio conditioning. Heavy: the CUDA run peaked at 25.0 GiB (native weights) for 120 s, so it is a manual pick for 24 GB cards or short songs and the suggestion does not offer it on smaller ones. A request answers when the song is done (no progress, no cancel): --busy-timeout-ms 900000 lets a second request wait that long. The first request loads the weights. KLIF writes the server JSON (task gen, heartmula.mem_saver) when you adopt it."
+
+# Q8_0; weights 7.13 GiB, ESTIMATE (unmeasured, q8_0 and AMD never run): audio.cpp's CUDA run (120 s, native weights) peaked at 25,600 MiB (21,762 MiB resident with mem_saver); 21.7 GiB subtracts the 3.3 GiB the f16 and q8_0 files differ by, shorter songs need less
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 21.7
+files = [
+  { name = "HeartMuLa-GGUF/heartmula-q8_0.gguf", role = "model", sha256 = "5c3e42171ec012ba7420e3841e2a36e68e36177863b5e76793393afecd10cfbd", size = 7659762592 },
+]
+
+[[model]]
+id = "stable-audio-3-small-music"
+kind = "music"
+name = "Stable Audio 3 Small Music"
+adapter = "audiocpp"
+license = "stability-ai-community"
+family = "stable_audio"
+params_total_b = 0.459
+hf_repo = "audio-cpp/audio.cpp-gguf"
+revision = "69492fe6b3f35ec13e49e5d2ed388bc9c24473d4"
+port = 7080
+args = ["--config", "{models_dir}\\audio-cpp--audio.cpp-gguf\\stable-audio-3-small-music.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "Stable Audio 3 Small Music (459M DiT, 8 steps) with its text encoder and autoencoder in one q8_0 GGUF on audio.cpp's audiocpp_server; instrumental music, loops and sound effects only (no vocals, no lyrics), up to 120 s at 44.1 kHz stereo, very fast (CUDA RTF 0.012), small enough for an 8 GB card or the CPU. LICENSE: Stability AI Community License, free for individuals and organizations under USD 1M annual revenue (commercial use above that needs a license from Stability AI, and the free tier asks for registration and a 'Powered by Stability AI' credit); the Gemma Terms of Use cover its text encoder. Read it before commercial use. The GGUF comes from audio.cpp's ungated mirror. A request answers when the clip is done (no progress, no cancel). KLIF writes the server JSON (task gen) when you adopt it."
+
+# Q8_0; weights 1.57 GiB, ESTIMATE (unmeasured on AMD): audio.cpp's CUDA run (120 s) peaked at 3,658 MiB (3.57 GiB)
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0"
+quality = 8
+bits = 8.5
+min_vram_gib = 3.6
+files = [
+  { name = "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf", role = "model", sha256 = "89bb22db5fa68ab8f1d90af0a9f88121977c945bdb99a57c96b1e88fa34bf1c8", size = 1683570752 },
+]
+

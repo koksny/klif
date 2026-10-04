@@ -92,7 +92,7 @@ usage: klif-cli [--json] <command> ...
                                            Events as they happen, one line each; use it instead of sleep-and-poll loops
 
   systems list                             Every System with its status, preset and flags
-  systems add --kind llm|image|tts|stt|video [--class fast|deep|max] [--label L] [--id ID] [--preset P] [--node N]
+  systems add --kind llm|image|tts|stt|video|music [--class fast|deep|max] [--label L] [--id ID] [--preset P] [--node N]
                                            Add a System (a tab)
   systems remove <system> --yes            Remove [systems.<id>] from klif.toml
   systems rename <system> <label>          Change a System's tab label
@@ -123,6 +123,7 @@ usage: klif-cli [--json] <command> ...
   models adopt <rec-id> [--system S] [--ctx N] [--kv TYPE]
                                            Make a preset from a downloaded model (ctx / KV: this machine's suggestion)
 
+  settings [record-moment on|off]          This machine's display settings ([ui] in klif.toml): show, or set one
   key status                               Whether an API key is set (never printed)
   key set                                  Store the API key (reads one line from stdin)
   key clear --yes                          Remove the stored API key
@@ -409,6 +410,13 @@ started unless `--keep-running`.
   whisper-server). Each run posts the file as multipart `file` to the server's transcription route
   (`/v1/audio/transcriptions` on audio.cpp; on other servers the `--inference-path` the command passes, else
   `/v1/audio/transcriptions`, then `/inference`). Records `sttRtf` = seconds of audio per wall second.
+- **Music:** an `audiocpp` server only (any other adapter answers `unsupported`). Each run asks for the same 30 s
+  instrumental (a fixed prompt and seed; lyrics `[Instrumental]` for ACE-Step, tags for HeartMuLa, a prompt only for
+  Stable Audio; steps and guidance stay at the model's defaults) with `POST /v1/tasks/run` and the model id
+  `/v1/models` lists. The request is synchronous, so a run lasts as long as the song takes to compose (use
+  `--runs 1` on a big model); the first run can include loading the weights, which the median over three runs hides.
+  The answer's `timing {wall_ms, audio_duration_ms, rtf}` gives the numbers; audio.cpp's `rtf` is wall / audio and
+  KLIF records the inverse as `musicRtf` = seconds of music per wall second.
 - `video` prints "not supported yet" (video records come from the jobs an sd.cpp server logs). A remote System
   must be benched on its own machine.
 - It refuses while another local System runs on the same GPU (an unknown GPU counts as the same), because the
@@ -419,7 +427,7 @@ started unless `--keep-running`.
 The JSON result is `{ "file", "summary", "record" }`; `record` has `at`, `presetId`, `presetHash`, `system`, `kind`,
 `adapter`, `model`, `hardware` (`gpu`, `vramGiB`, `driver`), `backendBuild`, `promptTokens`, `genTokens`, `loadS`,
 `peakVramGiB`, `spillMiB`, `layers` and `runs[]` (`ttftS`, `prefillTps`, `decodeTps`, `secondsPerImage`,
-`promptTokens`, `genTokens`; TTS / STT: `audioS`, `wallS`, `ttsRtf` / `sttRtf`).
+`promptTokens`, `genTokens`; TTS / STT / music: `audioS`, `wallS`, `ttsRtf` / `sttRtf` / `musicRtf`).
 
 The runs also count for the [records](#records), marked `bench`.
 
@@ -429,9 +437,9 @@ The runs also count for the [records](#records), marked `bench`.
 
 KLIF keeps, per exact model file (its SHA-256) and per backend (HIP, Vulkan, CUDA, CPU, Metal, from the server's
 log, else the preset's `backend`), the best values ever reached on each machine: `decodeTps` and `prefillTps`
-(highest), `ttftS` (lowest), `imageS` (seconds per image, lowest), `ttsRtf` and `sttRtf` (audio seconds per wall
-second, highest; from `bench` only, since TTS / STT servers log no per-request timing) and `videoS` (seconds per
-video job, lowest, with its size, frames and steps, from an sd.cpp server's `generate_video` log lines).
+(highest), `ttftS` (lowest), `imageS` (seconds per image, lowest), `ttsRtf`, `sttRtf` and `musicRtf` (audio seconds
+per wall second, highest; from `bench` only, since TTS / STT / music servers log no per-request timing) and `videoS`
+(seconds per video job, lowest, with its size, frames and steps, from an sd.cpp server's `generate_video` log lines).
 They are not a certified benchmark: values come from everyday use and from `bench`. A value counts when it is a
 real measurement: decode with at least 128 generated tokens, prefill with at least 1024 prompt tokens that did not
 come from the cache, time to first token from any request (its prompt and cached tokens are kept), an image when its
@@ -441,7 +449,7 @@ servers only get records from `bench`, and external servers none.
 Next to each value: when, `live` or `bench`, the context the server was launched with, prompt / cached / generated
 tokens or image size and steps, KV type, GPUs, backend build, preset, KLIF version and the machine's FP32 TFLOPS.
 
-- `--metric` takes `decodeTps`, `prefillTps`, `ttftS`, `imageS`, `ttsRtf`, `sttRtf`, `videoS` (or `decode`,
+- `--metric` takes `decodeTps`, `prefillTps`, `ttftS`, `imageS`, `ttsRtf`, `sttRtf`, `videoS`, `musicRtf` (or `decode`,
   `prefill`, `ttft`, `image`...) and sorts by it, best first. `--node N` keeps one node's entries; `--node local`
   this machine's. `--backend` compares without case.
 - Text output: one ranking per metric. `--json`: `{ "records": [RecordEntry...] }`, each with `key`
@@ -489,7 +497,7 @@ done failed cancelled`, `error`), and `note` lines for remarks (`klif-cli schema
 ### Suggestions
 
 `suggest [--kind K] [--class C]` prints the model the embedded pool suggests for each slot of this machine: System 1
-(fast), 2 (deep), 3 (max) and image (tts, stt and video once the pool has models for them). It reads this machine
+(fast), 2 (deep), 3 (max), image, tts, stt, video and music (a slot appears once the pool has models for it). It reads this machine
 directly (GPUs, RAM; no engine is started) and shows, per slot, the model, quant, context, KV type, the estimated VRAM
 and RAM against the tier's budget, where the weights go (`experts in RAM`, `layers in RAM`, `weights in RAM
 (--offload-to-cpu)`, `CPU only (RAM)`) and the recommendation id to download and adopt. Every number is an estimate;
@@ -541,6 +549,12 @@ optional fields are not required), has `schemaVersion` as a required property, a
 `models-download`, `models-adopt`, `download-event`, `key-status`, `key-update`, `node-status`, `node-token`,
 `node-token-created`, `nodes-list`, `serve`, `help`, `schema-list`, `version` and `error` (the failure document, with
 the error codes as an enum). `klif-cli schema` prints the list with the commands that print each one.
+
+### Settings
+
+**`settings [record-moment on|off]`** shows or sets this machine's display settings in `[ui]`: `record-moment` is the
+"new record" moment over the skin (on by default; records are kept either way). Local only, never over the network.
+JSON: `{schemaVersion, recordMoment}`.
 
 ## Recipes for agents
 

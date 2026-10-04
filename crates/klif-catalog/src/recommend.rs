@@ -11,12 +11,15 @@
 //! `hf_repo` + `revision` (Gemma's QAT repo). Recommendation args may name a listed file as `{file:<name>}` (the pool
 //! may also say `{file:<key>}`, resolved at load); a preset made from the recommendation gets that file's install path
 //! there (`{model}` / `{mmproj}` come from the files with role model / mmproj). `save_as` installs a file under another
-//! path below its repo's folder (a replacement first shard that must sit where the original would).
+//! path below its repo's folder (a replacement first shard that must sit where the original would). A model of the
+//! `audiocpp` adapter may carry `audiocpp = { load_options, session_options }`: the family options its server JSON
+//! names (keys `<family>.<option>`, plain-word values; see [`AudioCppOptions`]).
 
 use klif_common::config::Config;
-use klif_common::secret::is_secret_flag;
+use klif_common::secret::{is_secret_env, is_secret_flag};
 use klif_common::vm::{AdapterId, LlmClass, Measured, RecFileRole, SuggestSlot, SystemKind};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -123,6 +126,9 @@ pub struct Recommendation {
     pub model_id: String,
     #[serde(default)]
     pub family: String,
+    /// audio.cpp: the family's own `load_options` / `session_options` the server JSON names for the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audiocpp: Option<AudioCppOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measured: Option<RecMeasured>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,6 +193,22 @@ pub(crate) fn expand_file_refs(arg: &str, path: impl Fn(&str) -> String) -> Stri
     }
     out.push_str(rest);
     out
+}
+
+/// `audiocpp = { load_options = { ... }, session_options = { ... } }` on a pool model of the `audiocpp` adapter: what
+/// the server JSON KLIF writes on adopt says about the model besides its id, family, path and task (the task follows
+/// the kind: tts -> "tts", music -> "gen"). Keys are `<family>.<option>` (the spelling of audio.cpp's
+/// `--load-option` / `--session-option`, e.g. `ace_step.mem_saver`); values are plain words. Both go verbatim into
+/// the model's `load_options` / `session_options`. No paths (KLIF writes the model path itself), no secrets.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioCppOptions {
+    /// Read when the weights load (`ace_step.dit_model_path`: which DiT variant a self-contained GGUF holds).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub load_options: BTreeMap<String, String>,
+    /// Read per session (`ace_step.mem_saver`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub session_options: BTreeMap<String, String>,
 }
 
 /// `measured = { ... }` in the TOML (snake_case); shown as `vm::Measured`.
@@ -319,6 +341,9 @@ pub struct PoolModel {
     /// The preset's health check ("/health", "tcp"), when the adapter's default does not fit the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
+    /// audio.cpp only: the family's load / session options for the server JSON (see [`AudioCppOptions`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audiocpp: Option<AudioCppOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     /// LLM: the KV cache cost (required for suggestions).
@@ -353,6 +378,7 @@ pub struct Tiers {
     pub tts: Vec<String>,
     pub stt: Vec<String>,
     pub video: Vec<String>,
+    pub music: Vec<String>,
 }
 
 impl Tiers {
@@ -365,6 +391,7 @@ impl Tiers {
             SuggestSlot::Tts => &self.tts,
             SuggestSlot::Stt => &self.stt,
             SuggestSlot::Video => &self.video,
+            SuggestSlot::Music => &self.music,
         }
     }
 
@@ -377,6 +404,7 @@ impl Tiers {
             SuggestSlot::Tts => &mut self.tts,
             SuggestSlot::Stt => &mut self.stt,
             SuggestSlot::Video => &mut self.video,
+            SuggestSlot::Music => &mut self.music,
         }
     }
 
@@ -390,8 +418,16 @@ impl Tiers {
 }
 
 /// Every slot in suggestion order.
-pub const SLOTS: [SuggestSlot; 7] =
-    [SuggestSlot::Fast, SuggestSlot::Deep, SuggestSlot::Max, SuggestSlot::Image, SuggestSlot::Tts, SuggestSlot::Stt, SuggestSlot::Video];
+pub const SLOTS: [SuggestSlot; 8] = [
+    SuggestSlot::Fast,
+    SuggestSlot::Deep,
+    SuggestSlot::Max,
+    SuggestSlot::Image,
+    SuggestSlot::Tts,
+    SuggestSlot::Stt,
+    SuggestSlot::Video,
+    SuggestSlot::Music,
+];
 
 /// `[budget]`: how much of the machine each tier may use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -671,6 +707,7 @@ pub fn slot_kind(slot: SuggestSlot) -> SystemKind {
         SuggestSlot::Tts => SystemKind::Tts,
         SuggestSlot::Stt => SystemKind::Stt,
         SuggestSlot::Video => SystemKind::Video,
+        SuggestSlot::Music => SystemKind::Music,
     }
 }
 
@@ -694,6 +731,7 @@ pub fn slot_name(slot: SuggestSlot) -> &'static str {
         SuggestSlot::Tts => "tts",
         SuggestSlot::Stt => "stt",
         SuggestSlot::Video => "video",
+        SuggestSlot::Music => "music",
     }
 }
 
@@ -736,6 +774,36 @@ fn check_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The load rules for audio.cpp server options: `<family>.<option>` keys, plain-word values (no path separators,
+/// drive letters or `..`: the model path is KLIF's to write), nothing that names or looks like a secret.
+fn check_audiocpp(family: &str, o: &AudioCppOptions) -> Result<(), String> {
+    if family.is_empty() {
+        return Err("`audiocpp` options need the model's `family` (their keys start with it).".into());
+    }
+    for (section, map) in [("load_options", &o.load_options), ("session_options", &o.session_options)] {
+        for (k, v) in map {
+            let option = k.strip_prefix(family).and_then(|r| r.strip_prefix('.')).unwrap_or("");
+            if option.is_empty() || option.len() > 48 || !option.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+                return Err(format!("audiocpp {section} key \"{k}\" is not \"{family}.<option>\" (option: a-z, 0-9, '_')."));
+            }
+            if is_secret_env(k) {
+                return Err(format!("audiocpp {section} key \"{k}\" names a secret."));
+            }
+            let plain = !v.is_empty()
+                && v.len() <= 64
+                && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'+' | b'-'))
+                && !v.contains("..")
+                && !v.to_ascii_lowercase().starts_with("hf_");
+            if !plain {
+                return Err(format!(
+                    "audiocpp {section} value \"{v}\" of {k} must be 1-64 plain characters (letters, digits, '_', '.', '+', '-'): no paths, no secrets."
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The load rules for a pool model (its rungs are checked one by one). Err = one sentence.
 fn check_model(m: &PoolModel) -> Result<(), String> {
     if !valid_model_id(&m.id) {
@@ -748,6 +816,12 @@ fn check_model(m: &PoolModel) -> Result<(), String> {
         return Err("revision must be a 40-character commit sha.".into());
     }
     check_args(&m.args)?;
+    if let Some(o) = &m.audiocpp {
+        if m.adapter != AdapterId::AudioCpp {
+            return Err("`audiocpp` options belong to models of the audiocpp adapter.".into());
+        }
+        check_audiocpp(&m.family, o)?;
+    }
     if m.kind == SystemKind::Llm {
         let Some(kv) = &m.kv else { return Err("an llm model needs `kv` (the KV cache estimate).".into()) };
         let nums = [kv.f16_mib_per_1k, kv.fixed_mib, kv.state_mib, m.overhead_mib];
@@ -851,6 +925,7 @@ fn expand(m: &PoolModel, q: &PoolQuant, class: Option<LlmClass>, floors: &Floors
         health: m.health.clone(),
         model_id: m.id.clone(),
         family: m.family.clone(),
+        audiocpp: m.audiocpp.clone(),
         measured: q.measured.clone(),
         notes,
     }
@@ -906,6 +981,9 @@ pub fn check(rec: &Recommendation) -> Result<(), String> {
     }
     if rec.class.is_some() && rec.kind != SystemKind::Llm {
         return Err("class only applies to llm recommendations.".into());
+    }
+    if let Some(o) = &rec.audiocpp {
+        check_audiocpp(&rec.family, o)?;
     }
     check_args(&rec.args)?;
     for a in &rec.args {

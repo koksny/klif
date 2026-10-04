@@ -23,14 +23,20 @@ reached on it.
   `klif-cli models adopt <rec> --ctx N --kv TYPE`, and the Tune drawer's "Models" section, suggestion first.
 - **Records.** The best decode and prefill speed, time to first token, time per image or video and speech or
   transcription speed each model file reached on each backend, from everyday use and from `klif-cli bench`, with
-  the conditions it was reached under (context, prompt length, image size, KV type, GPUs, backend build). A model is
+  the conditions it was reached under (context, prompt length, image size, KV type, GPUs, backend build). Decode is
+  the better of a request's average and its best full `tg_3s` window, the speed the live readout showed. A model is
   its file's SHA-256; HIP, Vulkan, CUDA and CPU keep separate records. Kept in `records.json` and
   `records-history.jsonl` in the data folder; a node's records show with its name. `klif-cli records`,
   `records history <key>`, `records forget <key> --yes`.
 - **Records screen** in the main window (the Records button, or R): the machine and its TFLOPS on top, metric tabs,
   filters by machine and backend, search, cards or a ranked list, details with how each record climbed. A card
   exports as a 1200x675 PNG in the skin's colours, to the clipboard or to Pictures\KLIF.
-- **"New record" moment** in every skin, in the full window and on the 960x640 panel.
+- **"New record" moment** in every skin, in the full window and on the 960x640 panel: every record one request
+  broke, together, counting up from the old best; gone 5 s later. `[ui] record_moment = false` (a switch in Tune and
+  on the Records screen, or `klif-cli settings record-moment off`) turns it off; records are kept either way.
+- **Music.** A `music` System kind (System Music) on audio.cpp: ACE-Step 1.5 (turbo, XL turbo), HeartMuLa 3B and
+  Stable Audio 3 Small in the pool, the server config written on adopt, and `klif-cli bench` measuring seconds of
+  music per second (the `musicRtf` record).
 - **Speech, transcription and video runtimes.** An `audiocpp` adapter for audio.cpp's `audiocpp_server` (VoxCPM2,
   Qwen3-TTS, Chatterbox, Kokoro; adopting one writes its server config next to the model), whisper.cpp's
   `whisper-server` through `generic` with a `/health` check, and video on sd.cpp's `sd-server` (MiniMax H3).

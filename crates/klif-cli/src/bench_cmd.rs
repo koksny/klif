@@ -1,6 +1,6 @@
 //! `bench <system> [--runs N] [--prompt N] [--gen N] [--audio FILE.wav] [--keep-running] [--allow-shared] [--yes]`,
 //! `bench list [--preset ID]`. The measuring is `klif_core::bench`; results go to `<data_dir>\bench\<preset-id>.json`.
-//! `--audio` (real speech) is required for stt Systems.
+//! `--audio` (real speech) is required for stt Systems. A music System is benched on an audio.cpp server only.
 
 use crate::args::Args;
 use crate::conn;
@@ -9,7 +9,7 @@ use crate::outputs::{BenchDoc, BenchListDoc, BenchPresetFile};
 use crate::resolve::resolve;
 use klif_core::bench::{self, BenchOpts, BenchRecord};
 use klif_core::klif_common::config::{validate_preset_id, LoadedConfig};
-use klif_core::klif_common::vm::SystemKind;
+use klif_core::klif_common::vm::{AdapterId, SystemKind};
 
 pub fn run(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     // `bench list` vs `bench <system>`: options first, then the positional.
@@ -63,6 +63,16 @@ pub fn run(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     if kind != Some(SystemKind::Stt) && opts.audio.is_some() {
         return Err(CliError::usage("--audio only applies to the bench of a Transcription (stt) System."));
     }
+    // Music is composed through audio.cpp's POST /v1/tasks/run; no other adapter has a route KLIF knows.
+    if let Some(s) = vm.systems.iter().find(|s| s.id == id).filter(|s| s.kind == SystemKind::Music) {
+        let adapter = bench::adapter_of(s);
+        if adapter != AdapterId::AudioCpp {
+            return Err(CliError::new(
+                "unsupported",
+                format!("Music bench needs an audio.cpp server (adapter audiocpp); {id} uses the {adapter} adapter, which is not supported yet."),
+            ));
+        }
+    }
     let needs_launch = vm.systems.iter().find(|s| s.id == id).is_some_and(|s| !s.external && !crate::cmds::holds(s));
     if needs_launch && !opts.yes {
         return Err(CliError::needs_yes(format!(
@@ -101,7 +111,7 @@ fn human_record(rec: &BenchRecord) -> String {
         rec.backend_build.as_deref().map(|b| format!(" · {b}")).unwrap_or_default()
     );
     let image = rec.runs.iter().any(|r| r.seconds_per_image.is_some());
-    if rec.runs.iter().any(|r| r.tts_rtf.is_some() || r.stt_rtf.is_some()) {
+    if rec.runs.iter().any(|r| r.tts_rtf.is_some() || r.stt_rtf.is_some() || r.music_rtf.is_some()) {
         return human_audio(rec);
     }
     let mut rows = if image {
@@ -140,7 +150,7 @@ fn human_record(rec: &BenchRecord) -> String {
     s
 }
 
-/// A TTS / STT record: audio seconds, wall seconds and audio seconds per wall second per run.
+/// A TTS / STT / music record: audio seconds, wall seconds and audio seconds per wall second per run.
 fn human_audio(rec: &BenchRecord) -> String {
     let mut s = format!(
         "{} · preset {} · {} · {}\n{} · {}{}\n\n",
@@ -154,13 +164,13 @@ fn human_audio(rec: &BenchRecord) -> String {
     );
     let mut rows = vec![["RUN", "AUDIO S", "WALL S", "AUDIO S / WALL S"].map(String::from).to_vec()];
     for (i, r) in rec.runs.iter().enumerate() {
-        rows.push(vec![(i + 1).to_string(), num(r.audio_s, 2), num(r.wall_s, 2), num(r.tts_rtf.or(r.stt_rtf), 2)]);
+        rows.push(vec![(i + 1).to_string(), num(r.audio_s, 2), num(r.wall_s, 2), num(r.tts_rtf.or(r.stt_rtf).or(r.music_rtf), 2)]);
     }
     s.push_str(&table(&rows));
     let sum = bench::summarize(rec, false);
     s.push_str(&format!(
         "\nmedian: {}x real time · load {} s · peak VRAM {} GiB\n",
-        num(sum.tts_rtf.or(sum.stt_rtf), 2),
+        num(sum.tts_rtf.or(sum.stt_rtf).or(sum.music_rtf), 2),
         num(rec.load_s, 1),
         num(rec.peak_vram_gib, 2)
     ));
@@ -195,7 +205,7 @@ fn list(loaded: &LoadedConfig, out: Out, preset: Option<&str>) -> CliResult {
                     num(s.prefill_tps, 1),
                     num(s.decode_tps, 1),
                     num(s.seconds_per_image, 2),
-                    num(s.tts_rtf.or(s.stt_rtf), 2),
+                    num(s.tts_rtf.or(s.stt_rtf).or(s.music_rtf), 2),
                     num(r.peak_vram_gib, 2),
                     r.hardware.gpu.clone(),
                     r.preset_hash.chars().take(10).collect(),

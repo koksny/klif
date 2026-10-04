@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Result};
+use klif_catalog::recommend::Recommendation;
 use klif_catalog::store;
 use klif_common::config::{default_system_label, validate_preset_id, validate_system_id, Config, OnConflict, PresetCfg, SystemCfg};
 use klif_common::now_s;
@@ -111,7 +112,7 @@ pub(crate) fn clear_secrets(spec: &PresetCfg) -> Vec<String> {
 fn with_article(kind: SystemKind) -> String {
     let article = match kind {
         SystemKind::Llm | SystemKind::Image => "an",
-        SystemKind::Tts | SystemKind::Stt | SystemKind::Video => "a",
+        SystemKind::Tts | SystemKind::Stt | SystemKind::Video | SystemKind::Music => "a",
     };
     format!("{article} {}", kind.label())
 }
@@ -193,6 +194,10 @@ impl Inner {
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
             Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
             Action::ForgetRecord { key, node: _ } => self.forget_record(&key),
+            Action::UpdateSettings { record_moment } => match record_moment {
+                Some(on) => self.write(|path| store::set_record_moment(path, on)),
+                None => Ok(()),
+            },
         }
     }
 
@@ -953,7 +958,7 @@ impl Inner {
             check_kind(&pid, &spec, sys.kind, &label)?;
         }
         if let Some(rec) = audiocpp {
-            write_audiocpp_config(&cfg, &spec, &rec.model_id, &rec.family)?;
+            write_audiocpp_config(&cfg, &spec, rec)?;
         }
         self.write(|path| {
             store::upsert_preset(path, &pid, &spec, None, None)?;
@@ -974,9 +979,18 @@ fn per_rung_config(spec: &mut PresetCfg, rec_id: &str) {
     *arg = format!("{}{}.server.json", &arg[..cut], rec_id.replace('.', "-"));
 }
 
+/// audio.cpp's task of a server model: speech is "tts", music "gen" (its aliases are music / sfx / edit).
+fn audiocpp_task(kind: SystemKind) -> &'static str {
+    match kind {
+        SystemKind::Music => "gen",
+        _ => "tts",
+    }
+}
+
 /// audio.cpp takes its models only from the JSON file `--config` names: write that file for an adopted
-/// recommendation (one model, lazily loaded), unless it exists already (the user's edits win).
-fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, model_id: &str, family: &str) -> Result<()> {
+/// recommendation (one model, lazily loaded, its task from the kind, the family options the pool entry names),
+/// unless it exists already (the user's edits win).
+fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, rec: &Recommendation) -> Result<()> {
     let Some(i) = spec.args.iter().position(|a| a == "--config") else { return Ok(()) };
     let Some(raw) = spec.args.get(i + 1) else { return Ok(()) };
     let (Some(models_dir), Some(model)) = (cfg.models_dir(), spec.model.as_deref()) else { return Ok(()) };
@@ -984,11 +998,22 @@ fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, model_id: &str, family:
     if path.exists() {
         return Ok(());
     }
-    let doc = serde_json::json!({
-        "lazy_load": true,
-        "max_loaded_models": 1,
-        "models": [{ "id": model_id, "family": family, "path": model, "task": "tts", "mode": "offline" }],
+    let mut entry = serde_json::json!({
+        "id": rec.model_id,
+        "family": rec.family,
+        "path": model,
+        "task": audiocpp_task(rec.kind),
+        "mode": "offline",
     });
+    if let Some(o) = &rec.audiocpp {
+        if !o.load_options.is_empty() {
+            entry["load_options"] = serde_json::json!(o.load_options);
+        }
+        if !o.session_options.is_empty() {
+            entry["session_options"] = serde_json::json!(o.session_options);
+        }
+    }
+    let doc = serde_json::json!({ "lazy_load": true, "max_loaded_models": 1, "models": [entry] });
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| anyhow!("Could not create {}: {e}", dir.display()))?;
     }

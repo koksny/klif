@@ -109,7 +109,7 @@ impl PartialEq<&str> for SystemId {
     }
 }
 
-/// What a System serves. TS: 'llm'|'image'|'tts'|'stt'|'video'.
+/// What a System serves. TS: 'llm'|'image'|'tts'|'stt'|'video'|'music'.
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
@@ -122,10 +122,13 @@ pub enum SystemKind {
     /// Speech to text (audio in).
     Stt,
     Video,
+    /// Music and song generation.
+    Music,
 }
 
 impl SystemKind {
-    pub const ALL: [SystemKind; 5] = [SystemKind::Llm, SystemKind::Image, SystemKind::Tts, SystemKind::Stt, SystemKind::Video];
+    pub const ALL: [SystemKind; 6] =
+        [SystemKind::Llm, SystemKind::Image, SystemKind::Tts, SystemKind::Stt, SystemKind::Video, SystemKind::Music];
 
     /// The serde / klif.toml value.
     pub fn as_str(self) -> &'static str {
@@ -135,10 +138,11 @@ impl SystemKind {
             SystemKind::Tts => "tts",
             SystemKind::Stt => "stt",
             SystemKind::Video => "video",
+            SystemKind::Music => "music",
         }
     }
 
-    /// Display name: "LLM", "Image", "Speech (TTS)", "Transcription (STT)", "Video".
+    /// Display name: "LLM", "Image", "Speech (TTS)", "Transcription (STT)", "Video", "Music".
     pub fn label(self) -> &'static str {
         match self {
             SystemKind::Llm => "LLM",
@@ -146,6 +150,7 @@ impl SystemKind {
             SystemKind::Tts => "Speech (TTS)",
             SystemKind::Stt => "Transcription (STT)",
             SystemKind::Video => "Video",
+            SystemKind::Music => "Music",
         }
     }
 
@@ -255,7 +260,7 @@ pub enum AdapterId {
     Vllm,
     #[serde(rename = "openai")]
     OpenAi,
-    /// audio.cpp `audiocpp_server` (text to speech; one `--config` JSON names its models).
+    /// audio.cpp `audiocpp_server` (text to speech and music; one `--config` JSON names its models).
     #[serde(rename = "audiocpp")]
     AudioCpp,
     /// Any other server (TTS/STT/video servers, ComfyUI...): kind required, port or health required.
@@ -306,7 +311,7 @@ impl AdapterId {
     }
 
     /// Kind when the preset does not say: image for sd.cpp (`kind = "video"` for sd.cpp video), llm for
-    /// llama.cpp/vllm/openai, tts for audiocpp, none for generic (required there).
+    /// llama.cpp/vllm/openai, tts for audiocpp (a music preset says `kind = "music"`), none for generic (required there).
     pub fn default_kind(self) -> Option<SystemKind> {
         match self {
             AdapterId::SdCpp => Some(SystemKind::Image),
@@ -569,6 +574,9 @@ pub struct BenchSummary {
     /// STT: audio seconds per wall second.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stt_rtf: Option<f64>,
+    /// Music: seconds of music per wall second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub music_rtf: Option<f64>,
     #[serde(rename = "peakVramGiB", skip_serializing_if = "Option::is_none")]
     pub peak_vram_gib: Option<f64>,
     #[serde(rename = "spillMiB", skip_serializing_if = "Option::is_none")]
@@ -838,6 +846,7 @@ pub enum SuggestSlot {
     Tts,
     Stt,
     Video,
+    Music,
 }
 
 /// The suggested model for one slot on this machine (an estimate from the embedded pool; `rec` None = nothing fits).
@@ -899,12 +908,17 @@ pub enum RecordMetric {
     SttRtf,
     /// Seconds per finished video job.
     VideoS,
+    /// Seconds of music per wall second (higher is better).
+    MusicRtf,
 }
 
 impl RecordMetric {
     /// Higher is better (`*Tps`, `*Rtf`); otherwise lower is better.
     pub fn higher_is_better(self) -> bool {
-        matches!(self, RecordMetric::DecodeTps | RecordMetric::PrefillTps | RecordMetric::TtsRtf | RecordMetric::SttRtf)
+        matches!(
+            self,
+            RecordMetric::DecodeTps | RecordMetric::PrefillTps | RecordMetric::TtsRtf | RecordMetric::SttRtf | RecordMetric::MusicRtf
+        )
     }
 }
 
@@ -1050,6 +1064,13 @@ pub struct ConfigInfo {
     /// `[launch] on_conflict`: what Launch does when other Systems must stop first.
     #[serde(default)]
     pub on_conflict: OnConflict,
+    /// `[ui] record_moment`: show the "new record" moment (default on).
+    #[serde(default = "yes")]
+    pub record_moment: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 // ----------------------------------------------------------------------------------------- systems view
@@ -1856,6 +1877,11 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },
+    /// This machine's display settings in `[ui]` (absent fields stay as they are). Never over the network.
+    UpdateSettings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        record_moment: Option<bool>,
+    },
 }
 
 impl Action {
@@ -1879,6 +1905,7 @@ impl Action {
             Action::CancelDownload { .. } => "cancelDownload",
             Action::AdoptRecommendation { .. } => "adoptRecommendation",
             Action::ForgetRecord { .. } => "forgetRecord",
+            Action::UpdateSettings { .. } => "updateSettings",
         }
     }
 
@@ -1901,7 +1928,8 @@ impl Action {
             | Action::AddSystem { .. }
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
-            | Action::ForgetRecord { .. } => None,
+            | Action::ForgetRecord { .. }
+            | Action::UpdateSettings { .. } => None,
         }
     }
 
@@ -1930,7 +1958,8 @@ impl Action {
             | Action::AddSystem { .. }
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
-            | Action::ForgetRecord { .. } => {}
+            | Action::ForgetRecord { .. }
+            | Action::UpdateSettings { .. } => {}
         }
         a
     }
@@ -1987,7 +2016,7 @@ impl Action {
     /// The right a network peer needs for this action (SPEC 16.11).
     pub fn required_right(&self) -> Right {
         match self {
-            Action::Select { .. } => Right::LocalOnly,
+            Action::Select { .. } | Action::UpdateSettings { .. } => Right::LocalOnly,
             Action::Launch { .. }
             | Action::Stop { .. }
             | Action::StopAll
@@ -2095,6 +2124,7 @@ impl fmt::Debug for Action {
                 .field("kv", kv)
                 .finish(),
             Action::ForgetRecord { key, node } => f.debug_struct("ForgetRecord").field("key", key).field("node", node).finish(),
+            Action::UpdateSettings { record_moment } => f.debug_struct("UpdateSettings").field("record_moment", record_moment).finish(),
         }
     }
 }

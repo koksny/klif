@@ -45,6 +45,7 @@ static REGISTRY: &[Entry] = &[
     entry!("restart", "A restarted System", RestartDoc),
     entry!("stop", "The Systems that were stopped", StopDoc),
     entry!("dismiss", "A System after dismissing its fault", DismissDoc),
+    entry!("settings", "This machine's display settings", SettingsDoc),
     entry!("logs", "A System's console lines", LogsDoc),
     entry!("log-event", "One line of logs --follow --json", LogEvent),
     entry!("watch-event", "One line of watch --json", WatchEvent),

@@ -21,6 +21,7 @@ export const METRICS: MetricMeta[] = [
   { id: 'videoS', label: 'Video', long: 'Time per video', unit: 's / video', higher: false, kind: 'video' },
   { id: 'ttsRtf', label: 'Speech', long: 'Speech synthesis', unit: 'x real time', higher: true, kind: 'tts' },
   { id: 'sttRtf', label: 'Transcription', long: 'Transcription', unit: 'x real time', higher: true, kind: 'stt' },
+  { id: 'musicRtf', label: 'Music', long: 'Music generation', unit: 'x real time', higher: true, kind: 'music' },
 ];
 
 export const metricMeta = (m: RecordMetric): MetricMeta => METRICS.find((x) => x.id === m) ?? METRICS[0];

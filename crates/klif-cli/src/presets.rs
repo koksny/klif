@@ -342,7 +342,7 @@ fn apply(spec: &mut PresetCfg, kv: &str) -> CliResult {
         "kind" => {
             spec.kind = match v.trim() {
                 "" => None,
-                k => Some(SystemKind::parse(k).ok_or_else(|| CliError::usage(format!("kind must be llm, image, tts, stt or video, not \"{k}\".")))?),
+                k => Some(SystemKind::parse(k).ok_or_else(|| CliError::usage(format!("kind must be llm, image, tts, stt, video or music, not \"{k}\".")))?),
             }
         }
         "adapter" => {

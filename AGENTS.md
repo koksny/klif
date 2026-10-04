@@ -104,7 +104,7 @@ sections (`[launcher]`, `[krea]`) are ignored. Full template: `config/klif.examp
 ```toml
 [net]        llm_host, image_host            # default "127.0.0.1"; image presets use image_host, the others llm_host
 [gpu]        inference, ui, inference_name   # PCI "VEN:DEV"; "VEN:DEV#1" = second identical card; inference is the default GPU of presets
-[ui]         frameless, panel_monitor
+[ui]         frameless, panel_monitor, record_moment (the "new record" moment; default true)
 [telemetry]  warn_below_gib, verbose_llama_logs, ram_type
 [paths]      models_dir, logs_dir            # models_dir has no default: downloads are refused until it is set
 [security]   api_key = "file" | "env:NAME" | "none"
@@ -209,7 +209,9 @@ new preset does not declare, so run `plan` afterwards and set the ones you still
 3. `klif-cli bench <system> --yes` launches the System if needed, sends fixed requests (default 3 runs, 512 prompt
    tokens, 128 generated; image servers: seconds per image), records load time, time to first token, prefill and
    decode speed and peak VRAM, and stops what it started. `klif-cli bench list --preset <id>` shows the history.
-   tts, stt and video are not benched yet; remote Systems must be benched on their own machine.
+   tts and stt are benched too (audio seconds per wall second; stt needs `--audio <file.wav>`), music on an audio.cpp
+   server only (a fixed 30 s instrumental, `musicRtf`; a run lasts as long as the song takes, try `--runs 1`); video
+   is not benched yet; remote Systems must be benched on their own machine.
 4. Change **one** thing (`presets set <id> ctx=32768`, `args+=--no-mmap`, `presets param <system> <name>
    <value>`), run `plan` again, restart the System, bench again, compare. Keep the change if it is better and the
    output is still right; revert it if not. A record is marked stale when the command's hash changed since.

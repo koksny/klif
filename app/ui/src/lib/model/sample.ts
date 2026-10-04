@@ -186,6 +186,7 @@ export const SAMPLE_VM: ViewModel = {
     apiKey: { source: 'file', set: true },
     modelsDir: 'D:\\models',
     onConflict: 'ask',
+    recordMoment: true,
   },
   nodes: [],
   console: [

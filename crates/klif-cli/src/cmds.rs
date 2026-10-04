@@ -522,8 +522,8 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             Ok(())
         }
         "add" => {
-            let kind = args.opt("--kind")?.ok_or_else(|| CliError::usage("systems add needs --kind llm|image|tts|stt|video."))?;
-            let kind = SystemKind::parse(&kind).ok_or_else(|| CliError::usage(format!("Unknown kind \"{kind}\" (llm, image, tts, stt, video).")))?;
+            let kind = args.opt("--kind")?.ok_or_else(|| CliError::usage("systems add needs --kind llm|image|tts|stt|video|music."))?;
+            let kind = SystemKind::parse(&kind).ok_or_else(|| CliError::usage(format!("Unknown kind \"{kind}\" (llm, image, tts, stt, video, music).")))?;
             let class = match args.opt("--class")? {
                 None => None,
                 Some(c) => Some(LlmClass::parse(&c).ok_or_else(|| CliError::usage(format!("Unknown class \"{c}\" (fast, deep, max).")))?),

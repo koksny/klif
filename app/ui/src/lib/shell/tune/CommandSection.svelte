@@ -26,7 +26,7 @@
   const t = getTune();
 
   const ADAPTERS: AdapterId[] = ['llama.cpp', 'sd.cpp', 'vllm', 'openai', 'audiocpp', 'generic'];
-  const KINDS: SystemKind[] = ['llm', 'image', 'tts', 'stt', 'video'];
+  const KINDS: SystemKind[] = ['llm', 'image', 'tts', 'stt', 'video', 'music'];
 
   /** A loaded draft spec always carries its lists (TuneState makes sure), so the editors can bind them. */
   type EditSpec = PresetSpec & { args: string[]; env: Record<string, string>; env_remove: string[] };

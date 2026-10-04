@@ -5,7 +5,7 @@ description: Drive KLIF, a Windows manager for local AI model servers (llama.cpp
 
 # Driving KLIF with klif-cli
 
-KLIF runs model servers as **Systems** (tabs). A System has a kind (`llm`, `image`, `tts`, `stt`, `video`) and uses a
+KLIF runs model servers as **Systems** (tabs). A System has a kind (`llm`, `image`, `tts`, `stt`, `video`, `music`) and uses a
 **preset**: the exact command line, environment and port of one server, stored in `klif.toml`. `klif-cli` is KLIF
 without the window: same engine, same configuration, no MCP. Everything below is `klif-cli`; the contract is in
 `AGENTS.md` and `docs/cli.md` of the KLIF repository. Prefer the self-description to guessing:
@@ -142,11 +142,11 @@ klif-cli --json records history <key> --metric decode    # how a record climbed
 3. Calibrate for the user's hardware and workload, not for a benchmark number. Write what changed and why into the
    preset's `notes` (`presets set <id> notes="..."`).
 4. Records are the best values KLIF ever saw per exact model file (SHA-256) and backend (HIP, Vulkan, CUDA, CPU...):
-   `decodeTps`, `prefillTps`, `ttftS`, `imageS`, `ttsRtf`, `sttRtf`, `videoS`, each with its context, prompt size, KV
+   `decodeTps`, `prefillTps`, `ttftS`, `imageS`, `ttsRtf`, `sttRtf`, `videoS`, `musicRtf`, each with its context, prompt size, KV
    type and GPUs. They come from everyday use and from `bench`. `records forget <key> --yes` removes a junk entry.
    Do not edit `records.json`, `records-history.jsonl` or `hashes.json` by hand.
-5. Bench covers llm, image, tts and stt (stt needs `--audio file.wav`); a System on another node is benched on that
-   machine.
+5. Bench covers llm, image, tts, stt (stt needs `--audio file.wav`) and music (audio.cpp servers only; a run lasts as
+   long as the song takes, so try `--runs 1`); a System on another node is benched on that machine.
 
 ## Safety
 

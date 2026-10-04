@@ -18,6 +18,7 @@ const CADENCE: Record<SystemKind, Cadence> = {
   tts: { gapS: 14, busyS: [1.2, 4], route: 'POST /v1/audio/speech' },
   stt: { gapS: 18, busyS: [1.5, 6], route: 'POST /inference' },
   video: { gapS: 70, busyS: [25, 55], route: 'POST /prompt' },
+  music: { gapS: 60, busyS: [12, 40], route: 'POST /release_task' },
 };
 
 export class GenericSim {

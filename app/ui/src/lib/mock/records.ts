@@ -23,7 +23,7 @@ const GPU_5700 = 'RX 5700 XT';
 const GPU_NODE = 'RX 7900 XTX';
 
 /** *Tps / *Rtf round to 2 decimals, *S to 3 (the core's `rounded`). */
-const HIGHER: Record<RecordMetric, boolean> = { decodeTps: true, prefillTps: true, ttftS: false, imageS: false, ttsRtf: true, sttRtf: true, videoS: false };
+const HIGHER: Record<RecordMetric, boolean> = { decodeTps: true, prefillTps: true, ttftS: false, imageS: false, ttsRtf: true, sttRtf: true, videoS: false, musicRtf: true };
 export const roundMetric = (m: RecordMetric, v: number) => {
   const p = HIGHER[m] ? 100 : 1000;
   return Math.round(v * p) / p;

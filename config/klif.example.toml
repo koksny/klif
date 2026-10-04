@@ -41,6 +41,8 @@ frameless = true
 # a resolution ("960x640") or part of the monitor's device name ("DISPLAY3"). Unset = automatic: with two or more
 # monitors, the smallest one if it is at most 1280x800.
 # panel_monitor = "960x640"
+# Celebrate a broken record over the skin (the "new record" moment). Records are kept either way.
+# record_moment = false
 
 [telemetry]
 # Skins warn when free VRAM falls below this many GiB.
@@ -84,7 +86,7 @@ on_conflict = "ask"
 
 [systems.s1]
 label = "System 1"             # tab label (default derived from kind and class: System 1/2/3, System CGI, ...)
-kind = "llm"                   # llm | image | tts | stt | video
+kind = "llm"                   # llm | image | tts | stt | video | music
 class = "fast"                 # llm only, optional: fast | deep | max (groups recommendations, default labels)
 preset = "fast-8b"             # absent = "not set"
 params = { reasoning = "on" }  # choices for the params the preset declares
@@ -226,7 +228,7 @@ health = "/health"             # "/path" = HTTP, "tcp" = a listening port; absen
 gpu = "cpu"                    # "VEN:DEV" or "cpu": which GPU it counts against (display and fit only)
 backend = "CPU"
 
-# The three presets below are commented out: uncomment one, put your own paths in, and point a System at it
+# The presets below are commented out: uncomment one, put your own paths in, and point a System at it
 # (`kind` and `preset` in its [systems.<id>] table). KLIF does not ship these servers; install them yourself.
 #
 # audio.cpp (text to speech): one audiocpp_server.exe serves VoxCPM2, Qwen3-TTS, Chatterbox and Kokoro (GGUF) on the
@@ -266,6 +268,33 @@ backend = "CPU"
 # default = "keep"
 # choices.keep = { label = "Keep the model loaded" }
 # choices.unload = { label = "Unload after 5 minutes", args = ["--idle-unload-ms", "300000"] }
+#
+# audio.cpp music (ACE-Step 1.5, HeartMuLa, Stable Audio 3, ...): the same server and adapter with kind = "music".
+# In the --config JSON the model's task is "gen" (speech models say "tts"), and a family may need options of its
+# own (ACE-Step XL names its DiT variant in "load_options"). A song is one synchronous request that can take
+# minutes, so raise --busy-timeout-ms (the default is 5 minutes). A minimal D:\audio.cpp\music-ace.json:
+#   { "lazy_load": true, "max_loaded_models": 1,
+#     "models": [ { "id": "ace-turbo", "family": "ace_step", "task": "gen", "mode": "offline",
+#                   "path": "D:\\models\\ACE-Step1.5-GGUF\\ace-step-1.5-turbo-bf16.gguf",
+#                   "session_options": { "ace_step.mem_saver": "true" } } ] }
+# `klif-cli models adopt` writes this file for a pool model. Records come from: klif-cli bench <system> --yes (a
+# fixed 30 s instrumental; musicRtf = seconds of music per wall second).
+#
+# [systems.music]
+# label = "System Music"
+# kind = "music"
+# preset = "music-ace"
+#
+# [presets.music-ace]
+# name = "ACE-Step 1.5 turbo"
+# adapter = "audiocpp"
+# kind = "music"                 # audiocpp defaults to tts
+# command = 'D:\audio.cpp\audiocpp_server.exe'
+# args = ["--config", 'D:\audio.cpp\music-ace.json', "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+# port = 7080
+# model = 'D:\models\ACE-Step1.5-GGUF\ace-step-1.5-turbo-bf16.gguf'
+# quant = "BF16"
+# backend = "Vulkan"
 #
 # whisper.cpp (speech to text) through the generic adapter: whisper-server answers /health (503 while its model
 # loads) and logs nothing per request beyond the file name. --inference-path makes it OpenAI-compatible. The official

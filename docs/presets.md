@@ -32,7 +32,7 @@ because bench records are named after it. An id with a dot is read as a sub-tabl
 | --- | --- |
 | `name` | Display name (default: the id) |
 | `adapter` | `llama.cpp` (default), `sd.cpp`, `vllm`, `openai`, `audiocpp`, `generic` |
-| `kind` | `llm`, `image`, `tts`, `stt`, `video`. Default: `image` for sd.cpp, `llm` for llama.cpp, vllm and openai. **Required for `generic`** |
+| `kind` | `llm`, `image`, `tts`, `stt`, `video`, `music`. Default: `image` for sd.cpp, `llm` for llama.cpp, vllm and openai. **Required for `generic`** |
 | `command` | The program: an absolute path, or a name on PATH. `.exe` and `.com` only. Empty when `endpoint` is set |
 | `args` | The argument list, one token per entry. KLIF never re-splits or merges tokens |
 | `cwd` | Working folder (absolute, must exist). Default: the program's folder |
@@ -60,19 +60,29 @@ An unknown key is a warning and is ignored. A preset that does not parse (or who
 | `sd.cpp` | image (or `kind = "video"`) | 1234 | TCP; video: HTTP `/sdcpp/v1/capabilities` | none | Log (load steps, sampling steps, device, image and video jobs), TCP |
 | `vllm` | llm | 8000 | HTTP `/health` | `VLLM_API_KEY` | `/health`, `/metrics`, `/v1/models` |
 | `openai` | llm | 8080 | `/health`, then `/v1/models`, then TCP | none | Probes only |
-| `audiocpp` | tts | 8080 | HTTP `/health` | none | `/health`, `/v1/models` every 3 s (which model is loaded), the listening / failed lines, with `--log` one line per request |
+| `audiocpp` | tts (music: `kind = "music"`) | 8080 | HTTP `/health` | none | `/health`, `/v1/models` every 3 s (which model is loaded), the listening / failed lines, with `--log` one line per request |
 | `generic` | required | required (or a `health` check) | TCP, or `health` | none | Process, health, per-process VRAM, log activity, and `/metrics` if it answers Prometheus text |
 
 TTS, STT and video servers KLIF has no adapter for (a whisper.cpp server, koboldcpp, a Kokoro server, ComfyUI, ...)
 run through `generic` or `openai` with the right `kind`. A `generic` System shows `busy` while the server logs
 activity, so a chatty server looks busy.
 
-- **audio.cpp** (`audiocpp_server.exe`, text to speech): `adapter = "audiocpp"`. Its models are listed in the JSON
+- **audio.cpp** (`audiocpp_server.exe`, text to speech and music): `adapter = "audiocpp"`. Its models are listed in the JSON
   file `--config` names; set the preset's `model` to the same GGUF so KLIF knows the file (name, size, records).
   Pass `--host {host} --port {port}`; `--backend vulkan|hip|...` is also what the records call the backend. Add
   `--log` if you want the request count and activity: the server then prints one line per request to its output,
   which KLIF reads (`--log-file` writes a file KLIF does not read). `--idle-unload-ms` frees VRAM after quiet time;
   the live view shows whether the model is loaded. TTS records come from `klif-cli bench`.
+- **audio.cpp music** (ACE-Step 1.5 and XL, HeartMuLa, Stable Audio 3, ...): the same server and adapter with `kind =
+  "music"`. In the `--config` JSON the model's `task` is `"gen"` (speech models say `"tts"`), and a family may need
+  options of its own, for example `"load_options": { "ace_step.dit_model_path": "acestep-v15-xl-turbo" }` and
+  `"session_options": { "ace_step.mem_saver": "true" }` (`klif-cli models adopt` writes these for a pool model, from
+  the pool entry's `audiocpp` field). A music request is synchronous: the HTTP call stays open until the whole song
+  is done, which takes minutes on a big model, and there is no progress and no cancel. Raise the server's
+  `--busy-timeout-ms` (the default is 5 minutes; the pool entries pass `900000`) so a second request can wait that
+  long. The first request loads the weights unless the model is already resident. The live view shows the request
+  count and the loaded state; the record `musicRtf` (seconds of music per wall second) comes from `klif-cli bench`,
+  which asks for a fixed 30 s instrumental (`POST /v1/tasks/run`).
 - **whisper.cpp** (`whisper-server.exe`, speech to text): `adapter = "generic"`, `kind = "stt"`, `health =
   "/health"` (it answers 503 while the model loads), `model` plus `-m {model}`. It logs nothing per request beyond
   the file name, so the live view is activity only and records come from `klif-cli bench <system> --audio
@@ -275,14 +285,17 @@ first shard replaces the original one this way). The argument template names oth
   else this machine's suggestion of that recommendation, else its tier's floor and q8_0; a suggestion also sets
   `-fitt` (System 1: a third of the inference GPU, at least 1024 MiB; System 2 / 3: 1024) and `--offload-to-cpu`
   for an image model that needs it. The System keeps only the param selections the new preset declares (see
-  Params).
+  Params). For an `audiocpp` model KLIF also writes the server JSON that the `--config` argument names, one file per
+  rung: a single lazily loaded model with its `task` (`tts`; `gen` for music) and the family options of the pool
+  entry's `audiocpp` field (`load_options`, `session_options`). An existing file is never overwritten: your edits win.
 
 ## Suggestions
 
 > Every number in a suggestion is an estimate.
 
 `klif-cli suggest` (and the window) shows, for this machine, the model of the pool suggested for each slot: System 1
-(fast), System 2 (deep), System 3 (max) and image. The memory KLIF counts:
+(fast), System 2 (deep), System 3 (max), image and, once the pool lists models for them, speech, transcription, video
+and music. The memory KLIF counts:
 
 - **The VRAM pool** is every counted GPU of any vendor (`klif-cli hardware` lists them; an integrated GPU counts
   only when there is no discrete one, so on a Strix Halo or a Mac the unified memory is the pool). 1 GiB stays free
@@ -292,7 +305,8 @@ first shard replaces the original one this way). The argument template names oth
 - **System 2 (deep)** may use the whole pool, nothing in RAM.
 - **System 3 (max)** may use the pool and the RAM minus the larger of 8 GiB and 10 % of the RAM; anything may
   spill to RAM.
-- **Image** models run on one GPU: the largest counted one, else with `--offload-to-cpu` and RAM.
+- **Image, speech, transcription, video and music** models run on one GPU: the largest counted one, by the rung's own
+  estimate (`min_vram_gib`), else with `--offload-to-cpu` and RAM for the image and video rungs that have one.
 - A machine without a counted GPU runs everything from RAM (System 1 keeps a third of it free, the others the OS
   reserve).
 

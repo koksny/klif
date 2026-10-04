@@ -9,7 +9,7 @@ runs.
 
 | Term | Meaning |
 | --- | --- |
-| **System** | One tab, one server at a time. Has a kind (`llm`, `image`, `tts`, `stt`, `video`), an optional LLM class, an active preset and a status. [systems.md](systems.md) |
+| **System** | One tab, one server at a time. Has a kind (`llm`, `image`, `tts`, `stt`, `video`, `music`), an optional LLM class, an active preset and a status. [systems.md](systems.md) |
 | **Preset** | A launch command: program, arguments, working folder, environment, port, model, plus optional params. Or, with `endpoint`, an external server KLIF only watches. [presets.md](presets.md) |
 | **Param** | An independent option of a preset (reasoning on/off, image size) selected per System, so presets do not multiply. |
 | **Adapter** | The server family a preset belongs to (`llama.cpp`, `sd.cpp`, `vllm`, `openai`, `generic`). It sets defaults and tells telemetry which logs and endpoints to read. |

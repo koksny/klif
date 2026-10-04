@@ -45,6 +45,8 @@
     const fresh = events.filter((ev) => ev.metric && !seen.has(idOf(ev)));
     if (!fresh.length) return;
     for (const ev of fresh) seen.add(idOf(ev));
+    // Off in [ui] record_moment: the records still count, nothing is celebrated.
+    if (player.vm.config.recordMoment === false) return;
     show(fresh);
   });
 

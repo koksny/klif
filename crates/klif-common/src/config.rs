@@ -134,11 +134,13 @@ pub struct UiCfg {
     /// Which monitor "Panel mode" fills: "WxH" (e.g. "960x640") or a substring of the monitor's device name.
     /// Unset = automatic (the smallest of two or more monitors, if at most 1280x800).
     pub panel_monitor: Option<String>,
+    /// Celebrate a broken record over the skin (the "new record" moment). Default on.
+    pub record_moment: bool,
 }
 
 impl Default for UiCfg {
     fn default() -> Self {
-        Self { frameless: true, panel_monitor: None }
+        Self { frameless: true, panel_monitor: None, record_moment: true }
     }
 }
 
@@ -797,6 +799,7 @@ pub fn default_system_label(kind: SystemKind, class: Option<LlmClass>, taken: &[
         (SystemKind::Tts, _) => "System TTS".into(),
         (SystemKind::Stt, _) => "System STT".into(),
         (SystemKind::Video, _) => "System Video".into(),
+        (SystemKind::Music, _) => "System Music".into(),
     };
     if !is_taken(&base) {
         return base;
@@ -805,7 +808,7 @@ pub fn default_system_label(kind: SystemKind, class: Option<LlmClass>, taken: &[
 }
 
 /// The default id of a new System: llm fast/deep/max -> "s1"/"s2"/"s3", llm without class -> the next free
-/// "sN"; image -> "cgi"; tts -> "tts"; stt -> "stt"; video -> "video". Taken -> "-2", "-3"... appended
+/// "sN"; image -> "cgi"; tts -> "tts"; stt -> "stt"; video -> "video"; music -> "music". Taken -> "-2", "-3"... appended
 /// (an llm class id that is taken falls back to the next free "sN").
 pub fn default_system_id(kind: SystemKind, class: Option<LlmClass>, taken: &[&str]) -> SystemId {
     let is_taken = |id: &str| taken.contains(&id);
@@ -824,6 +827,7 @@ pub fn default_system_id(kind: SystemKind, class: Option<LlmClass>, taken: &[&st
         (SystemKind::Tts, _) => "tts",
         (SystemKind::Stt, _) => "stt",
         (SystemKind::Video, _) => "video",
+        (SystemKind::Music, _) => "music",
     };
     if !is_taken(base) {
         return SystemId::new(base);
@@ -1362,7 +1366,7 @@ fn parse_system(id: &str, value: toml::Value, issues: &mut Vec<Issue>) -> Result
     };
     check_keys("systems", id, &table, SYSTEM_KEYS, issues)?;
     if !table.contains_key("kind") {
-        return Err(format!("System \"{id}\" needs a kind: llm, image, tts, stt or video."));
+        return Err(format!("System \"{id}\" needs a kind: llm, image, tts, stt, video or music."));
     }
     let sys = toml::Value::Table(table)
         .try_into::<SystemCfg>()

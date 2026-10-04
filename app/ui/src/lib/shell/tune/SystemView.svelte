@@ -7,6 +7,7 @@
   import { nodeOf } from '../../model/systems';
   import type { System, ViewModel } from '../../model/types';
   import ApiKeyRow from './ApiKeyRow.svelte';
+  import DisplayRow from './DisplayRow.svelte';
   import BenchLine from './BenchLine.svelte';
   import CommandSection from './CommandSection.svelte';
   import FitPanel from './FitPanel.svelte';
@@ -69,6 +70,7 @@
   {#if !system.node}
     <Recommendations {vm} {system} />
     <ApiKeyRow info={vm.config.apiKey} />
+    <DisplayRow config={vm.config} />
   {/if}
   <NodesSection nodes={vm.nodes} />
 </div>

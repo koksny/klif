@@ -8,7 +8,7 @@
 //!   use, speculative acceptance), `/v1/models` (`max_model_len`), `/version`.
 //! - `OpenAi`: any OpenAI-compatible server: `/health` -> `/v1/models` -> TCP, `/metrics` if it answers
 //!   Prometheus text, `/v1/models` for the model id and context.
-//! - `AudioCpp`: audio.cpp `audiocpp_server` (TTS): `/health`, `/v1/models` every few seconds (`loaded`), the
+//! - `AudioCpp`: audio.cpp `audiocpp_server` (TTS and music): `/health`, `/v1/models` every few seconds (`loaded`), the
 //!   listening / failed lines and, with `--log`, one debug line per request (count, activity) -> `GenericLive`.
 //! - `SdCpp` with kind video: the same parser reads `generate_video WxHxT` jobs; ready = `/sdcpp/v1/capabilities`.
 //! - `Generic`: any other server (TTS / STT / video...): TCP or the preset's HTTP health, log-activity busy pulses,
@@ -1432,7 +1432,7 @@ api_impl!(Generic, AdapterId::Generic, HealthCheck::Tcp, false, 1.0, Some(2.0));
 /// How often an audio.cpp session's `/v1/models` is read again (lazy loading and `--idle-unload-ms` change `loaded`).
 const AUDIOCPP_MODELS_S: f64 = 3.0;
 
-/// audio.cpp `audiocpp_server` (TTS): `/health`, `/v1/models` every few seconds (whether the weights are resident),
+/// audio.cpp `audiocpp_server` (TTS and music): `/health`, `/v1/models` every few seconds (whether the weights are resident),
 /// the listening / failed lines and, with `--log`, one debug line per request (request count, activity; the debug
 /// lines of KLIF's own probes are hidden). Per-request timing is only in the responses, so its records come from
 /// `klif-cli bench`.

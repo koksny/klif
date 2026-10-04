@@ -153,6 +153,14 @@ pub struct DismissDoc {
     pub system: Option<SysBrief>,
 }
 
+/// `settings [record-moment on|off]`: this machine's display settings.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsDoc {
+    /// `[ui] record_moment`: the "new record" moment is shown.
+    pub record_moment: bool,
+}
+
 // --------------------------------------------------------------------------------------- systems, nodes
 
 /// `systems list`.

@@ -608,7 +608,7 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
 
     // ---- kind -----------------------------------------------------------------------------------
     match r.kind {
-        None => err(&mut out, Cat::Other, "kind", "A generic preset needs kind = \"llm\", \"image\", \"tts\", \"stt\" or \"video\"."),
+        None => err(&mut out, Cat::Other, "kind", "A generic preset needs kind = \"llm\", \"image\", \"tts\", \"stt\", \"video\" or \"music\"."),
         Some(k) => {
             if let Some(fs) = req.system {
                 if fs.sys.kind != k {

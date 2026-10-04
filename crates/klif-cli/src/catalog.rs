@@ -238,7 +238,7 @@ pub static COMMANDS: &[Cmd] = &[
     Cmd {
         name: "systems add",
         group: "systems",
-        synopsis: "systems add --kind llm|image|tts|stt|video [--class fast|deep|max] [--label L] [--id ID] [--preset P] [--node N]",
+        synopsis: "systems add --kind llm|image|tts|stt|video|music [--class fast|deep|max] [--label L] [--id ID] [--preset P] [--node N]",
         summary: "Add a System (a tab)",
         args: &[],
         flags: &[
@@ -436,7 +436,7 @@ pub static COMMANDS: &[Cmd] = &[
         args: &[],
         flags: &[
             KIND,
-            f("--metric", Some("M"), "decodeTps | prefillTps | ttftS | imageS | ttsRtf | sttRtf | videoS (also decode, prefill, ttft, image, tts, stt, video)"),
+            f("--metric", Some("M"), "decodeTps | prefillTps | ttftS | imageS | ttsRtf | sttRtf | videoS | musicRtf (also decode, prefill, ttft, image, tts, stt, video, music)"),
             f("--backend", Some("B"), "HIP, Vulkan, CUDA, CPU, Metal..."),
             f("--node", Some("N"), "A node, or local for this machine"),
         ],
@@ -523,6 +523,18 @@ pub static COMMANDS: &[Cmd] = &[
         streams: false,
     },
     // ---- setup
+    Cmd {
+        name: "settings",
+        group: "setup",
+        synopsis: "settings [record-moment on|off]",
+        summary: "This machine's display settings ([ui] in klif.toml): show, or set one",
+        args: &[],
+        flags: &[],
+        yes: Yes::No,
+        engine: Eng::May,
+        outputs: &[o("settings")],
+        streams: false,
+    },
     Cmd {
         name: "key status",
         group: "setup",

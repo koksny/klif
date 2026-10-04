@@ -266,6 +266,7 @@ class Player {
       downloadRecommendation: (id, node, call) => this.act({ type: 'downloadRecommendation', id, ...(node ? { node } : {}) }, call),
       cancelDownload: (id, node, call) => this.act({ type: 'cancelDownload', id, ...(node ? { node } : {}) }, call),
       forgetRecord: (key, node, call) => this.act({ type: 'forgetRecord', key, ...(node ? { node } : {}) }, call),
+      updateSettings: (patch, call) => this.act({ type: 'updateSettings', ...patch }, call),
       adoptRecommendation: (id, system, opts) => {
         const fit = opts?.fit;
         return this.act(
@@ -361,6 +362,7 @@ class Player {
       cancelDownload: (id, node, call) => this.mock((e) => e.cancelDownload(id, node), call),
       adoptRecommendation: (id, system, opts) => this.mock((e) => e.adoptRecommendation(id, system, opts?.fit), { quiet: opts?.quiet }),
       forgetRecord: (key, node, call) => this.mock((e) => e.forgetRecord(key, node), call),
+      updateSettings: (patch, call) => this.mock((e) => e.updateSettings(patch), call),
       openEndpoint: (system) => this.shellMock((e) => e.openEndpoint(system)),
       copyEndpoint: (system) => this.shellMock((e) => e.copyEndpoint(system)),
       copyApiKey: () => {

@@ -322,6 +322,32 @@ pub fn delete_preset(path: &Path, id: &str) -> Result<()> {
 }
 
 /// Make sure the config file exists (a commented starter file at `cfg.file_path()`); returns its path.
+/// `[ui] record_moment` (on = the default: the key is removed; off = `record_moment = false`).
+pub fn set_record_moment(path: &Path, on: bool) -> Result<()> {
+    edit(
+        path,
+        |doc, _cfg| {
+            if doc.get("ui").is_none() {
+                doc.insert("ui", Item::Table(Table::new()));
+            }
+            let ui = doc["ui"].as_table_mut().ok_or_else(|| anyhow!("[ui] in klif.toml is not a table."))?;
+            if on {
+                ui.remove("record_moment");
+            } else {
+                set_value(ui, "record_moment", Value::from(false));
+            }
+            Ok(())
+        },
+        |cfg, _| {
+            if cfg.ui.record_moment == on {
+                Ok(())
+            } else {
+                bail!("[ui] record_moment does not read back from klif.toml; nothing was written.")
+            }
+        },
+    )
+}
+
 pub fn ensure_file(cfg: &Config) -> Result<PathBuf> {
     let path = cfg.file_path();
     if path.is_file() {
@@ -352,7 +378,7 @@ pub const STARTER: &str = r#"# KLIF configuration (0.3). KLIF edits this file to
 
 # [systems.s1]
 # label = "System 1"
-# kind = "llm"                              # llm | image | tts | stt | video
+# kind = "llm"                              # llm | image | tts | stt | video | music
 # class = "fast"                            # llm only: fast | deep | max
 # preset = "my-llm"
 

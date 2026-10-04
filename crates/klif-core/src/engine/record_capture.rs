@@ -4,7 +4,7 @@
 //! node's; ForgetRecord removes a junk entry.
 //!
 //! Only per-request timings count: vLLM / OpenAI-compatible servers only give busy-period aggregates (`/metrics`),
-//! and TTS / STT servers (audio.cpp, whisper-server, generic) log no timing at all, so their records come from
+//! and TTS / STT / music servers (audio.cpp, whisper-server, generic) log no timing at all, so their records come from
 //! `klif-cli bench`, whose numbers the bench hands over at the end of its window.
 //! Externally started servers have no model file KLIF knows, so they keep no records.
 
@@ -174,6 +174,9 @@ fn bench_samples(rec: &BenchRecord, image_size: Option<&str>) -> Vec<Sample> {
         }
         if let Some(v) = r.stt_rtf {
             out.push(mk(RecordMetric::SttRtf, v));
+        }
+        if let Some(v) = r.music_rtf {
+            out.push(mk(RecordMetric::MusicRtf, v));
         }
     }
     out
