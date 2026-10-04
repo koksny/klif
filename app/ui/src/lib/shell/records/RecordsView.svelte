@@ -340,6 +340,7 @@
     grid-template-columns: minmax(0, 1fr) 340px;
   }
   .content {
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 16px 18px 24px;
     min-height: 0;

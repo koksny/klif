@@ -39,9 +39,8 @@
     <button type="button" class="row" class:lead={rankOf(e) === 1} class:sel={e.key === selectedKey} class:fresh={!!ev} onclick={() => onopen(e)}>
       <span class="rk">{rankOf(e)}</span>
       <span class="nm">
-        <b>{e.model.name}</b> <em>{e.model.quant ?? e.model.file}</em>
-        <span class="be">{backendLabel(e.backend)}</span>
-        {#if e.node}<span class="mch">{e.machine}</span>{/if}
+        <b>{e.model.name}</b>
+        <span class="sub"><span class="be">{backendLabel(e.backend)}</span><em>{e.model.quant ?? e.model.file}</em>{#if e.node}<span class="mch">{e.machine}</span>{/if}</span>
       </span>
       <span class="track" aria-hidden="true"><i style="width:{share(metric, v.value, leader) * 100}%"></i></span>
       <span class="val">{fmtValue(metric, v.value)}</span>
@@ -55,11 +54,14 @@
   .list {
     display: grid;
     gap: 2px;
+    min-width: 0;
+    /* the list measures itself: it is narrower than the screen when the details are open */
+    container: reclist / inline-size;
   }
   .head,
   .row {
     display: grid;
-    grid-template-columns: 28px minmax(220px, 1.6fr) minmax(80px, 1fr) 92px minmax(120px, 1fr) 96px;
+    grid-template-columns: 28px minmax(0, 1.8fr) minmax(48px, 1fr) 88px minmax(0, 1.2fr) 88px;
     align-items: center;
     gap: 12px;
     padding: 7px 10px;
@@ -78,7 +80,7 @@
     all: unset;
     box-sizing: border-box;
     display: grid;
-    grid-template-columns: 28px minmax(220px, 1.6fr) minmax(80px, 1fr) 92px minmax(120px, 1fr) 96px;
+    grid-template-columns: 28px minmax(0, 1.8fr) minmax(48px, 1fr) 88px minmax(0, 1.2fr) 88px;
     align-items: center;
     gap: 12px;
     padding: 8px 10px;
@@ -103,22 +105,30 @@
     color: var(--k-record, #f2a33a);
   }
   .nm {
+    display: grid;
+    min-width: 0;
+    font: 400 13px/1.3 var(--k-font-ui, system-ui, sans-serif);
+    color: var(--k-ink, #eee);
+  }
+  .nm b,
+  .nm .sub {
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font: 400 13px var(--k-font-ui, system-ui, sans-serif);
-    color: var(--k-ink, #eee);
   }
   .nm b {
     font-weight: 600;
   }
+  .nm .sub {
+    font-size: 12px;
+  }
   .nm em {
+    margin-left: 6px;
     font-style: normal;
     color: var(--k-muted, #8a8a8a);
   }
   .be {
-    margin-left: 6px;
     padding: 0 5px;
     border: 1px solid color-mix(in srgb, var(--k-accent, #5ab6eb) 55%, transparent);
     border-radius: 4px;
@@ -164,10 +174,10 @@
     color: var(--k-record, #f2a33a);
     font-weight: 600;
   }
-  @container records (max-width: 760px) {
+  @container reclist (max-width: 640px) {
     .head,
     .row {
-      grid-template-columns: 24px minmax(160px, 1fr) 84px 84px;
+      grid-template-columns: 24px minmax(0, 1fr) 80px minmax(0, 0.8fr);
     }
     .head span:nth-child(3),
     .head span:nth-child(6),

@@ -927,6 +927,14 @@ impl LlamaParser {
         let gen = r.tg_final.map(|x| x.1).or(r.tg_ticks.last().map(|x| x.1)).unwrap_or(0);
         let prefill_s = r.pp_final.map(|x| x.0 / 1000.0).unwrap_or(0.0);
         let decode_s = r.tg_final.map(|x| x.0 / 1000.0).unwrap_or(0.0);
+        // The best full tg_3s window: at least 3 s after decoding started (the window is full) and 64 tokens in it.
+        let full_from = r.decode_start_t.map(|s| s + 3.0);
+        let peak = r
+            .tg_ticks
+            .iter()
+            .filter(|(at, _, _, tg3)| full_from.is_some_and(|f| *at >= f) && tg3.is_finite() && *tg3 * 3.0 >= 64.0)
+            .map(|x| x.3)
+            .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))));
         if r.pp_final.is_some() || r.tg_final.is_some() {
             let rec = RequestRecord {
                 id: r.task,
@@ -937,6 +945,7 @@ impl LlamaParser {
                 prefill_s: round_to(prefill_s, 3),
                 generated_tokens: gen,
                 decode_s: round_to(decode_s, 3),
+                peak_decode_tps: peak.map(|v| round_to(v, 2)),
             };
             self.records.push_back(rec);
             while self.records.len() > 12 {

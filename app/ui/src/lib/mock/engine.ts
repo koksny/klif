@@ -1305,8 +1305,25 @@ export class MockEngine {
       this.records = [...this.records, entry];
     }
     const line: RecordHistoryLine = { key: entry.key, metric: 'decodeTps', ...(old !== undefined ? { old } : {}), new: next, at };
-    this.recordLines = [...this.recordLines, line];
-    this.recordEvents = [...this.recordEvents, { ...line }].slice(-MAX_RECORD_EVENTS);
+    const lines: RecordHistoryLine[] = [line];
+    // Every other turn the same request also beats prefill and time to first token: one request, several records.
+    if (this.recordLines.length % 2 === 1) {
+      let cur: RecordEntry = entry;
+      for (const [metric, factor] of [
+        ['prefillTps', 1 + rng.range(0.01, 0.04)],
+        ['ttftS', 1 - rng.range(0.03, 0.09)],
+      ] as const) {
+        const prevV = cur.best[metric]?.value;
+        const v = roundMetric(metric, (prevV ?? (metric === 'ttftS' ? 0.4 : 1500)) * factor);
+        const prevEntry: RecordEntry = cur;
+        const nextEntry: RecordEntry = { ...prevEntry, best: { ...prevEntry.best, [metric]: { ...best, value: v } } };
+        this.records = this.records.map((e) => (e === prevEntry ? nextEntry : e));
+        cur = nextEntry;
+        lines.push({ key: cur.key, metric, ...(prevV !== undefined ? { old: prevV } : {}), new: v, at });
+      }
+    }
+    this.recordLines = [...this.recordLines, ...lines];
+    this.recordEvents = [...this.recordEvents, ...lines.map((l) => ({ ...l }))].slice(-MAX_RECORD_EVENTS);
     this.recordsRev++;
   }
 

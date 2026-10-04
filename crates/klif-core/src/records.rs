@@ -128,8 +128,10 @@ impl Sample {
     }
 }
 
-/// The record samples of one finished LLM request (llama.cpp log timings): decode (>= 128 generated tokens),
-/// prefill (>= 1024 uncached prompt tokens) and TTFT (= the prompt eval time, any request with prompt tokens).
+/// The record samples of one finished LLM request (llama.cpp log timings): decode (the better of the request's
+/// average over >= 128 generated tokens and its best full tg_3s window of >= 64 tokens, which is what the live
+/// readout showed), prefill (>= 1024 uncached prompt tokens) and TTFT (= the prompt eval time, any request with
+/// prompt tokens).
 pub fn llm_samples(r: &RequestRecord, source: RecordSource) -> Vec<Sample> {
     let mut out = Vec::new();
     let at = if r.at > 0.0 { r.at } else { now_s() };
@@ -139,8 +141,10 @@ pub fn llm_samples(r: &RequestRecord, source: RecordSource) -> Vec<Sample> {
         s.gen_tokens = Some(r.generated_tokens);
         s
     };
-    if r.generated_tokens >= MIN_DECODE_TOKENS && r.decode_s > 0.0 {
-        out.push(with_tokens(Sample::new(RecordMetric::DecodeTps, r.generated_tokens as f64 / r.decode_s, at, source)));
+    let average = (r.generated_tokens >= MIN_DECODE_TOKENS && r.decode_s > 0.0).then(|| r.generated_tokens as f64 / r.decode_s);
+    let peak = r.peak_decode_tps.filter(|v| v.is_finite() && *v > 0.0);
+    if let Some(v) = [average, peak].into_iter().flatten().reduce(f64::max) {
+        out.push(with_tokens(Sample::new(RecordMetric::DecodeTps, v, at, source)));
     }
     let fresh = r.prompt_tokens.saturating_sub(r.cached_tokens);
     if fresh >= MIN_PREFILL_TOKENS && r.prefill_s > 0.0 {

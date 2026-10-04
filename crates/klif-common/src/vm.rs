@@ -1253,6 +1253,10 @@ pub struct RequestRecord {
     pub prefill_s: f64,
     pub generated_tokens: u64,
     pub decode_s: f64,
+    /// The best decode speed of one full window the server measured during the request (llama.cpp `tg_3s`, a
+    /// window of at least 64 tokens): what the live readout showed at its peak. None when the server reports none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_decode_tps: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, Serialize, Deserialize)]

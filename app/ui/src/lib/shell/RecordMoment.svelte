@@ -1,32 +1,38 @@
 <script lang="ts">
-  // The "new record" moment: when vm.recordEvents gains an event, a few seconds of celebration over the skin
-  // (full window and the 960x640 panel), the number counting up from the old best. Never blocks input; reduced
-  // motion gets a still banner. One structure, a background effect per skin (data-skin), themed by --k-*.
+  // The "new record" moment: every record a request broke (decode, prefill, TTFT... of one model file) celebrated
+  // together over the skin, in the full window and on the 960x640 panel: the main one large and counting up from
+  // the old best, the others below it. Hidden 5 s after the last record of the turn arrived, whatever the animation
+  // does; never blocks input; reduced motion gets a still card. A background effect per skin (data-skin).
   import { onDestroy } from 'svelte';
   import type { RecordEntry, RecordEvent, RecordMetric } from '../model/types';
   import { player } from '../state/player.svelte';
   import { ui } from '../state/ui.svelte';
-  import { backendLabel, deltaText, fmtValue, metricMeta } from './records/metrics';
+  import { backendLabel, deltaText, fmtValue, METRICS, metricMeta } from './records/metrics';
 
-  const SHOW_MS = 4600;
+  const SHOW_MS = 5000;
+  /** The exit animation: rows leave in reverse order, then the card. */
+  const FADE_MS = 650;
   const COUNT_MS = 1200;
+  /** Events of one model file this close together are one turn (one request breaks several records at once). */
+  const TURN_S = 3;
 
-  interface Shown {
-    id: string;
-    ev: RecordEvent;
+  interface Row {
     metric: RecordMetric;
-    entry: RecordEntry | undefined;
+    ev: RecordEvent;
   }
 
-  // Events already in the view model when the shell starts are history, not news.
   const seen = new Set<string>();
   let primed = false;
-  let current = $state<Shown | null>(null);
-  let shown = $state(0);
+  let key = $state<string | null>(null);
+  let rows = $state<Row[]>([]);
+  let turn = $state(0);
+  let fading = $state(false);
+  let progress = $state(1);
   let raf = 0;
-  let timer: ReturnType<typeof setTimeout> | 0 = 0;
+  let fadeTimer: ReturnType<typeof setTimeout> | 0 = 0;
+  let hideTimer: ReturnType<typeof setTimeout> | 0 = 0;
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-
+  const order = (m: RecordMetric) => METRICS.findIndex((x) => x.id === m);
   const idOf = (ev: RecordEvent) => `${ev.key}|${ev.metric}|${ev.at}`;
 
   $effect(() => {
@@ -37,37 +43,62 @@
       return;
     }
     const fresh = events.filter((ev) => ev.metric && !seen.has(idOf(ev)));
+    if (!fresh.length) return;
     for (const ev of fresh) seen.add(idOf(ev));
-    const ev = fresh[fresh.length - 1];
-    if (ev && ev.metric) play({ id: idOf(ev), ev, metric: ev.metric, entry: player.vm.records.find((e) => e.key === ev.key) });
+    show(fresh);
   });
 
-  function play(s: Shown) {
-    cancelAnimationFrame(raf);
-    if (timer) clearTimeout(timer);
-    current = s;
-    const from = s.ev.old ?? 0;
-    const to = s.ev.new;
-    if (reduced || from === to) {
-      shown = to;
-    } else {
-      const t0 = performance.now();
-      const step = (t: number) => {
-        const p = Math.min(1, (t - t0) / COUNT_MS);
-        const e = 1 - Math.pow(1 - p, 3);
-        shown = from + (to - from) * e;
-        if (p < 1) raf = requestAnimationFrame(step);
-      };
-      shown = from;
-      raf = requestAnimationFrame(step);
+  function show(fresh: RecordEvent[]) {
+    const newest = fresh[fresh.length - 1];
+    const current = rows;
+    const sameTurn = key === newest.key && current.length > 0 && current.some((r) => Math.abs(r.ev.at - newest.at) <= TURN_S);
+    const add = fresh.filter((ev) => ev.key === newest.key && Math.abs(ev.at - newest.at) <= TURN_S);
+    const next = new Map<RecordMetric, Row>(sameTurn ? current.map((r) => [r.metric, r] as [RecordMetric, Row]) : []);
+    for (const ev of add) next.set(ev.metric!, { metric: ev.metric!, ev });
+    key = newest.key;
+    rows = [...next.values()].sort((a, b) => order(a.metric) - order(b.metric));
+    if (!sameTurn) {
+      turn += 1;
+      countUp();
     }
-    timer = setTimeout(() => (current = null), SHOW_MS);
+    fading = false;
+    if (fadeTimer) clearTimeout(fadeTimer);
+    if (hideTimer) clearTimeout(hideTimer);
+    fadeTimer = setTimeout(() => (fading = true), SHOW_MS - FADE_MS);
+    hideTimer = setTimeout(() => {
+      key = null;
+      rows = [];
+      fading = false;
+    }, SHOW_MS);
+  }
+
+  function countUp() {
+    cancelAnimationFrame(raf);
+    if (reduced) {
+      progress = 1;
+      return;
+    }
+    const t0 = performance.now();
+    progress = 0;
+    const step = (t: number) => {
+      const p = Math.min(1, (t - t0) / COUNT_MS);
+      progress = 1 - Math.pow(1 - p, 3);
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
   }
 
   onDestroy(() => {
     cancelAnimationFrame(raf);
-    if (timer) clearTimeout(timer);
+    if (fadeTimer) clearTimeout(fadeTimer);
+    if (hideTimer) clearTimeout(hideTimer);
   });
+
+  /** The value shown while counting: from the old best to the new one. */
+  function shownValue(r: Row): number {
+    const from = r.ev.old ?? r.ev.new;
+    return from + (r.ev.new - from) * progress;
+  }
 
   // Decode's moment scrambles the digits before they settle.
   const GLYPHS = '0123456789';
@@ -76,14 +107,19 @@
     return [...text].map((c, i) => (/[0-9]/.test(c) && i / text.length > p ? GLYPHS[(Math.random() * 10) | 0] : c)).join('');
   }
 
-  const m = $derived(current ? metricMeta(current.metric) : null);
-  const valueText = $derived(current ? fmtValue(current.metric, shown) : '');
-  const progress = $derived(current ? (current.ev.old === undefined ? 1 : Math.min(1, Math.abs(shown - (current.ev.old ?? 0)) / Math.max(1e-9, Math.abs(current.ev.new - (current.ev.old ?? 0))))) : 1);
+  const entry = $derived<RecordEntry | undefined>(key ? player.vm.records.find((e) => e.key === key) : undefined);
+  const hero = $derived(rows[0]);
+  const rest = $derived(rows.slice(1));
+  const first = $derived(rows.length > 0 && rows.every((r) => r.ev.old === undefined));
+  const kicker = $derived(first ? (rows.length > 1 ? 'First records' : 'First record') : rows.length > 1 ? `${rows.length} new records` : 'New record');
+  const heroText = $derived(hero ? fmtValue(hero.metric, shownValue(hero)) : '');
+  /** The count-up reached the new best: the number pulses once. */
+  const landed = $derived(progress >= 1);
 </script>
 
-{#if current && m}
-  {#key current.id}
-    <div class="moment" data-skin={ui.skinId} data-size={ui.size} class:reduced aria-live="polite" role="status">
+{#if hero}
+  {#key turn}
+    <div class="moment" data-skin={ui.skinId} data-size={ui.size} class:reduced class:fading aria-live="polite" role="status">
       <div class="fx" aria-hidden="true">
         {#if ui.skinId === 'cliff' || ui.skinId === 'rings'}
           <svg viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid slice">
@@ -99,16 +135,27 @@
           <i class="bloom"></i><i class="bloom b2"></i>
         {/if}
       </div>
-      <div class="card">
-        <span class="kicker">{current.ev.old === undefined ? 'First record' : 'New record'}</span>
-        <span class="metric">{m.long}</span>
-        <div class="value">
-          <b>{ui.skinId === 'decode' && !reduced ? scramble(valueText, progress) : valueText}</b><span>{m.unit}</span>
+      <div class="card" class:multi={rows.length > 1} style="--n:{rows.length}">
+        <span class="kicker">{kicker}</span>
+        <span class="metric">{metricMeta(hero.metric).long}</span>
+        <div class="value" class:landed>
+          <b>{ui.skinId === 'decode' && !reduced ? scramble(heroText, progress) : heroText}</b><span>{metricMeta(hero.metric).unit}</span>
         </div>
-        {#if current.ev.old !== undefined}<div class="delta">{deltaText(current.metric, current.ev)}</div>{/if}
-        {#if current.entry}
+        {#if hero.ev.old !== undefined}<div class="delta">{deltaText(hero.metric, hero.ev)}</div>{/if}
+        {#if rest.length}
+          <div class="more">
+            {#each rest as r, i (r.metric)}
+              <div class="row" style="--i:{i}">
+                <span class="rl">{metricMeta(r.metric).label}</span>
+                <b>{fmtValue(r.metric, shownValue(r))}</b><small>{metricMeta(r.metric).unit}</small>
+                <em>{r.ev.old !== undefined ? deltaText(r.metric, r.ev) : 'first record'}</em>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if entry}
           <div class="model">
-            {current.entry.model.name}{current.entry.model.quant ? ` · ${current.entry.model.quant}` : ''} · {backendLabel(current.entry.backend)}{current.entry.node ? ` · ${current.entry.machine}` : ''}
+            {entry.model.name}{entry.model.quant ? ` · ${entry.model.quant}` : ''} · {backendLabel(entry.backend)}{entry.node ? ` · ${entry.machine}` : ''}
           </div>
         {/if}
       </div>
@@ -126,22 +173,61 @@
     pointer-events: none;
     overflow: hidden;
     background: radial-gradient(60% 50% at 50% 50%, color-mix(in srgb, var(--k-bg, #000) 70%, transparent), transparent 100%);
-    animation: moment 4.6s ease both;
+    animation: moment-in 0.35s ease backwards;
+    transition: opacity 0.4s ease 0.25s;
     --rec: var(--k-record, #f2a33a);
   }
-  @keyframes moment {
-    0% {
+  @keyframes moment-in {
+    from {
       opacity: 0;
     }
-    6% {
-      opacity: 1;
-    }
-    86% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0;
-    }
+  }
+  .moment.fading {
+    opacity: 0;
+  }
+  .more {
+    display: grid;
+    gap: 4px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--rec) 35%, transparent);
+    min-width: 360px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: baseline;
+    column-gap: 8px;
+    text-align: left;
+  }
+  .row .rl {
+    font: 600 11px var(--k-font-ui, system-ui, sans-serif);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--k-muted, #8a8a8a);
+  }
+  .row b {
+    font: 500 26px/1.1 var(--k-font-data, monospace);
+    color: color-mix(in srgb, var(--rec) 35%, var(--k-ink, #fff));
+    font-variant-numeric: tabular-nums;
+  }
+  .row small {
+    font: 500 12px var(--k-font-ui, system-ui, sans-serif);
+    color: var(--k-accent, #5ab6eb);
+  }
+  .row em {
+    grid-column: 1 / 4;
+    justify-self: end;
+    font: 600 12px var(--k-font-data, monospace);
+    font-style: normal;
+    color: var(--rec);
+  }
+  [data-size='mini'] .row b {
+    font-size: 34px;
+  }
+  [data-size='mini'] .row .rl,
+  [data-size='mini'] .row em {
+    font-size: 15px;
   }
   .card {
     position: relative;
@@ -156,17 +242,128 @@
       0 0 0 1px color-mix(in srgb, var(--rec) 25%, transparent),
       0 20px 80px color-mix(in srgb, var(--rec) 22%, transparent);
     text-align: center;
-    animation: pop 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+    overflow: hidden;
+    /* opens from a vertical seam in the middle, out of a blur */
+    animation: card-in 0.6s cubic-bezier(0.2, 0.9, 0.25, 1) both;
   }
-  @keyframes pop {
+  @keyframes card-in {
     from {
-      transform: scale(0.82) translateY(12px);
+      opacity: 0;
+      transform: scale(0.94);
+      filter: blur(8px);
+      clip-path: inset(0 49% 0 49% round var(--k-radius, 8px));
+    }
+    45% {
+      opacity: 1;
     }
     to {
+      opacity: 1;
       transform: none;
+      filter: none;
+      clip-path: inset(-80px round var(--k-radius, 8px));
+    }
+  }
+  /* one light sweep along the card once it is open */
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 38%, color-mix(in srgb, var(--rec) 28%, transparent) 50%, transparent 62%);
+    transform: translateX(-130%);
+    animation: shine 1.1s ease-in-out 0.4s both;
+  }
+  @keyframes shine {
+    to {
+      transform: translateX(130%);
     }
   }
   .kicker {
+    animation: drop 0.55s cubic-bezier(0.3, 1.6, 0.5, 1) 0.18s both;
+  }
+  @keyframes drop {
+    from {
+      opacity: 0;
+      transform: translateY(-16px) scale(0.85);
+    }
+  }
+  .metric,
+  .value {
+    animation: rise 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) 0.24s both;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+  }
+  /* the number pulses once when the count-up reaches the new best */
+  .value.landed b {
+    animation: land 0.7s ease-out both;
+  }
+  @keyframes land {
+    35% {
+      transform: scale(1.06);
+      text-shadow: 0 0 70px color-mix(in srgb, var(--rec) 85%, transparent);
+    }
+  }
+  .delta {
+    animation: rise 0.45s ease 1.2s both;
+  }
+  .more {
+    animation: line 0.5s ease 0.45s both;
+  }
+  @keyframes line {
+    from {
+      border-top-color: transparent;
+    }
+  }
+  /* several records: the rows arrive one after another */
+  .row {
+    animation: row-in 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) calc(0.55s + var(--i, 0) * 0.15s) both;
+  }
+  .row em {
+    animation: rise 0.4s ease calc(1.25s + var(--i, 0) * 0.15s) both;
+  }
+  @keyframes row-in {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+      filter: blur(4px);
+    }
+  }
+  .model {
+    animation: rise 0.45s ease calc(0.5s + var(--n, 1) * 0.12s) both;
+  }
+  /* exit: the rows leave in reverse order, then the card lifts away into a blur */
+  .fading .row {
+    animation: row-out 0.24s ease-in calc((var(--n, 1) - 2 - var(--i, 0)) * 0.06s) both;
+  }
+  @keyframes row-out {
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+  .fading .card {
+    animation: card-out 0.42s cubic-bezier(0.5, 0, 0.75, 0) calc(var(--n, 1) * 0.05s) both;
+  }
+  @keyframes card-out {
+    from {
+      opacity: 1;
+      transform: none;
+      filter: none;
+      clip-path: inset(-80px round var(--k-radius, 8px));
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-14px) scale(0.95);
+      filter: blur(6px);
+      clip-path: inset(-80px round var(--k-radius, 8px));
+    }
+  }
+  .kicker {
+    display: inline-block;
     padding: 3px 12px;
     border-radius: 3px;
     background: var(--rec);
@@ -397,5 +594,6 @@
   }
   .reduced {
     animation: none;
+    transition: none;
   }
 </style>

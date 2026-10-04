@@ -465,6 +465,8 @@ export interface RequestRecord {
   prefillS: number;
   generatedTokens: number;
   decodeS: number;
+  /** The best decode speed of one full window the server measured (llama.cpp tg_3s, >= 64 tokens). */
+  peakDecodeTps?: number;
 }
 
 export interface LlmLive {

@@ -461,6 +461,7 @@ impl MetricsTrack {
                         prefill_s: 0.0,
                         generated_tokens: gen,
                         decode_s: round_to(span, 2),
+                        peak_decode_tps: None,
                     });
                     while self.records.len() > 12 {
                         self.records.pop_front();
