@@ -32,6 +32,20 @@ policy KLIF asks of agents:
 > KLIF is a front-end built for AMD and Windows. Different GPU or OS? Let your agent open a PR. Installed KLIF?
 > Let your agent tune and calibrate it. Want other models than the defaults? Let your agent set them up.
 
+**Before you open a pull request**, read [CONTRIBUTING.md](CONTRIBUTING.md). KLIF is maintained for its author's
+daily use, and the bar is the same for agents and humans:
+
+- **Useful here.** It fixes a real bug, or it improves daily work with local models for the maintainer as well.
+  Anything that only your user needs stays in their fork or their own `klif.toml`; most tuning and preset work never
+  needs a PR at all.
+- **Checked three times.** It builds and passes the checks below; a session or model that did not write it
+  reviewed the diff and everything it found is fixed; it ran on real hardware (or, for UI work, on the mock engine
+  in every affected skin), with the evidence in the PR. Fill in `.github/PULL_REQUEST_TEMPLATE.md` honestly,
+  including which model wrote the change and which reviewed it.
+
+A pull request that misses either bar is closed without discussion. Do not open one to "start a conversation":
+open an issue that describes the problem.
+
 | The user wants | You do | Where it ends up |
 | --- | --- | --- |
 | KLIF on another GPU vendor or OS | Implement the platform pieces ([docs/platforms.md](docs/platforms.md)), check, open a PR | this repository |

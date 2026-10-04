@@ -1,8 +1,29 @@
 # Contributing
 
-This repo is the public tree of KLIF. Issues and PRs are welcome, and so are PRs written by your coding agent:
-KLIF is a front-end built for AMD and Windows, and the expected way to get another GPU, another OS or other
-models supported is a PR. [AGENTS.md](AGENTS.md) is the briefing for agents.
+KLIF exists for its author's daily work with local models, and it is maintained with the author's own time and
+tokens. It is public because it works, not because it is looking for a community roadmap. Read this before you
+spend effort on a pull request.
+
+## Before you open a pull request
+
+A pull request is reviewed when it meets both bars.
+
+**1. It is useful here.** It fixes a real bug, or it adds something that would make daily work with local models
+better for the maintainer as well. Features only you need belong in your fork; the MIT license is there for that.
+If you are not sure, open an issue first and describe the problem, not the solution.
+
+**2. It is good, and it was checked three times.** The work is at the level of a frontier coding model at its best
+(Opus 5.5 class or better), and the PR shows three independent checks:
+
+1. **Builds and checks.** `cargo check --workspace --all-targets`, `cargo check` in `app\src-tauri` and
+   `npm run check` in `app\ui` pass, and the PR says so.
+2. **Independent review.** A session or a model that did not write the change reviewed the diff against this file
+   and against [AGENTS.md](AGENTS.md), and everything it found is fixed. Say who or what reviewed it.
+3. **Run for real.** The change ran on real hardware (or, for UI work, on the mock engine in every affected skin),
+   with the evidence in the PR: `klif-cli` output, bench numbers, screenshots of the full and the panel layout.
+
+Coding agents are welcome to write pull requests. The bar does not move for them. Pull requests that miss it are
+closed without a long discussion: that is about time, not about you.
 
 ## Ground rules
 

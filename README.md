@@ -9,84 +9,128 @@
   AMD optimized frontend for transformers and DiT.
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.3.0-5AB6EB" alt="Version 0.3.0">
+  <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/GPU-AMD%20HIP%20%7C%20Vulkan-5AB6EB" alt="AMD GPUs, HIP and Vulkan">
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=MAE393AL5As">
+    <img src="docs/media/trailer-thumb.jpg" width="720" alt="KLIF 0.3 in one minute (video)">
+  </a>
+</p>
+
 KLIF manages a local inference stack from one window: the language-model, image, speech, transcription and video
-servers you already run, on one machine or several. Each server is a **System**, shown as a tab with a live
-status. KLIF starts and stops them, shows what they do to the GPU, and keeps the exact command line of every
-System visible and editable. `klif-cli` does the same from a terminal or a coding agent.
+servers you already run, on one machine or several. Each server is a **System**: a tab with a live status, the exact
+command line that starts it, and what it is doing to your GPU right now. `klif-cli` does the same from a terminal or
+a coding agent.
 
-KLIF is a frontend for people who already run local models. It is not a model zoo and not an inference runtime:
-llama.cpp, stable-diffusion.cpp, vLLM and the rest are separate projects you install yourself, and no weights are
-shipped.
+KLIF is not a model zoo and not an inference runtime. llama.cpp, stable-diffusion.cpp, vLLM and the rest are
+separate projects you install yourself; KLIF starts them, watches them and stops them. No weights are shipped.
 
-> KLIF is a front-end built for AMD and Windows. Different GPU or OS? Let your agent open a PR. Installed KLIF?
-> Let your agent tune and calibrate it. Want other models than the defaults? Let your agent set them up.
+## Why KLIF exists
+
+KLIF was built for daily work with local models on one desk, and that is still what it is for.
+
+Running a local stack by hand ends as a folder of launch scripts, quants that behave differently under HIP and under
+Vulkan, and a coding agent that has to guess which script is the current one and why the other file is the one that
+actually works. KLIF replaces that with one source of truth: every server's command line, visible and editable in
+one place, started and stopped from one window, next to the state of the GPU it runs on.
+
+It is published because it works and holds up in daily use. It is not a product with a roadmap for everybody:
+features land when they solve a real problem in that daily work.
+
+## Why a GUI?
+
+If you are happy driving your models from a terminal, keep doing that. There are thirty kinds of terminals, and a
+launcher script of your own is a weekend's work.
+
+KLIF is for the other case: several servers at once, one glance to see what each of them is doing, no hunting for
+the right script. Everything the window does is also in `klif-cli`, with JSON output, so scripts and agents are
+covered as well.
+
+## Skins
+
+Nine looks over the same data. Every skin has a full window and a 960×640 layout for a small status screen, such as
+a 3.5-inch USB display next to the monitor.
+
+**Live decode**, a language model answering requests. Top row: the full window. Bottom row: the 3.5-inch panel.
+Left to right: Cliff, Silicon, Instrument, Phosphor, Decode, Loom, Ether, Rings, Spirit.
+
+![All nine skins during live decode](docs/media/skins-decode.gif)
+
+<details>
+<summary><strong>Prefill, image generation, startup</strong></summary>
+
+**Prefill**, a long prompt being read in:
+
+![All nine skins during prefill](docs/media/skins-prefill.gif)
+
+**Image generation**, a diffusion job stepping through its schedule:
+
+![All nine skins during image generation](docs/media/skins-image.gif)
+
+**Startup**, a System loading its model:
+
+![All nine skins while a System starts](docs/media/skins-boot.gif)
+
+</details>
+
+The animations come from the browser mock engine with recorded timings, the same data in every skin.
 
 ## What it does
 
-- **Systems as tabs.** You define the Systems you have: "System 1", "System 2", "System 3", "System CGI",
-  "System TTS", "System STT", "System Video", or anything else. Only configured Systems get a tab. Kinds are
-  `llm`, `image`, `tts`, `stt` and `video`. A tab shows online, busy, starting, offline, not set, invalid, fault or
-  unreachable. [docs/systems.md](docs/systems.md)
-- **Several at once.** Every System has its own server, session, logs and telemetry. Before a launch KLIF checks
-  for port clashes, an `exclusive` System on the same GPU and free VRAM, and tells you which Systems would have to
-  stop. It never kills a process it does not own.
+- **Systems as tabs.** You define the Systems you have: "System 1", "System 2", "System CGI", "System TTS", or
+  anything else. Kinds are `llm`, `image`, `tts`, `stt` and `video`. Each tab shows online, busy, starting, offline,
+  not set, invalid, fault or unreachable. [docs/systems.md](docs/systems.md)
+- **Several at once.** Every System has its own server, session, logs and telemetry. Before a launch KLIF checks for
+  port clashes, an `exclusive` System on the same GPU and free VRAM, and names what would have to stop. It never
+  kills a process it does not own.
 - **Other machines and servers you do not start.** A System can be an external server that KLIF only watches, or
-  live on another computer running KLIF (a remote node, opt-in, token-authenticated). One window then covers the
-  whole stack. [docs/nodes.md](docs/nodes.md)
+  live on another computer running KLIF (a remote node, opt-in, token-authenticated). [docs/nodes.md](docs/nodes.md)
 - **Commands you can read.** A preset is the launch command: program, argument list, working folder, environment.
   The Tune drawer, `klif-cli plan` and `klif.toml` show the same thing, and what you see is what runs. Presets can
-  declare independent params (reasoning on/off, image size) instead of one preset per combination.
+  declare independent params (reasoning on or off, image size) instead of one preset per combination.
   [docs/presets.md](docs/presets.md)
 - **Adapters, not a fixed list.** `llama.cpp`, `sd.cpp`, `vllm`, `openai` (any OpenAI-compatible server) and
   `generic` (any program that listens on a port). The adapter decides defaults and which log lines and endpoints
   KLIF reads for telemetry.
-- **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys, nodes, with `--json` and a
-  stable `schemaVersion`. Built so your coding agent can tune, calibrate and extend KLIF without a GUI.
-  [docs/cli.md](docs/cli.md)
-- **Recommendations, with a disclaimer.** KLIF can suggest models per kind and class and download them. The
-  suggestions are starting points measured on one machine. Models, drivers and backends change: your agent
-  should benchmark and calibrate (`klif-cli bench <system>`). Each model keeps its own license. KLIF downloads
-  only from huggingface.co, and only when you ask.
-- **Skins.** Nine interchangeable looks over the same data, each with a full window and a 960x640 panel layout for
-  a small status screen.
+- **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys and nodes, with `--json` and a
+  stable `schemaVersion`. [docs/cli.md](docs/cli.md)
+- **Recommendations, with a disclaimer.** KLIF can suggest models per kind and class and download them from
+  huggingface.co when you ask. The suggestions are starting points measured on one machine; benchmark and calibrate
+  on yours (`klif-cli bench <system>`). Each model keeps its own license.
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit.
-- The Microsoft Edge WebView2 runtime. It is part of Windows 11 and of most up-to-date Windows 10 installs; if it
-  is missing, install the Evergreen runtime from Microsoft.
+- Windows 10 or 11, 64-bit, with the Microsoft Edge WebView2 runtime (part of Windows 11 and of most up-to-date
+  Windows 10 installs).
 - An AMD GPU is the first-class target: the tested setups run HIP (ROCm) and Vulkan builds of llama.cpp and
   stable-diffusion.cpp. GPU memory is read through DXGI and Windows performance counters, which are not
-  AMD-specific, but nothing else is tested. See [docs/platforms.md](docs/platforms.md).
-- The servers you want to run (llama.cpp, stable-diffusion.cpp, and so on) and their model files, in folders you
-  choose. KLIF starts them; it does not install them.
+  AMD-specific, but nothing else is tested. [docs/platforms.md](docs/platforms.md)
+- The servers you want to run and their model files, in folders you choose. KLIF starts them; it does not install
+  them.
 
-To build KLIF yourself: Rust 1.90 or newer (MSVC toolchain), Node.js 20.19+ or 22.12+ with npm, and PowerShell
-5.1+ for the build script.
+## Quick start
 
-## Quickstart
+1. **Get KLIF.** Download `KLIF-<version>.zip` from [Releases](https://github.com/koksny/klif/releases), unzip it
+   anywhere and compare the SHA-256 with the one on the release page:
+   `Get-FileHash -Algorithm SHA256 .\klif.exe`.
 
-1. **Build.** From a clone of this repository:
+   Or build it: Rust 1.90+ (MSVC toolchain), Node.js 20.19+ or 22.12+ with npm, then from a clone
 
    ```powershell
    .\scripts\Build-Release.ps1
    ```
 
-   This builds the UI, `klif.exe` and `klif-cli.exe` into `dist\KLIF\` and prints their SHA-256. Pass `-OutDir`
-   to put them elsewhere. The repository contains source; check that any binary you run matches a build you made
-   or a hash you trust. If PowerShell's execution policy refuses the script, read it, then run it for this
-   process only: `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1`.
+   which puts `klif.exe` and `klif-cli.exe` into `dist\KLIF\` and prints their SHA-256.
 
-2. **Configure.** Copy [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` and
-   replace the fictional paths (`D:\llama.cpp`, `D:\models`, `192.0.2.x`) with yours:
-
-   ```powershell
-   New-Item -ItemType Directory -Force "$env:APPDATA\KLIF" | Out-Null
-   Copy-Item config\klif.example.toml "$env:APPDATA\KLIF\klif.toml"
-   ```
-
-   Or skip the file: start KLIF with no configuration and use **Add a System** in the window. `klif-cli` finds the
-   same file; set `KLIF_CONFIG` to use another one.
+2. **Configure.** Start `klif.exe` with no configuration and use **Add a System**, or copy
+   [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` and replace the fictional
+   paths (`D:\llama.cpp`, `D:\models`, `192.0.2.x`) with yours. `klif-cli` reads the same file; `KLIF_CONFIG` points
+   it at another one.
 
 3. **Look before you launch.**
 
@@ -95,80 +139,58 @@ To build KLIF yourself: Rust 1.90 or newer (MSVC toolchain), Node.js 20.19+ or 2
    klif-cli plan s1
    ```
 
-   `plan` prints the program, arguments, working folder and environment that Launch would use, with secrets
-   masked. Run `klif-cli` from `dist\KLIF` (or put that folder on your PATH).
+   `plan` prints the program, arguments, working folder and environment that Launch would use, secrets masked.
 
-4. **Launch.** Start `klif.exe`, select a tab and press Launch, or:
+4. **Launch.** Select a tab and press Launch, or `klif-cli launch s1 --yes --wait`. Closing KLIF does not stop the
+   servers; the next KLIF adopts them. Stop them from KLIF or with `klif-cli stop --all --yes`.
 
-   ```powershell
-   klif-cli launch s1 --yes --wait
-   ```
+5. **Models.** Set `[paths] models_dir`, then use **Recommended** in the Tune drawer, or `klif-cli models list` and
+   `klif-cli models download <id> --yes`.
 
-   Closing KLIF does not stop the servers. They keep running, and the next KLIF adopts them. Stop them from KLIF
-   or with `klif-cli stop --all --yes`.
+A second computer running KLIF can offer its Systems to this one. Read [docs/nodes.md](docs/nodes.md) before you
+enable it: a default install opens no network port.
 
-5. **Models.** Set `[paths] models_dir`, then use **Recommended** in the Tune drawer or `klif-cli models list` and
-   `klif-cli models download <id> --yes`. Downloads are off until `models_dir` is set.
+Windows Defender or SmartScreen may flag an executable that starts other programs and has no reputation yet.
+[docs/windows-defender.md](docs/windows-defender.md) explains what KLIF does to avoid that, how to verify a build, and
+how to report a false positive.
 
-## Several machines
+## For coding agents
 
-A second computer running KLIF can offer its Systems to this one. On that machine set `[node] listen` and create a
-token with `klif-cli node token --create`; on this one add a `[nodes.<id>]` table with the address and the token
-file. Remote Systems appear as extra tabs with the node's name next to them. Read
-[docs/nodes.md](docs/nodes.md) before you enable it: the `edit` right lets the other machine run arbitrary commands,
-and the traffic is not encrypted yet. A default install opens no network port.
+KLIF is meant to be driven by agents as much as by hand. [AGENTS.md](AGENTS.md) is the briefing: the repo map, the
+`klif.toml` schema, the `klif-cli` JSON contract, the bench-and-calibrate loop, and the safety rules.
 
-## Windows Defender and SmartScreen
+Good jobs for an agent:
 
-KLIF starts other programs, reads GPU and process counters, probes local HTTP ports and can open a network
-listener when you ask. An executable that does these things and has no reputation yet can be flagged by
-heuristics, or shown the "Windows protected your PC" SmartScreen page. Nobody can promise this will not happen on
-your machine, and this project does not claim its builds are "clean" for all time.
+- tune and calibrate an installed KLIF for your hardware with `klif-cli bench`;
+- write presets for models other than the defaults;
+- port KLIF to another GPU vendor or OS, along the seams in [docs/platforms.md](docs/platforms.md).
 
-What the project does to avoid looking like malware:
+Anything an agent sends back as a pull request meets the same bar as a human's, below.
 
-- KLIF's programs do not start PowerShell, `cmd.exe` or any script host themselves. They start exactly the program
-  in your preset.
-- No network port is opened unless `[node] listen` is set. The control channel `klif-cli` uses listens on
-  `127.0.0.1` only and needs a per-run token.
-- The executables carry full version information and a manifest that asks for no elevation (`asInvoker`).
-- UI assets are embedded uncompressed, and release builds strip the builder's local paths.
-- The hardware-identification reader that `klif-cli diag` uses for the RAM type is compiled only into
-  `klif-cli.exe`, never into `klif.exe`.
-- `Build-Release.ps1 -Sign` signs both executables when you provide a certificate or an Azure Trusted Signing
-  profile through environment variables (see the script). Signing is optional and not set up in this repository.
+## Changelog in screenshots
 
-What you can do:
+The full notes are in [CHANGELOG.md](CHANGELOG.md).
 
-- Build from source and compare the SHA-256 the build prints with `Get-FileHash -Algorithm SHA256 <file>`.
-- Scan a file without remediation:
+| Version | Screenshot | What it was |
+| --- | --- | --- |
+| **indev** | <img src="docs/media/history-terminal.png" width="420" alt="The terminal launcher"> | A PowerShell menu: pick a model, size, quant, backend, GPU, context and port, see the exact command, press Enter. One machine, one server at a time. |
+| **0.1** | <img src="docs/media/history-0.1.png" width="420" alt="KLIF 0.1"> | The same idea in a window: one tab per model tier, the command and the live console, Launch and Stop. It lived in a private workshop; the public 0.1 tag set up the name, the mark and the license. |
+| **0.2** | <img src="docs/media/history-0.2.png" width="420" alt="KLIF 0.2"> | The first version with running code: a native core and `klif-cli`, a Tauri shell, model tiers as tabs, live GPU memory and telemetry, a panel mode for a 3.5-inch screen, and skins (four, then nine). |
+| **0.3** | <img src="docs/media/history-0.3.png" width="420" alt="KLIF 0.3"> | A manager for the whole stack: any number of Systems side by side, other machines and external servers, editable commands, recommendations and downloads, and a CLI built for agents. |
 
-  ```powershell
-  & "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "C:\path\to\klif.exe" -DisableRemediation
-  ```
+## Contributing
 
-  One scan reflects one set of definitions at one time. Treat it as a data point, not as a certificate.
-- You do not need to turn Defender off or exclude a folder to run KLIF, and you should not.
+KLIF is maintained for its author's daily use, with the author's time and tokens. A pull request is welcome when it
+meets both of these:
 
-**If Defender flags a build you made from this source**, report it as a false positive to Microsoft:
+- **Quality.** Work at the level of a frontier coding model at its best (Opus 5.5 class or better), verified three
+  times: it builds and passes the checks; an independent review (a session or model that did not write it) found
+  nothing left to fix; and it was run on real hardware, with the evidence in the PR.
+- **Use.** It fixes a real bug, or it adds something that makes daily work with local models better for the
+  maintainer as well. A feature nobody here needs is better kept in a fork, and that is fine.
 
-1. Note the detection name: Windows Security, **Protection history**, or
-   `Get-MpThreatDetection | Select-Object ThreatID, Resources, InitialDetectionTime` and `Get-MpThreat`.
-2. Note the definitions version: Windows Security, **Virus & threat protection updates**, or
-   `(Get-MpComputerStatus).AntivirusSignatureVersion`.
-3. Open the Microsoft Security Intelligence file submission page,
-   <https://www.microsoft.com/en-us/wdsi/filesubmission>. Signing in with a Microsoft account is optional, but it
-   lets you track the submission.
-4. Choose the submitter type **Software developer** and the reason **Incorrectly detected as malware/malicious**
-   (not "Malware/malicious").
-5. Upload the file, enter the detection name and the definitions version, and say in English what the program is:
-   an open-source process manager at <https://github.com/koksny/klif>, the build commit, the SHA-256, and the
-   behaviour that likely triggered the detection (it starts child processes and reads GPU counters).
-6. Wait for Microsoft's answer. A cleared detection reaches machines with a later definitions update. The form may
-   change; if it does, look for "submit a file for malware analysis" on Microsoft Security Intelligence.
-
-A SmartScreen page for a file you built yourself or whose hash you verified can be passed with **More info**, then
-**Run anyway**. Do not do that for a file someone else sent you.
+The checklists, the privacy rules and the development setup are in [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests
+that miss the bar are closed without a long discussion. That is about time, not about you.
 
 ## Docs
 
@@ -177,12 +199,14 @@ A SmartScreen page for a file you built yourself or whose hash you verified can 
 - [Presets](docs/presets.md): launch commands, placeholders, params, adapters, recommendations
 - [klif-cli](docs/cli.md): every command and the JSON contract
 - [Nodes](docs/nodes.md): several machines, rights, the security model
-- [Platforms](docs/platforms.md): Windows and AMD first; CUDA, Linux and macOS through PRs
-- [Brand](docs/brand.md): accent and mark
-- [Publishing](docs/publish.md): what may enter git, what must not
-- [Changelog](CHANGELOG.md), [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), [Agent notes](AGENTS.md)
+- [Platforms](docs/platforms.md): Windows and AMD first; other GPUs and systems through pull requests
+- [Windows Defender and SmartScreen](docs/windows-defender.md)
+- [Brand](docs/brand.md), [Publishing](docs/publish.md), [Changelog](CHANGELOG.md), [Security](SECURITY.md)
 
 ## License
 
-MIT. Model weights you load through KLIF keep their own licenses. Third-party runtimes (llama.cpp, sd.cpp, ComfyUI,
-and so on) keep theirs too.
+MIT, see [LICENSE](LICENSE). Model weights you load through KLIF keep their own licenses, and so do the runtimes
+(llama.cpp, stable-diffusion.cpp, vLLM, ComfyUI and others).
+
+AMD, Radeon, ROCm, NVIDIA, CUDA, Hugging Face and other names are trademarks of their owners. KLIF is an independent
+project, not affiliated with or endorsed by any of them.
