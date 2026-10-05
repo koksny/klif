@@ -73,6 +73,11 @@ an image, and said what was in its way.
   `/inference`). KLIF still has no command that generates: the work goes to `baseUrl`.
 - **`presets param` shows what it replaced** (`edit low -> off`; `--json`: `name`, `previous`, `value`, `applies`),
   so a change made for one task can be put back.
+- **`klif-cli status` shows the params** a System launches with (`params`: name -> choice).
+- **`presets show` finds a node's preset:** `presets show desktop/krea` means `--node desktop`, and a preset that only
+  another machine has is named with the command that shows it.
+- **The Agent Skill works in any shell:** the commands are shell-neutral, the JSON recipe has a PowerShell and a
+  macOS / Linux form, and it covers macOS paths and commands.
 
 ### Fixed (all platforms)
 

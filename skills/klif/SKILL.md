@@ -1,6 +1,6 @@
 ---
 name: klif
-description: Drive KLIF, a Windows manager for local AI model servers (llama.cpp, stable-diffusion.cpp, vLLM, speech and video servers), through its klif-cli command line. Use it to start, stop, restart, tune, benchmark and monitor those servers, to pick and download models that fit the machine, to read server logs and the best speeds KLIF has recorded, and to write or edit presets and Systems in klif.toml. Use it whenever a task mentions KLIF, klif-cli, klif.toml, Systems or presets, or local model servers on a machine where KLIF is installed.
+description: Drive KLIF, a Windows and macOS manager for local AI model servers (llama.cpp, stable-diffusion.cpp, vLLM, speech and video servers), through its klif-cli command line. Use it to start, stop, restart, tune, benchmark and monitor those servers, to pick and download models that fit the machine, to read server logs and the best speeds KLIF has recorded, and to write or edit presets and Systems in klif.toml. Use it whenever a task mentions KLIF, klif-cli, klif.toml, Systems or presets, or local model servers on a machine where KLIF is installed.
 ---
 
 # Driving KLIF with klif-cli
@@ -8,9 +8,10 @@ description: Drive KLIF, a Windows manager for local AI model servers (llama.cpp
 KLIF runs model servers as **Systems** (tabs). A System has a kind (`llm`, `image`, `tts`, `stt`, `video`, `music`) and uses a
 **preset**: the exact command line, environment and port of one server, stored in `klif.toml`. `klif-cli` is KLIF
 without the window: same engine, same configuration, no MCP. Everything below is `klif-cli`; the contract is in
-`AGENTS.md` and `docs/cli.md` of the KLIF repository. Prefer the self-description to guessing:
+`AGENTS.md` and `docs/cli.md` of the KLIF repository. The commands are the same in PowerShell and in a macOS or
+Linux shell; only reading a field out of the JSON differs (see the recipes). Prefer the self-description to guessing:
 
-```powershell
+```sh
 klif-cli --json help                 # every command: arguments, flags, needsYes, mayStartEngine, outputs
 klif-cli help records history        # one command in text
 klif-cli schema                      # the documents; klif-cli schema <name> prints a JSON Schema
@@ -18,8 +19,9 @@ klif-cli schema                      # the documents; klif-cli schema <name> pri
 
 ## Before the first command
 
-1. Find `klif-cli.exe` (next to `klif.exe`, or on `PATH`); `klif-cli --version` proves it runs.
-2. **Experiments use a scratch configuration.** Copy `config\klif.example.toml` to a scratch folder and set
+1. Find `klif-cli` (`klif-cli.exe` next to `klif.exe` on Windows; next to `KLIF.app` in the macOS build folder; or on
+   `PATH`); `klif-cli --version` proves it runs.
+2. **Experiments use a scratch configuration.** Copy `config/klif.example.toml` to a scratch folder and set
    `KLIF_CONFIG` to that copy. Without it `klif-cli` finds the user's live `klif.toml` and, if KLIF is open, its
    running engine. Work on the live configuration or its servers only when the user asked for exactly that, and
    never start or stop the user's model servers otherwise.
@@ -45,9 +47,9 @@ klif-cli schema                      # the documents; klif-cli schema <name> pri
 
 ## Looking
 
-```powershell
+```sh
 klif-cli --json status               # Systems, GPUs, nodes: status, baseUrl, decodeTps, vramGiB
-klif-cli --json status s1            # one System
+klif-cli --json status s1            # one System: baseUrl, adapter, apiKey, the params it launches with
 klif-cli --json plan s1              # the exact command; read "launchable" and "issues" before acting
 klif-cli --json presets list         # presets with availability and last bench
 klif-cli --json hardware             # GPUs, CPU, RAM, peak FP32 TFLOPS, the VRAM pool (starts no engine)
@@ -60,7 +62,7 @@ use (an LLM's ends in `/v1`). `plan` exits 0 even when the System cannot launch;
 
 ## Running a System
 
-```powershell
+```sh
 klif-cli launch s2 --yes --wait                          # blocks until online; exit 1: fault / stopped / timeout
 klif-cli launch s2 --yes --stop-others --wait            # also stops the Systems that conflict (port, GPU, VRAM)
 klif-cli watch --until s2=online --timeout 900           # wait for a status without polling
@@ -104,12 +106,13 @@ status <system>`), in the API of its `adapter`. A System on another machine has 
 
 `plan` after every edit; change **one** thing at a time.
 
-```powershell
+```sh
 klif-cli presets show fast-8b                            # TOML, secrets masked, plus the command
+klif-cli presets show desktop/krea                       # a preset on another machine (= --node desktop)
 klif-cli presets set fast-8b ctx=32768                   # key=value; empty value unsets
 klif-cli presets set fast-8b args+=--no-mmap             # append / remove one token: args-=TOKEN
 klif-cli presets set fast-8b env.HIP_VISIBLE_DEVICES=0   # env.NAME=VALUE, env.NAME- removes
-klif-cli presets save my-tts --file .\my-tts.toml        # whole preset from a file (lists, quotes)
+klif-cli presets save my-tts --file ./my-tts.toml        # whole preset from a file (lists, quotes)
 klif-cli presets use s1 my-tts                           # a System uses a preset (next launch)
 klif-cli presets param s1 reasoning off                  # a param choice (next launch)
 klif-cli systems add --kind stt --label "System STT" --preset stt-local
@@ -120,8 +123,8 @@ klif-cli systems add --kind stt --label "System STT" --preset stt-local
 - Placeholders in `command`, `args`, `cwd`, `env`: `{model} {mmproj} {ctx} {host} {port} {models_dir} {state_dir}
   {data_dir} {stamp} {env:NAME} {p.NAME} {p.NAME.VAR}`. Pass `--host {host} --port {port}` through (`--listen-ip` /
   `--listen-port` for sd.cpp) or the server listens where KLIF is not looking. `command` is an `.exe` (absolute or on
-  `PATH`), never a `.bat` or `.ps1`. `gpu` is for display and fit only: the command selects the device itself.
-- PowerShell 5.1 mangles double quotes in native arguments: put lists and anything with quotes in a file and use
+  `PATH`), never a `.bat` or `.ps1`; on macOS an executable file, run directly (never through a shell). `gpu` is for display and fit only: the command selects the device itself.
+- Windows PowerShell 5.1 mangles double quotes in native arguments: put lists and anything with quotes in a file and use
   `presets save --file`.
 - No secrets in `args`: use `api_key = true` or an `env` variable. Stored secrets show as `••••`; sending that
   back keeps the stored value.
@@ -130,7 +133,7 @@ klif-cli systems add --kind stt --label "System STT" --preset stt-local
 
 ## Models: suggest, download, adopt
 
-```powershell
+```sh
 klif-cli --json suggest                                  # per slot (System 1/2/3, image...): model, quant, ctx, KV, estimated VRAM / RAM
 klif-cli models list --kind llm                          # the embedded pool, installed or not
 klif-cli models download <rec-id> --yes                  # huggingface.co only; needs [paths] models_dir
@@ -149,7 +152,7 @@ klif-cli plan s2 ; klif-cli launch s2 --yes --wait ; klif-cli bench s2 --yes
 
 ## Bench, records, calibrate
 
-```powershell
+```sh
 klif-cli bench s1 --yes                                  # 3 runs; launches the System if needed and stops it again
 klif-cli bench s1 --runs 5 --prompt 2048 --gen 256 --yes
 klif-cli --json bench list --preset fast-8b              # history; a result is "stale" after the command changed
@@ -175,7 +178,7 @@ klif-cli --json records history <key> --metric decode    # how a record climbed
 klif-webui is a small control page for a phone or a browser on the LAN (`docs/webui.md`). It is off by default, plain
 HTTP, and served only by the KLIF window app (`klif.exe`), not by `klif-cli`.
 
-```powershell
+```sh
 klif-cli --json webui                 # on or off, address, listening, error, devices, pairingOpen (never a code)
 klif-cli webui on --host 127.0.0.1    # [webui] in klif.toml: on|off, --host IP, --port N
 klif-cli webui pair --yes             # one-time code and address, valid 5 minutes: a credential
@@ -208,9 +211,16 @@ klif-cli settings skin cliff          # [ui] skin: the skin the window shows, wh
 ## Quick recipes
 
 ```powershell
-# bring up a System and use it
+# bring up a System and use it (PowerShell)
 klif-cli launch s1 --yes --wait ; (klif-cli --json status s1 | ConvertFrom-Json).baseUrl
+```
 
+```sh
+# the same in a macOS or Linux shell (jq ships with macOS 15 and later; python3 -c works too)
+klif-cli launch s1 --yes --wait && klif-cli --json status s1 | jq -r .baseUrl
+```
+
+```sh
 # a launch failed
 klif-cli --json logs s1 --tail 80 ; klif-cli plan s1 ; klif-cli dismiss s1
 

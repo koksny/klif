@@ -186,7 +186,7 @@ new preset does not declare, so run `plan` afterwards and set the ones you still
   and such a System's id is `<node>/<id>` (`render-box/s1`). `status` is one of `not-set invalid offline starting
   online busy stopping fault unreachable`. `status <system>` returns that one entry. `baseUrl` is what clients
   use; for an LLM it ends in `/v1`. `adapter` says which API it speaks (`llama.cpp`, `sd.cpp`, `audiocpp`, ...) and
-  `apiKey: true` that the server wants KLIF's API key; [skills/klif/SKILL.md](skills/klif/SKILL.md) has the request
+  `apiKey: true` that the server wants KLIF's API key, `params` the param choices it launches with; [skills/klif/SKILL.md](skills/klif/SKILL.md) has the request
   and answer of each (KLIF has no command that generates: send the work to `baseUrl`).
 - Never guess sleep times. `launch --wait` blocks until a System is online. `watch --until <system>=<status>
   --timeout <seconds>` waits for any status and ends with `fault` or `stopped` when a System that should come online

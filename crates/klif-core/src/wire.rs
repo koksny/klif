@@ -412,6 +412,10 @@ pub struct StatusSystem {
     /// The server wants KLIF's API key (`Authorization: Bearer <key>`); absent when KLIF cannot tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<bool>,
+    /// The System's param selections (name -> value, e.g. `{"edit": "low", "size": "512x768"}`): what the next launch
+    /// uses. Absent when its preset declares no params.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -493,6 +497,7 @@ pub fn status_of(vm: &ViewModel) -> StatusJson {
                 base_url: s.endpoint.clone(),
                 adapter,
                 api_key,
+                params: s.params.iter().map(|p| (p.name.clone(), p.value.clone())).collect(),
                 model,
                 decode_tps: session.and_then(|x| x.llm.as_ref()).and_then(|l| finite(l.decode_tps)),
                 vram_gib: session.and_then(|x| x.vram_gib).and_then(finite),

@@ -101,7 +101,7 @@ usage: klif-cli [--json] <command> ...
   systems exclusive <system> on|off        Whether the System needs the whole GPU
 
   presets list [--node N]                  Presets with their availability and last bench
-  presets show <id> [--node N]             One preset in full with the command it builds (secrets masked)
+  presets show <id> [--node N]             One preset in full with the command it builds (secrets masked); <node>/<id> = --node
   presets use <system> <id>                Make a System use a preset (applies on the next launch)
   presets param <system> <name> <value>    Choose a param value of the System's preset (applies on the next launch)
   presets save <id> --file F.toml [--use <system>] [--node N]
@@ -194,7 +194,7 @@ JSON (`StatusJson`):
 | --- | --- |
 | `selected` | The selected tab's id; absent with no Systems |
 | `systems[].id`, `label`, `kind`, `status` | Always present. `kind`: `llm image tts stt video`. `status`: `not-set invalid offline starting online busy stopping fault unreachable` |
-| `class`, `node`, `reason`, `preset`, `baseUrl`, `adapter`, `apiKey`, `model`, `decodeTps`, `vramGiB`, `fault` | Present when they apply. `node` and an id like `render-box/s1` mark a System on another machine. `reason` explains `invalid`, `offline` (external), `unreachable`. `fault` is the fault title. `baseUrl` is what clients use; for an LLM it ends in `/v1`. `adapter` is the server family of the preset (`llama.cpp sd.cpp vllm openai audiocpp generic`), which tells the API `baseUrl` speaks (requests and answers per adapter: [skills/klif/SKILL.md](../skills/klif/SKILL.md#using-a-running-system)). `apiKey` is true when the server wants KLIF's API key as `Authorization: Bearer` (absent when KLIF cannot tell). `decodeTps` is the current decode speed, `vramGiB` the session's VRAM |
+| `class`, `node`, `reason`, `preset`, `baseUrl`, `adapter`, `apiKey`, `params`, `model`, `decodeTps`, `vramGiB`, `fault` | Present when they apply. `node` and an id like `render-box/s1` mark a System on another machine. `reason` explains `invalid`, `offline` (external), `unreachable`. `fault` is the fault title. `baseUrl` is what clients use; for an LLM it ends in `/v1`. `adapter` is the server family of the preset (`llama.cpp sd.cpp vllm openai audiocpp generic`), which tells the API `baseUrl` speaks (requests and answers per adapter: [skills/klif/SKILL.md](../skills/klif/SKILL.md#using-a-running-system)). `apiKey` is true when the server wants KLIF's API key as `Authorization: Bearer` (absent when KLIF cannot tell). `params` maps each param of the System's preset to the choice the next launch uses (`{"edit": "low", "size": "512x768"}`). `decodeTps` is the current decode speed, `vramGiB` the session's VRAM |
 | `gpus[]` | `id` (`VEN:DEV`, `VEN:DEV#1`), `name`, `usedGiB`, `totalGiB` |
 | `nodes[].state` | `connecting online offline unauthorized incompatible` |
 

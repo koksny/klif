@@ -103,15 +103,30 @@ fn preset_toml(id: &str, spec: &PresetCfg) -> String {
 }
 
 fn show(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
-    let node = args.opt("--node")?;
-    let id = args.pos("preset id")?;
+    let mut node = args.opt("--node")?;
+    let mut id = args.pos("preset id")?;
     args.done()?;
+    // "<node>/<id>", as a remote System's id is written, means --node <node>.
+    if node.is_none() {
+        if let Some((n, p)) = id.split_once('/').map(|(n, p)| (n.to_string(), p.to_string())) {
+            node = Some(n);
+            id = p;
+        }
+    }
     let conn = conn::connect(loaded)?;
-    let detail = conn
-        .link()
-        .preset(&id, node.as_deref())
-        .map_err(refused)?
-        .ok_or_else(|| CliError::new("not_found", format!("There is no preset \"{id}\"{}.", node.as_deref().map(|n| format!(" on node {n}")).unwrap_or_default())))?;
+    let detail = conn.link().preset(&id, node.as_deref()).map_err(refused)?;
+    let Some(detail) = detail else {
+        let mut msg = format!("There is no preset \"{id}\"{}.", node.as_deref().map(|n| format!(" on node {n}")).unwrap_or_else(|| " on this machine".into()));
+        // A preset another machine has: say how to ask for it (a remote System's preset lives on its node).
+        if node.is_none() {
+            let vm = conn.snapshot(None)?;
+            let on: Vec<&str> = vm.nodes.iter().filter(|n| n.presets.iter().any(|p| p.id == id)).map(|n| n.id.as_str()).collect();
+            if let Some(n) = on.first() {
+                msg.push_str(&format!(" Node {} has it: klif-cli presets show {id} --node {n}", on.join(", ")));
+            }
+        }
+        return Err(CliError::new("not_found", msg));
+    };
     out.doc(val(&PresetsShowDoc { node: node.clone(), preset: detail.clone() }), || {
         let i = &detail.info;
         let mut s = format!(

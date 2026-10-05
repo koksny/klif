@@ -211,6 +211,15 @@ fn human_one(s: &StatusSystem) -> String {
             rows.push(vec![k.into(), v.clone()]);
         }
     }
+    if let Some(a) = s.adapter {
+        rows.push(vec!["adapter".into(), a.as_str().into()]);
+    }
+    if let Some(k) = s.api_key {
+        rows.push(vec!["api key".into(), if k { "required".into() } else { "none".into() }]);
+    }
+    if !s.params.is_empty() {
+        rows.push(vec!["params".into(), s.params.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")]);
+    }
     if let Some(t) = s.decode_tps {
         rows.push(vec!["decode".into(), format!("{t:.1} tok/s")]);
     }
