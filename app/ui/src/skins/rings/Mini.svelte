@@ -88,11 +88,12 @@
     if (fit) return { a: Math.min(100, (fit.base / total) * 100), b: Math.min(100, (fit.top / total) * 100), over: fit.spare < 0 };
     return null;
   });
-  const vramTone = $derived(spill || ghost?.over ? 'danger' : s && total - vm.vram.usedGiB < vm.vram.warnBelowGiB ? 'warn' : '');
+  const vramTone = $derived(ghost?.over ? 'danger' : s && total - vm.vram.usedGiB < vm.vram.warnBelowGiB ? 'warn' : '');
   const vramText = $derived.by(() => {
     if (dz) return { k: 'resident', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, x: `${fmtGiB(dz.pagedOutGiB)} paged out` };
     if (fit) return { k: 'vram', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, x: fit.spare >= 0 ? `fits · ${fmtGiB(fit.spare)} spare` : `over by ${fmtGiB(-fit.spare)}` };
-    return { k: 'vram', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, x: spill ? `spill ${fmtGiB(vm.vram.spillMiB / 1024)}` : 'GiB' };
+    // Spill (device memory the card could not hold) is the quiet note after the figure, in the warn tone.
+    return { k: 'vram', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, x: spill ? `GiB · +${fmtGiB(vm.vram.spillMiB / 1024)} spill` : 'GiB', xw: spill };
   });
 
   // The panel's one control, in the header: Launch the selected System (idle; with conflicts it reads
@@ -205,7 +206,7 @@
         {#if ghost && ghost.b > ghost.a}<span class="ghost" class:over={ghost.over} class:paged={!!dz} style="left:{ghost.a}%;width:{ghost.b - ghost.a}%"></span>{/if}
         <span class="fill {vramTone}" style="width:{usedPct}%"></span>
       </span>
-      <span class="v {vramTone}">{vramText.v}<small>{vramText.x}</small></span>
+      <span class="v {vramTone}">{vramText.v}<small class:sp={'xw' in vramText && vramText.xw}>{vramText.x}</small></span>
     </div>
   </div>
 </div>
@@ -635,6 +636,10 @@
     margin-left: 10px;
     font-size: 17px;
     color: var(--muted);
+  }
+  .vram .v small.sp {
+    color: var(--warn);
+    opacity: 0.85;
   }
   .vram .v.warn small,
   .vram .v.danger small {

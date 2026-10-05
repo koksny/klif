@@ -7,7 +7,7 @@
   //   cliff (left) the VRAM cliff, the skin's signature; hero (right): one big figure with its label and a
   //               status line; rows (right): two fixed facts per kind (LLM: context, prefill; image: last
   //               image, images)
-  //   VRAM strip  numbers only (the drawing is the gauge): VRAM / FITS (idle) / RESIDENT (dormant) / SPILL
+  //   VRAM strip  numbers only (the drawing is the gauge): VRAM / FITS (idle) / RESIDENT (dormant), a spill as a small note
   // A fault covers the hero and the rows. Dormant GPU: amber status, the last figure faded.
   // Smallest text 24 px (labels), values 34 px and up.
   import type { Actions, ViewModel } from '../../../lib/model/types';
@@ -178,7 +178,7 @@
   const exitText = $derived(fault ? (fault.exitCode === undefined ? 'no exit code' : `exit ${fault.exitCodeHex ?? fault.exitCode}`) : '');
 
   // ---- VRAM strip: numbers only --------------------------------------------------------------------------
-  type Strip = { k: string; v: string; aux: string; tone: Tone };
+  type Strip = { k: string; v: string; aux: string; tone: Tone; auxTone?: Tone };
   const strip = $derived.by<Strip>(() => {
     const used = `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`;
     if (idle && slot?.expectedVram?.length && !slot.external) {
@@ -187,7 +187,11 @@
       const aux = `${fmtGiB(top)} / ${fmtGiB(vm.vram.totalGiB)} expected`;
       return spare >= 0 ? { k: 'FITS', v: `${fmtGiB(spare)} GiB spare`, aux, tone: '' } : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, aux, tone: 'red' };
     }
-    if (vm.vram.spillMiB > 0) return { k: 'SPILL', v: `${fmtInt(vm.vram.spillMiB)} MiB`, aux: used, tone: 'red' };
+    // Spill (device memory the card could not hold) is the quiet note after the figure, in the amber.
+    if (vm.vram.spillMiB > 0) {
+      const low = s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB;
+      return { k: 'VRAM', v: used, aux: `+${fmtInt(vm.vram.spillMiB)} MiB spill`, tone: low ? 'amb' : '', auxTone: 'amb' };
+    }
     if (gpu) return { k: 'RESIDENT', v: used, aux: `${fmtGiB(gpu.pagedOutGiB)} GiB in RAM`, tone: 'amb' };
     if (faulted) {
       const rel = releasedGiB(vm);
@@ -319,7 +323,7 @@
     <div class="vram panel">
       <span class="k {strip.tone}">{strip.k}</span>
       <span class="v {strip.tone}">{strip.v}</span>
-      {#if strip.aux}<span class="aux">{strip.aux}</span>{/if}
+      {#if strip.aux}<span class="aux {strip.auxTone ?? ''}">{strip.aux}</span>{/if}
     </div>
   </div>
 </div>
@@ -711,6 +715,11 @@
     color: #a9bcc6;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .vram .aux.amb {
+    font-size: 26px;
+    color: var(--amber);
+    opacity: 0.85;
   }
 
   /* Leave panel mode: shown while the pointer is over the panel or it has focus. */

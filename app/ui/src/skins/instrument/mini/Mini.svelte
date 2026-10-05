@@ -7,7 +7,7 @@
   //   left        the VRAM dial (idle: fit preview of the selected tier) over the backend toggle
   //   right       hero plate: label, the drum counter + unit, a status line; two fixed rows per kind
   //               (LLM: context, prefill; image: last image, images)
-  //   VRAM strip  VRAM / FITS (idle) / RESIDENT (dormant) / SPILL with an LED meter and the value
+  //   VRAM strip  VRAM / FITS (idle) / RESIDENT (dormant) with an LED meter and the value; a spill is a small note
   // A fault covers the hero and the rows. Dormant GPU: amber lamp and label, the last figure faded.
   // Smallest text 24 px (labels), values 34 px and up.
   import { onDestroy } from 'svelte';
@@ -192,12 +192,13 @@
   const spare = $derived(vm.vram.totalGiB - fitTotal);
   const spillGiB = $derived(vm.vram.spillMiB / 1024);
   const lowFree = $derived(!!s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB);
+  // Spill (device memory the card could not hold) is a quiet second line under the figure, in amber.
+  const spillNote = $derived(spillGiB > 0 && !expected.length ? `+${fmtGiB(spillGiB)} GiB spill` : '');
   const strip = $derived.by(() => {
     if (expected.length)
       return spare >= 0
         ? { k: 'FITS', v: `${fmtGiB(spare)} GiB spare`, f: fitTotal / total, tone: '' }
         : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, f: 1, tone: 'hot' };
-    if (spillGiB > 0) return { k: 'SPILL', v: `${fmtGiB(spillGiB)} GiB`, f: vm.vram.usedGiB / total, tone: 'hot' };
     if (sleep) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, f: vm.vram.usedGiB / total, tone: lowFree ? 'amber' : '' };
   });
@@ -337,7 +338,7 @@
   <div class="panel vram">
     <span class="k {strip.tone}">{strip.k}</span>
     <div class="vbar"><LedBar fraction={strip.f} segments={16} tone={sleep ? 'amber' : 'cyan'} label="VRAM" /></div>
-    <span class="v {strip.tone}">{strip.v}</span>
+    <span class="v {strip.tone}">{strip.v}{#if spillNote}<small class="spill">{spillNote}</small>{/if}</span>
   </div>
 </div>
 
@@ -785,6 +786,18 @@
     font-weight: 500;
     font-size: calc(34 * var(--u));
     white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1;
+  }
+  .vram .v .spill {
+    margin-top: calc(4 * var(--u));
+    font-weight: 400;
+    font-size: calc(17 * var(--u));
+    letter-spacing: 0.04em;
+    color: var(--amber);
+    opacity: 0.85;
   }
   .vram .v.hot {
     color: var(--orange);

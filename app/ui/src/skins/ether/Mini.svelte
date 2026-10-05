@@ -61,7 +61,8 @@
   const lowFree = $derived(!!s && vm.vram.totalGiB - vm.vram.usedGiB < vm.vram.warnBelowGiB);
   const vramNote = $derived.by(() => {
     if (fit) return fit.spare >= 0 ? { t: `fits · ${fmtGiB(fit.spare)} spare`, tone: '' } : { t: `over by ${fmtGiB(-fit.spare)}`, tone: 'red' };
-    if (spill > 0) return { t: `spill ${fmtGiB(spill)}`, tone: 'red' };
+    // Spill (device memory the card could not hold): the same quiet note, in the warn tone.
+    if (spill > 0) return { t: `+${fmtGiB(spill)} spill`, tone: 'warn' };
     if (dz) return { t: `${fmtGiB(dz.pagedOutGiB)} paged out`, tone: '' };
     if (lowFree) return { t: `${fmtGiB(vm.vram.totalGiB - vm.vram.usedGiB)} free`, tone: 'warn' };
     return { t: '', tone: '' };
@@ -163,7 +164,7 @@
           <span class="fill sleep" style="width:{pct(vm.vram.usedGiB)}%"></span>
           <span class="paged" style="left:{pct(vm.vram.usedGiB)}%; width:{pct(vm.vram.usedGiB + dz.pagedOutGiB) - pct(vm.vram.usedGiB)}%"></span>
         {:else}
-          <span class="fill" class:red={spill > 0} class:warn={lowFree && spill <= 0} style="width:{pct(vm.vram.usedGiB)}%"></span>
+          <span class="fill" class:warn={lowFree} style="width:{pct(vm.vram.usedGiB)}%"></span>
         {/if}
         {#if fit}<span class="ghost" class:over={fit.spare < 0} style="left:{pct(fit.base)}%; width:{pct(fit.top) - pct(fit.base)}%"></span>{/if}
       </span>
@@ -627,10 +628,6 @@
   .track .fill.warn {
     background: var(--warn);
     box-shadow: 0 0 10px rgba(255, 179, 71, 0.4);
-  }
-  .track .fill.red {
-    background: var(--danger);
-    box-shadow: 0 0 10px rgba(255, 84, 112, 0.5);
   }
   .track .fill.sleep {
     opacity: 0.35;

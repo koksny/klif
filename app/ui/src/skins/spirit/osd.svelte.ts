@@ -226,12 +226,12 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
     const segs: Seg[] = Array.from({ length: 10 }, (_, i) => (i < lit ? 'fill' : i < paged ? 'paged' : i >= g0 && i < g1 ? 'ghost' : ''));
     const spillGiB = v.spillMiB / 1024;
     // Same rule as every skin: a full inference card is normal; warn only below warn_below_gib free.
-    const tone: Tone = spillGiB > 0 ? 'red' : dz ? 'dim' : s && total - used < v.warnBelowGiB ? 'warn' : '';
+    const tone: Tone = dz ? 'dim' : s && total - used < v.warnBelowGiB ? 'warn' : '';
     const text = fit ? `FIT ${gib1(fit.top)}/${gib1(total)}` : `${gib1(used)}/${gib1(total)}`;
     const title = fit
       ? `${selSlot?.label ?? ''} would take the VRAM to ${fmtGiB(fit.top)} of ${fmtGiB(total)} GiB (${fit.spare >= 0 ? `${fmtGiB(fit.spare)} GiB spare` : `over by ${fmtGiB(-fit.spare)} GiB`})`
       : `VRAM ${fmtGiB(v.usedGiB)} of ${fmtGiB(total)} GiB${dz ? ` · ${fmtGiB(dz.pagedOutGiB)} GiB paged out` : ''}${spillGiB > 0 ? ` · ${fmtGiB(spillGiB)} GiB spilled to system memory` : ''}`;
-    return { segs, tone, text, over: !!fit && fit.spare < 0, spill: spillGiB > 0 ? `SPILL ${gib1(spillGiB)}` : '', title };
+    return { segs, tone, text, over: !!fit && fit.spare < 0, spill: spillGiB > 0 ? `+${gib1(spillGiB)} SPILL` : '', title };
   });
 
   // ---- the primary act: Launch / Cancel / Stop / Restart (one fixed place) -------------------------------------

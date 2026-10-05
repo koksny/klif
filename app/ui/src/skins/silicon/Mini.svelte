@@ -203,9 +203,10 @@
   const expected = $derived(idle && slot?.expectedVram?.length && !slot.external ? slot.expectedVram.reduce((a, l) => a + l.gib, 0) : null);
   const spare = $derived(expected !== null ? vm.vram.totalGiB - base - expected : 0);
   const ghost = $derived(expected !== null ? { x0: fx(base), x1: fx(base + expected), over: spare < 0 } : null);
+  // Spill (device memory the card could not hold) is a quiet second line under the figure, in the panel's amber.
+  const spillNote = $derived(spillGiB > 0 && !ghost ? `+${fmtGiB(spillGiB)} GiB spill` : '');
   const vramText = $derived.by(() => {
     if (ghost) return spare >= 0 ? { k: 'FITS', v: `${fmtGiB(spare)} GiB spare`, tone: '' } : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, tone: 'red' };
-    if (spillGiB > 0) return { k: 'SPILL', v: `${fmtGiB(spillGiB)} GiB`, tone: 'red' };
     if (dz) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)} GiB`, tone: lowFree ? 'amber' : '' };
   });
@@ -341,7 +342,7 @@
         </defs>
         {#each segs as sg, i (i)}
           <rect x={sg.x + 1.5} y="0" width={segW - 3} height={GAUGE.h} class="seg" />
-          {#if sg.f > 0}<rect x={sg.x + 1.5} y="0" width={(segW - 3) * sg.f} height={GAUGE.h} class="segfill" class:red={spillGiB > 0} />{/if}
+          {#if sg.f > 0}<rect x={sg.x + 1.5} y="0" width={(segW - 3) * sg.f} height={GAUGE.h} class="segfill" />{/if}
           {#if sg.p - sg.f > 0.004}<rect x={sg.x + 1.5 + (segW - 3) * sg.f} y="0" width={(segW - 3) * (sg.p - sg.f)} height={GAUGE.h} fill="url(#sim-ghost)" class="paged" />{/if}
         {/each}
         {#if ghost}
@@ -349,7 +350,7 @@
         {/if}
         <line x1={GAUGE.w} x2={GAUGE.w} y1="-2" y2={GAUGE.h + 2} class="limit" />
       </svg>
-      <span class="v {vramText.tone}">{vramText.v}</span>
+      <span class="v {vramText.tone}">{vramText.v}{#if spillNote}<small class="spill">{spillNote}</small>{/if}</span>
     </div>
   </div>
 </div>
@@ -741,9 +742,6 @@
   .segfill {
     fill: var(--cyan);
   }
-  .segfill.red {
-    fill: var(--red);
-  }
   .ghost {
     stroke: #8fd0f5;
     stroke-width: 2;
@@ -767,6 +765,17 @@
     font-size: 32px;
     font-weight: 400;
     white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1;
+  }
+  .vram .v .spill {
+    margin-top: 4px;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+    color: var(--amber);
+    opacity: 0.85;
   }
   .vram .v.red {
     color: var(--red);

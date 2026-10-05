@@ -8,7 +8,7 @@
   //               tower fills it top to bottom; two corner captions (the shape; the KV cache or the latents)
   //   hero        (right) label, one figure + unit, a status line; rows: two fixed facts per kind
   //               (LLM: context, prefill; image: last image, images)
-  //   VRAM strip  8 segments at true scale: VRAM / FITS (idle) / RESIDENT (dormant) / SPILL
+  //   VRAM strip  8 segments at true scale: VRAM / FITS (idle) / RESIDENT (dormant), a spill as a small note
   // A fault covers the hero and the rows. Archivo Expanded caps for labels and the figure, JetBrains Mono for data.
   import type { Actions, ViewModel } from '../../lib/model/types';
   import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../lib/model/format';
@@ -192,9 +192,10 @@
   const spillGiB = $derived(vm.vram.spillMiB / 1024);
   const fit = $derived(!s ? fitOf(vm.vram, slot) : null);
   const ghost = $derived(fit ? { x0: fx(fit.base), x1: fx(fit.top), over: fit.spare < 0 } : null);
+  // Spill (device memory the card could not hold) is a quiet second line under the figure, in ember.
+  const spillNote = $derived(spillGiB > 0 && !fit ? `+${fmtGiB(spillGiB)} GiB spill` : '');
   const vramText = $derived.by(() => {
     if (fit) return fit.spare >= 0 ? { k: 'FITS', v: `${fmtGiB(fit.spare)} GiB spare`, tone: '' } : { k: 'OVER', v: `by ${fmtGiB(-fit.spare)} GiB`, tone: 'red' };
-    if (spillGiB > 0) return { k: 'SPILL', v: `${fmtGiB(spillGiB)} GiB`, tone: 'red' };
     if (dz) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, tone: 'amb' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, tone: '' };
   });
@@ -311,7 +312,7 @@
         </defs>
         {#each segs as sg, i (i)}
           <rect x={sg.x + 1.5} y="0" width={segW - 3} height={GH} class="seg" />
-          {#if sg.f > 0}<rect x={sg.x + 1.5} y="0" width={(segW - 3) * sg.f} height={GH} class="segfill" class:red={spillGiB > 0} class:sleep={!!dz} />{/if}
+          {#if sg.f > 0}<rect x={sg.x + 1.5} y="0" width={(segW - 3) * sg.f} height={GH} class="segfill" class:sleep={!!dz} />{/if}
           {#if sg.p - sg.f > 0.004}<rect x={sg.x + 1.5 + (segW - 3) * sg.f} y="0" width={(segW - 3) * (sg.p - sg.f)} height={GH} fill="url(#loom-hatch)" class="paged" />{/if}
         {/each}
         {#if ghost}
@@ -319,7 +320,7 @@
         {/if}
         <line x1={GW} x2={GW} y1="-2" y2={GH + 2} class="limit" />
       </svg>
-      <span class="v {vramText.tone}">{vramText.v}</span>
+      <span class="v {vramText.tone}">{vramText.v}{#if spillNote}<small class="spill">{spillNote}</small>{/if}</span>
     </div>
   </div>
 </div>
@@ -849,9 +850,6 @@
     fill: #8a5a1c;
     filter: none;
   }
-  .segfill.red {
-    fill: var(--red);
-  }
   .ghost {
     stroke: var(--hot);
     stroke-width: 1.4;
@@ -875,5 +873,16 @@
     font-size: 15px;
     color: var(--white);
     white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1.05;
+  }
+  .vram .v .spill {
+    margin-top: 2px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ember);
+    opacity: 0.85;
   }
 </style>

@@ -1,10 +1,10 @@
 <script lang="ts">
   // VRAM as the camera's battery icon: 10 segments, filled = the used share. Paged-out allocations (GPU asleep)
-  // are dim segments, the idle fit preview is outlined. Warn below warn_below_gib free, red on spill. Sized by font-size.
+  // are dim segments, the idle fit preview is outlined. Warn below warn_below_gib free; a spill is a small note after
+  // the figure, in the warn tone. Sized by font-size.
   import type { Battery } from './osd.svelte';
 
-  /** compact: a spill replaces the used / total figure instead of following it (the mini panel). */
-  let { b, compact = false }: { b: Battery; compact?: boolean } = $props();
+  let { b }: { b: Battery } = $props();
 
   const SX = 3.2;
   const SW = 3.3;
@@ -18,7 +18,7 @@
       <rect class="sg {sg}" x={SX + i * (SW + 0.88)} y="3.4" width={SW} height="13.2" />
     {/each}
   </svg>
-  {#if !(compact && b.spill)}<span class="t">{b.text}</span>{/if}
+  <span class="t">{b.text}</span>
   {#if b.spill}<span class="sp">{b.spill}</span>{/if}
 </span>
 
@@ -79,6 +79,9 @@
     font-variant-numeric: tabular-nums;
   }
   .sp {
-    color: var(--red);
+    margin-left: -0.2em;
+    font-size: 0.7em;
+    color: var(--warn);
+    opacity: 0.85;
   }
 </style>

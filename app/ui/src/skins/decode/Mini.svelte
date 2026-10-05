@@ -168,7 +168,7 @@
     }
     const layers = [...vm.vram.layers].sort((a, b) => (a.id === 'other' ? -1 : b.id === 'other' ? 1 : 0));
     for (const l of layers) {
-      out.push({ a: at, b: at + l.gib, cls: spillGiB > 0 ? 'spill' : 'used', color: LAYER_CSS[l.id] });
+      out.push({ a: at, b: at + l.gib, cls: 'used', color: LAYER_CSS[l.id] });
       at += l.gib;
     }
     if (expected !== null) out.push({ a: base, b: base + expected, cls: spare < 0 ? 'ghost over' : 'ghost' });
@@ -185,9 +185,10 @@
       return { parts, free: parts.every((p) => p.cls.startsWith('ghost')) };
     });
   });
+  // Spill (device memory the card could not hold) is a quiet second line under the figure, in the warn amber.
+  const spillNote = $derived(spillGiB > 0 && expected === null ? `+${fmtGiB(spillGiB)} GiB spill` : '');
   const vramText = $derived.by(() => {
     if (expected !== null) return spare >= 0 ? { k: 'FITS', v: `${fmtGiB(spare)} GiB spare`, tone: '' } : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, tone: 'red' };
-    if (spillGiB > 0) return { k: 'SPILL', v: `${fmtGiB(spillGiB)} GiB`, tone: 'red' };
     if (dz) return { k: 'RESIDENT', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, tone: 'amber' };
     return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} / ${fmtGiB(vm.vram.totalGiB)}`, tone: lowFree ? 'amber' : '' };
   });
@@ -304,7 +305,7 @@
         {/each}
         <span class="limit"></span>
       </div>
-      <span class="v {vramText.tone}">{vramText.v}</span>
+      <span class="v {vramText.tone}">{vramText.v}{#if spillNote}<small class="spill">{spillNote}</small>{/if}</span>
     </div>
   </div>
 </div>
@@ -818,9 +819,6 @@
   .c b.used {
     background: var(--c, var(--arc));
   }
-  .c b.spill {
-    background: var(--red);
-  }
   .c b.res {
     background: #a3814f;
   }
@@ -848,6 +846,18 @@
     font-weight: 500;
     color: var(--ice);
     white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1;
+  }
+  .vram .v .spill {
+    margin-top: 4px;
+    font-size: 16px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: var(--amber);
+    opacity: 0.85;
   }
   @media (prefers-reduced-motion: reduce) {
     .st i.pulse {

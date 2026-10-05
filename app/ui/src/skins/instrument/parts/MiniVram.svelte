@@ -206,7 +206,8 @@
     stroke-dasharray: 14 10;
   }
   .spill {
-    fill: #ff6b2c;
+    fill: var(--amber, #f2a33a);
+    opacity: 0.7;
   }
   .outline.resident {
     stroke: rgba(237, 230, 214, 0.5);

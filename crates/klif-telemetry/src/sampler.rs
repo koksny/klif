@@ -74,6 +74,30 @@ struct Row {
     declared: Option<Vec<usize>>,
 }
 
+/// The part of a session's shared (GPU-mapped system) memory that is spill: memory the server wanted on the card and
+/// did not get there. Every GPU process holds shared memory by design (pinned transfer and output buffers, the
+/// runtime's staging: about 0.5-0.7 GiB for a llama.cpp server on ROCm), so the shared counter alone is not spill.
+/// - With the device buffers from the server's log (`logged`): what of them the card does not hold (`on_card` = the
+///   session's commit minus its shared memory), at most the shared memory; 0 until the server is ready (its buffers
+///   are still being filled while it loads). Weights placed in RAM on purpose (`--cpu-moe`, `-ngl`) are host buffers
+///   in the log, so they are not spill.
+/// - Without them: the shared memory, but only while the card is full (only then does the driver put device
+///   allocations into system memory).
+pub(crate) fn spill_gib(shared: f64, on_card: f64, logged: Option<f64>, ready: bool, card_full: bool) -> f64 {
+    let s = match logged {
+        Some(dev) if ready => (dev - on_card).min(shared),
+        Some(_) => 0.0,
+        None if card_full => shared,
+        None => 0.0,
+    };
+    s.max(0.0)
+}
+
+/// Free dedicated memory below which a card counts as full: 2 % of it, at least 256 MiB.
+fn full_margin(total: f64) -> f64 {
+    (total * 0.02).max(256.0 * MIB)
+}
+
 /// Scale `log` to `claim` (None: no platform numbers, the log layers as logged): down when they exceed it; with
 /// `fill_rest`, what they do not explain becomes an "other" layer (never smeared over the named layers). Without
 /// log layers: one "model" layer = claim.
@@ -248,6 +272,8 @@ fn attribute(
     // Session VRAM: sums over the session's GPUs, layers scaled to the claim.
     let mut unmeasured_claim = vec![0.0f64; n];
     let mut session_layers_on: Vec<Vec<(f64, Vec<VramLayer>)>> = vec![Vec::new(); n];
+    // Per row: its spill (GiB) and its shared memory (GiB), to split the spill over its GPUs.
+    let mut row_spill: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
     for r in &rows {
         let (mut ded, mut sh, mut com, mut found) = (0.0, 0.0, 0.0, false);
         for &i in &r.mine {
@@ -294,10 +320,21 @@ fn attribute(
                 shared_gib: round_to(r.per[i].1 / GIB, 3),
             })
             .collect();
+        let spill = if r.spill {
+            let logged = r.log_layers.as_ref().map(|l| l.iter().map(|x| x.gib).sum::<f64>()).filter(|v| *v > 0.0);
+            let full = r.mine.iter().any(|&i| {
+                let total = s.gpus[i].adapter.dedicated_bytes as f64;
+                total > 0.0 && total - used_bytes[i] < full_margin(total)
+            });
+            spill_gib(sh, (com - sh).max(0.0), logged, r.ready, full)
+        } else {
+            0.0
+        };
+        row_spill.push((spill, sh));
         let v = SessionVram {
             resident_gib: ded,
             committed_gib: com,
-            spill_mib: if r.spill { sh * GIB / MIB } else { 0.0 },
+            spill_mib: spill * GIB / MIB,
             layers,
             per_gpu,
         };
@@ -313,7 +350,14 @@ fn attribute(
         let committed_all: f64 = rows.iter().map(|r| r.per[i].2).sum::<f64>() / GIB;
         let shared_all: f64 = rows.iter().map(|r| r.per[i].1).sum::<f64>() / GIB;
         let any_found = rows.iter().any(|r| r.per[i].3);
-        let spill: f64 = rows.iter().filter(|r| r.spill).map(|r| r.per[i].1).sum::<f64>() / MIB;
+        let spill: f64 = rows
+            .iter()
+            .zip(&row_spill)
+            .filter(|(_, (sp, sh))| *sp > 0.0 && *sh > 0.0)
+            .map(|(r, (sp, sh))| sp * (r.per[i].1 / GIB) / sh)
+            .sum::<f64>()
+            * GIB
+            / MIB;
         let running: Vec<&Row> = rows.iter().filter(|r| on(r, i)).collect();
         let any_on = !running.is_empty();
         let ready = running.iter().any(|r| r.ready);

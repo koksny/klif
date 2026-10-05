@@ -131,7 +131,7 @@
       {/each}
     </div>
     <div class="mtr"><Meter m={o.meter} /></div>
-    <div class="bat"><Battery b={o.battery} compact /></div>
+    <div class="bat"><Battery b={o.battery} /></div>
   </div>
 </div>
 

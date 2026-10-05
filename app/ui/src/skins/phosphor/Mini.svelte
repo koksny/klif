@@ -7,7 +7,7 @@
   //   cliff (left) the VRAM cliff trace (idle: the selected tier's fit preview); hero (right): one big figure
   //               with its label and a status line; rows (right): two fixed facts per kind
   //               (LLM: context, prefill; image: last image, images)
-  //   VRAM strip  what the cliff measures, in words: VRAM / FITS (idle) / RESIDENT (dormant) / SPILL
+  //   VRAM strip  what the cliff measures, in words: VRAM / FITS (idle) / RESIDENT (dormant), a spill as a small note
   // A fault covers the hero and the rows. Dormant GPU: amber status, the last figure faded, the allocations
   // drawn paged out on the cliff. Smallest text 24 px (labels), values 34 px and up.
   import { onDestroy } from 'svelte';
@@ -213,7 +213,8 @@
         : { k: 'OVER', v: `by ${fmtGiB(-spare)} GiB`, side: `needs ${fmtGiB(expected)} GiB`, tone: 'red' };
     if (idle) return { k: 'VRAM', v: `${fmtGiB(vm.vram.usedGiB)} GiB in use`, side: vm.vram.device, tone: '' };
     if (gpu) return { k: 'RESIDENT', v: used, side: `${fmtGiB(gpu.pagedOutGiB)} GiB paged out`, tone: 'amber' };
-    if (spillGiB > 0) return { k: 'SPILL', v: `${fmtGiB(spillGiB)} GiB`, side: used, tone: 'red' };
+    // Spill (device memory the card could not hold) takes the quiet side note's place.
+    if (spillGiB > 0) return { k: 'VRAM', v: used, side: `+${fmtGiB(spillGiB)} GiB spill`, tone: lowFree ? 'amber' : '', note: true };
     return { k: 'VRAM', v: used, side: `${fmtGiB(free)} GiB free`, tone: lowFree ? 'amber' : '' };
   });
   // The panel's one control, in the header: Launch the selected System (idle; with conflicts it reads
@@ -341,7 +342,7 @@
     <div class="vram panel">
       <span class="k {vramText.tone}">{vramText.k}</span>
       <span class="v {vramText.tone}">{vramText.v}</span>
-      <span class="side" class:amber={!!gpu}>{vramText.side}</span>
+      <span class="side" class:amber={!!gpu || ('note' in vramText && vramText.note)}>{vramText.side}</span>
     </div>
   </div>
 </div>

@@ -37,6 +37,13 @@ Ubuntu 24.04 in WSL2 with WSLg; Windows and AMD stay the reference build, and ev
   started. The local control server and the node listener now poll a non-blocking `accept()` (20 ms) and see the stop
   themselves. Reproduced in WSL2 with an address removed under a running listener, fixed, and checked on Windows (a
   second engine reaching the node, the listen address changed while running).
+- **Spill is what the card could not hold.** KLIF counted all of a server's shared GPU memory as spill, so a fully
+  offloaded llama.cpp server always showed one (0.66 GiB for Qwen 3.8 27B on ROCm: pinned transfer buffers and the
+  runtime's staging, by design in system memory). Spill is now the server's logged device buffers that are not on
+  the card (at most its shared memory, once it is ready); without a log composition, its shared memory only while the
+  card is full.
+- **Spill on the 960x640 panel.** The VRAM strip no longer turns into a red SPILL bar in every skin: it stays the VRAM
+  figure, and a spill is a small note in the skin's own warn colour (Instrument's spill block in its amber).
 - **macOS.** `KLIF.app` carries `NSLocalNetworkUsageDescription`, so the Local Network prompt says why KLIF asks.
 - **GitHub.** Issue forms for a bug report (with `klif-cli --json diag`) and for a problem or idea; security reports
   go to private advisories. No CI: releases are built on each platform by the release scripts.

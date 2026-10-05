@@ -439,6 +439,11 @@ The JSON result is `{ "file", "summary", "record" }`; `record` has `at`, `preset
 `peakVramGiB`, `spillMiB`, `layers` and `runs[]` (`ttftS`, `prefillTps`, `decodeTps`, `secondsPerImage`,
 `promptTokens`, `genTokens`; TTS / STT / music: `audioS`, `wallS`, `ttsRtf` / `sttRtf` / `musicRtf`).
 
+`spillMiB` is device memory the card could not hold: for llama.cpp, the device buffers in the server's log (weights,
+KV cache, compute) that are not on the card; for other LLM servers, their shared GPU memory while the card is full.
+Memory a server keeps in system RAM by design (pinned transfer buffers, the input embeddings, weights placed there
+with `--cpu-moe` or `-ngl`) is not spill.
+
 The runs also count for the [records](#records), marked `bench`.
 
 ### Records
