@@ -61,8 +61,27 @@ a llama.cpp server with Metal. Windows and AMD stay the reference build; everyth
   265 tok/s prefill, 1.6 s load (`klif-cli bench`); launch, stop and adoption after the app was killed; a signed and
   notarized build accepted by Gatekeeper.
 
+### Agents
+
+From the first remote test: an agent on the Mac launched the image System on the PC through `klif-cli` and generated
+an image, and said what was in its way.
+
+- **`klif-cli status` names the API.** Each System carries `adapter` (`llama.cpp`, `sd.cpp`, `audiocpp`, ...) and,
+  when KLIF can tell, `apiKey` (the server wants KLIF's API key).
+- **Using a running System** in the Agent Skill and `docs/systems.md`: the request and the answer for each adapter
+  (OpenAI chat, sd.cpp `/v1/images/generations` with `b64_json`, audio.cpp speech, transcription and music, whisper's
+  `/inference`). KLIF still has no command that generates: the work goes to `baseUrl`.
+- **`presets param` shows what it replaced** (`edit low -> off`; `--json`: `name`, `previous`, `value`, `applies`),
+  so a change made for one task can be put back.
+
 ### Fixed (all platforms)
 
+- **"Does not fit even with everything stopped" for a server that fits.** The measured VRAM of an sd.cpp (or any
+  log-less) session was its committed total, which counts weights `--offload-to-cpu` keeps in system memory (a Krea
+  preset read 22 GiB on a 16 GiB card it runs on). KLIF now keeps what the session held on the card, drops the old
+  measurements once, and never says "does not fit" for a preset that keeps weights in system RAM (`--cpu-moe`,
+  `-ncmoe`, `-ot ...=CPU`, `-ngl 0`, `--offload-to-cpu`, `--cpu-offload-gb`; `ramOffload` on the System): it makes do
+  with the VRAM it finds. Tune says so instead of "Over by".
 - **A request with a float could fail its MAC.** The receiver checked the MAC against the params as it parsed them,
   and serde_json's default float parsing does not always give back the number that was sent (about one value in
   ten). `klif-cli bench` lost its result that way ("not handed to the records", silently) and, when it had launched

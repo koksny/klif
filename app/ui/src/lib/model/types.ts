@@ -425,6 +425,11 @@ export interface System {
   external: boolean;
   /** Needs the whole GPU. */
   exclusive: boolean;
+  /**
+   * Its preset keeps weights in system RAM (--cpu-moe, -ncmoe, -ot ...=CPU, -ngl 0, --offload-to-cpu,
+   * --cpu-offload-gb): the server makes do with the VRAM it finds, so it never "does not fit".
+   */
+  ramOffload?: boolean;
   /** False for remote Systems whose node does not grant "edit" (and ghost sessions). */
   editable: boolean;
   /** May be launched / stopped from here (local: true; remote: the node grants "launch"). */

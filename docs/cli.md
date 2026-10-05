@@ -2,7 +2,7 @@
 
 `klif-cli.exe` is KLIF without the window: the same engine, from a terminal, a script or a coding agent. It reads
 the same `klif.toml`, edits it through the same comment-preserving code, and shows the same commands the window
-shows. This page is checked against `klif-cli --help` and the code of version 0.3.1.
+shows. This page is checked against `klif-cli --help` and the code of version 0.3.2.
 
 ```
 klif-cli [--json] <command> ...
@@ -155,7 +155,7 @@ agents:   klif-cli --json help (every command), klif-cli schema (JSON Schema of 
           instead of sleep-and-poll loops). Commands that change something need --yes.
 ```
 
-Also: `klif-cli --version` (`klif-cli 0.3.1`; JSON `{"version": "0.3.1"}`) and `klif-cli --help`.
+Also: `klif-cli --version` (`klif-cli 0.3.2`; JSON `{"version": "0.3.2"}`) and `klif-cli --help`.
 
 ### Looking
 
@@ -163,7 +163,7 @@ Also: `klif-cli --version` (`klif-cli 0.3.1`; JSON `{"version": "0.3.1"}`) and `
 KLIF measures and the nodes:
 
 ```
-KLIF 0.3.1 · engine: in-process (this klif-cli holds the engine)
+KLIF 0.3.2 · engine: in-process (this klif-cli holds the engine)
 
    ID        LABEL       KIND   STATUS   PRESET       MODEL                       ENDPOINT                    TOK/S  VRAM
 *  s1        System 1    llm    offline  fast-8b      Fast 8B                     http://127.0.0.1:7030/v1    -      -
@@ -194,7 +194,7 @@ JSON (`StatusJson`):
 | --- | --- |
 | `selected` | The selected tab's id; absent with no Systems |
 | `systems[].id`, `label`, `kind`, `status` | Always present. `kind`: `llm image tts stt video`. `status`: `not-set invalid offline starting online busy stopping fault unreachable` |
-| `class`, `node`, `reason`, `preset`, `baseUrl`, `model`, `decodeTps`, `vramGiB`, `fault` | Present when they apply. `node` and an id like `render-box/s1` mark a System on another machine. `reason` explains `invalid`, `offline` (external), `unreachable`. `fault` is the fault title. `baseUrl` is what clients use; for an LLM it ends in `/v1`. `decodeTps` is the current decode speed, `vramGiB` the session's VRAM |
+| `class`, `node`, `reason`, `preset`, `baseUrl`, `adapter`, `apiKey`, `model`, `decodeTps`, `vramGiB`, `fault` | Present when they apply. `node` and an id like `render-box/s1` mark a System on another machine. `reason` explains `invalid`, `offline` (external), `unreachable`. `fault` is the fault title. `baseUrl` is what clients use; for an LLM it ends in `/v1`. `adapter` is the server family of the preset (`llama.cpp sd.cpp vllm openai audiocpp generic`), which tells the API `baseUrl` speaks (requests and answers per adapter: [skills/klif/SKILL.md](../skills/klif/SKILL.md#using-a-running-system)). `apiKey` is true when the server wants KLIF's API key as `Authorization: Bearer` (absent when KLIF cannot tell). `decodeTps` is the current decode speed, `vramGiB` the session's VRAM |
 | `gpus[]` | `id` (`VEN:DEV`, `VEN:DEV#1`), `name`, `usedGiB`, `totalGiB` |
 | `nodes[].state` | `connecting online offline unauthorized incompatible` |
 
@@ -372,6 +372,8 @@ watching: s1 offline, s2 offline, waiting for s2=online (Ctrl-C ends it)
   choice; both apply on the next launch. `presets use` is refused (nothing is written) for a preset that does not
   exist or has another kind than the System, and it removes the System's param selections that the new preset
   cannot honour (no such param, or a value that is not one of its choices). Selections it can honour stay.
+  `presets param` prints the change with the value it replaced (`--json`: `name`, `previous`, `value`, `applies` =
+  `next launch` or `restart`, then every param as it is now), so a temporary change can be put back.
 - **`presets set <id> key=value...`** edits fields of a preset (it creates the preset when it does not exist):
   `ctx=32768`, `port=7040`, `host=127.0.0.1`, `model=...`, `gpu=cpu`, `endpoint=...`, `managed=false`; `args=["-m",
   "{model}"]` replaces the list, `args+=--no-mmap` appends one token, `args-=--no-mmap` removes one;

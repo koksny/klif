@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "klif"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "core-foundation-sys",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "klif-catalog"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "klif-common",
@@ -1956,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "klif-common"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "indexmap 2.14.2",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "klif-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "klif-supervisor"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "klif-common",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "klif-telemetry"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "core-foundation-sys",

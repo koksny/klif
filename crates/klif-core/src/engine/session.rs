@@ -22,6 +22,10 @@ use crate::keys;
 use crate::narrate::{dormant_line, wake_line};
 use crate::state::{PersistedLast, PersistedSession, MAX_LAYERS};
 
+/// The label of a measured VRAM layer from the session's peak allocations on the card (0.3.2; 0.3.1 wrote "Measured
+/// peak" from the committed total, which counted offloaded weights: those entries are dropped on load).
+pub(crate) const MEASURED_PEAK: &str = "Measured on the card";
+
 /// A fatal log line while the process stays up and the server is not ready: wait this long for it to exit.
 const FATAL_GRACE_S: f64 = 10.0;
 const LOG_TAIL_LEN: usize = 12;
@@ -66,7 +70,10 @@ pub(crate) struct SessionCtx {
     /// PDH Total Committed / Dedicated Usage over the session's pids (GiB), and the peak of committed.
     pub(crate) committed: f64,
     pub(crate) resident: f64,
-    pub(crate) peak_committed: f64,
+    /// The session's peak VRAM allocations on its GPUs: committed minus what sits in shared system memory (which
+    /// `--offload-to-cpu` and spills put there), summed over the GPUs. What the fit check needs, not the committed
+    /// total.
+    pub(crate) peak_vram: f64,
     /// The same per GPU: (GPU id, resident GiB, committed GiB), for the per-GPU VRAM rule (SPEC 16.6 / 16.22).
     pub(crate) per_gpu: Vec<(String, f64, f64)>,
     /// This session's VRAM layers now, and the last non-empty ones while live (persisted at the end).
@@ -104,7 +111,7 @@ impl SessionCtx {
             median_tps: None,
             committed: 0.0,
             resident: 0.0,
-            peak_committed: 0.0,
+            peak_vram: 0.0,
             per_gpu: Vec::new(),
             layers: Vec::new(),
             live_layers: Vec::new(),
@@ -486,8 +493,8 @@ impl Inner {
             let parsed = matches!(ctx.p.adapter(), AdapterId::LlamaCpp | AdapterId::Vllm) && ctx.p.kind == SystemKind::Llm;
             let layers = if parsed && !ctx.live_layers.is_empty() {
                 Some(ctx.live_layers.clone())
-            } else if ctx.peak_committed > 0.05 {
-                Some(vec![VramLayer { id: VramLayerId::Weights, label: "Measured peak".into(), gib: r2(ctx.peak_committed) }])
+            } else if ctx.peak_vram > 0.05 {
+                Some(vec![VramLayer { id: VramLayerId::Weights, label: MEASURED_PEAK.into(), gib: r2(ctx.peak_vram) }])
             } else {
                 None
             };
@@ -537,7 +544,14 @@ impl Inner {
                     ctx.committed = sig.committed_gib;
                     ctx.resident = sig.resident_gib;
                     ctx.per_gpu = sig.per_gpu.iter().map(|g| (g.id.clone(), g.resident_gib, g.committed_gib)).collect();
-                    ctx.peak_committed = ctx.peak_committed.max(sig.committed_gib);
+                    // On the card: committed minus shared memory, per GPU (the committed total also counts weights
+                    // `--offload-to-cpu` keeps in system memory, which made an sd.cpp preset look 22 GiB big).
+                    let on_card = if sig.per_gpu.is_empty() {
+                        sig.resident_gib
+                    } else {
+                        sig.per_gpu.iter().map(|g| (g.committed_gib - g.shared_gib).max(0.0)).sum()
+                    };
+                    ctx.peak_vram = ctx.peak_vram.max(on_card);
                     ctx.layers = sig.layers.clone();
                 }
                 if matches!(ctx.phase, Phase::Live | Phase::Stopping) {

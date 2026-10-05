@@ -88,10 +88,17 @@ stop first. The list is `conflicts` on the System, and it is why the button may 
 | Exclusive GPU | It shares a GPU and either side has `exclusive = true` |
 | VRAM | The System's expected VRAM does not fit in the GPU's free memory next to what is running. Running Systems on that GPU are added to the list, largest first, until it fits |
 
-The expected VRAM is what an earlier session of the same command measured, else (when nothing is offloaded
-to the CPU) the size of the model files. While another System is starting or about to launch, KLIF reserves the larger of what it
-has measured so far and what it expects. If a System would not fit even with everything else stopped, KLIF warns "Does not
-fit even with everything stopped" and lists no VRAM conflicts. A System whose preset names no `gpu`, with no
+The expected VRAM is what an earlier session of the same command held on the card (its allocations minus what sat in
+shared system memory; for llama.cpp and vLLM the composition from the log), else (when nothing is offloaded to the
+CPU) the size of the model files. While another System is starting or about to launch, KLIF reserves the larger of
+what it has measured so far and what it expects. If a System would not fit even with everything else stopped, KLIF
+warns "Does not fit even with everything stopped" and lists no VRAM conflicts.
+
+A preset that keeps weights in system RAM (`--cpu-moe`, `-ncmoe N`, `-ot ...=CPU`, `-ngl 0`, sd.cpp
+`--offload-to-cpu`, vLLM `--cpu-offload-gb`; `ramOffload` on the System) never gets that warning: the server makes
+do with the VRAM it finds, so it always fits, only slower with less of the card. The VRAM rule still stops the
+Systems on its GPU when its measured need does not fit beside them, and Tune says "It keeps weights in system RAM
+and takes the VRAM it finds". A System whose preset names no `gpu`, with no
 `[gpu] inference` set, counts as sharing an unknown GPU with every other such System, which is the cautious
 reading.
 
@@ -121,6 +128,15 @@ Launch, Stop and Restart are refused with a sentence ("... is an external server
 window shows no Launch or Stop control for them, only a quiet "External server" note in its place. External
 Systems are never in a conflict list, never `invalid` because of a port, and never receive KLIF's API key. A local
 System whose address equals an online external one is `invalid` ("port is used by the external System ...").
+
+## Using a running System
+
+KLIF starts, stops and watches servers; requests go straight to the server at the System's `baseUrl`, in the API of
+its `adapter` (both in `klif-cli --json status`): OpenAI chat at `{baseUrl}/chat/completions` for an LLM, `POST
+/v1/images/generations` for sd.cpp, `/v1/audio/speech`, `/v1/audio/transcriptions` and `/v1/tasks/run` for audio.cpp.
+The request and answer of each are in the Agent Skill, [skills/klif/SKILL.md](../skills/klif/SKILL.md#using-a-running-system).
+A System on another machine is reached at that machine's address, which works only when its server listens on the
+network (the preset's `host`) and that machine's firewall lets the client in.
 
 ## Removed from the file while running
 

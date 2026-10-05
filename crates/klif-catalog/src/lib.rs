@@ -229,6 +229,7 @@ impl Catalog {
                 gpus: Vec::new(),
                 external: false,
                 exclusive: row.sys.exclusive,
+                ram_offload: false,
                 editable: true,
                 controllable: true,
                 conflicts: Vec::new(),
@@ -263,6 +264,7 @@ impl Catalog {
                     let (layers, source) = self.expected_vram(cfg, spec, &r, &view.hash, live);
                     sys.expected_vram = layers;
                     sys.expected_vram_source = source;
+                    sys.ram_offload = r.facts.cpu_offload;
                     sys.gpus = gpus_of(cfg, spec);
                     sys.gpu = sys.gpus.first().cloned();
                     sys.external = spec.is_external();

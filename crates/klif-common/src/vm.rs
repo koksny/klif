@@ -1192,6 +1192,11 @@ pub struct System {
     /// Needs the whole GPU (`exclusive = true`).
     #[serde(default)]
     pub exclusive: bool,
+    /// Its preset keeps weights in system RAM (`--cpu-moe`, `-ncmoe N`, `-ot ...=CPU`, `-ngl 0`, sd.cpp
+    /// `--offload-to-cpu`, vLLM `--cpu-offload-gb`): the server makes do with the VRAM it finds, so KLIF never says
+    /// it does not fit (it still frees the GPU from other Systems for speed).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ram_offload: bool,
     /// False for remote Systems whose node does not grant "edit" (and for ghost sessions).
     #[serde(default)]
     pub editable: bool,

@@ -480,7 +480,7 @@ impl Inner {
             // Re-check what cannot have changed for the better while it waited: ports and exclusive GPUs.
             let (host, port, gpus, exclusive, expected) = p.unwrap_or_default();
             let members: Vec<_> = holders(&st, &cfg).into_iter().filter(|m| &m.id != id).collect();
-            let v = conflicts::compute(&Candidate { id: id.clone(), host, port, gpus, exclusive, need: None }, &members, &st.gpu_facts, 0.0);
+            let v = conflicts::compute(&Candidate { id: id.clone(), host, port, gpus, exclusive, need: None, adapts: false }, &members, &st.gpu_facts, 0.0);
             if !v.ids.is_empty() {
                 let labels: Vec<String> = v.ids.iter().map(|c| st.label_of(&cfg, c)).collect();
                 let label = st.label_of(&cfg, id);
@@ -674,7 +674,7 @@ impl Inner {
         }
         let cand = match &view {
             Some(s) => candidate(&st, s),
-            None => Candidate { id: id.clone(), host: String::new(), port: None, gpus: Vec::new(), exclusive: false, need: None },
+            None => Candidate { id: id.clone(), host: String::new(), port: None, gpus: Vec::new(), exclusive: false, need: None, adapts: false },
         };
         // The relaunch would be refused for these (the same port / exclusive check `fire` makes; VRAM is left to
         // Launch, as the System's own memory would count as foreign here): refuse BEFORE stopping anything, so the

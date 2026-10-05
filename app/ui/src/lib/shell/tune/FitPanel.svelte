@@ -59,7 +59,8 @@
     }
     const need = segs.reduce((a, l) => a + l.gib, 0);
     const free = total - need;
-    const state = overGiB > 0 ? 'over' : free < gpu.warnBelowGiB ? 'tight' : 'ok';
+    // A server that keeps weights in system RAM takes the VRAM it finds: more than the card is not an overflow.
+    const state = overGiB > 0 && !system.ramOffload ? 'over' : free < gpu.warnBelowGiB && !system.ramOffload ? 'tight' : 'ok';
     return { total, segs, need, free, overGiB, trimmedGiB, state };
   });
 
@@ -75,6 +76,9 @@
   );
   const fitText = $derived.by(() => {
     if (!fit || running || !expected) return '';
+    if (system.ramOffload) {
+      return 'It keeps weights in system RAM and takes the VRAM it finds, so it fits; the more of the card is free, the faster it runs.';
+    }
     if (fit.state === 'over') return `Over by ${fit.overGiB.toFixed(2)} GiB: the overflow spills to shared system memory.`;
     const trim = fit.trimmedGiB > 0 ? ` The loader trims its buffers by ${fit.trimmedGiB.toFixed(2)} GiB to fit.` : '';
     return fit.state === 'tight'

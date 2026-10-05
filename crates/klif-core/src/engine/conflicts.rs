@@ -71,6 +71,9 @@ pub(crate) struct Candidate {
     pub(crate) exclusive: bool,
     /// Expected VRAM total (GiB), when known.
     pub(crate) need: Option<f64>,
+    /// Keeps weights in system RAM and takes the VRAM it finds: never "does not fit"; the Systems on its GPU are
+    /// still stopped first when the need does not fit beside them (it runs faster with the whole card).
+    pub(crate) adapts: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +197,7 @@ pub(crate) fn compute(c: &Candidate, holders: &[Member], gpus: &[GpuFact], warn:
         if need <= free_eff - warn {
             continue;
         }
-        if need > free_eff + reserved {
+        if need > free_eff + reserved && !c.adapts {
             v.warn = Some(format!(
                 "Does not fit even with everything stopped: needs {need:.1} GiB, at most {:.1} GiB can be free on this GPU.",
                 (free_eff + reserved).max(0.0)

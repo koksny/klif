@@ -79,6 +79,27 @@ klif-cli dismiss s2                                      # leave a fault (back t
   console lines per System, secrets redacted; `--follow` keeps reading until the System stops).
 - External Systems (a preset with `endpoint`) are only watched: launch and stop are refused.
 
+## Using a running System
+
+KLIF starts and watches servers; the work itself goes straight to the server at `baseUrl` (from `klif-cli --json
+status <system>`), in the API of its `adapter`. A System on another machine has that machine's address in `baseUrl`
+(the server must listen on its network for that). KLIF has no command that generates for you.
+
+| `adapter` (kind) | Request | Answer |
+| --- | --- | --- |
+| `llama.cpp`, `vllm`, `openai` (llm) | `POST {baseUrl}/chat/completions` `{"model", "messages": [...]}`; the model id from `GET {baseUrl}/models` | OpenAI chat JSON (`"stream": true` for SSE) |
+| `sd.cpp` (image) | `POST {baseUrl}/v1/images/generations` `{"prompt": "...", "n": 1, "output_format": "png"}`; size and steps are the server's launch defaults (the preset's params) | `{"data": [{"b64_json": "..."}]}`: decode the base64 into the PNG |
+| `audiocpp` (tts) | `POST {baseUrl}/v1/audio/speech` `{"model", "input": "text", "response_format": "json"}`; the model id from `GET {baseUrl}/v1/models` | JSON with base64 WAV audio (`audio`) and `timing` |
+| `audiocpp` (stt) | `POST {baseUrl}/v1/audio/transcriptions`, multipart: `file` (WAV), `model`, `response_format=json` | `{"text": "..."}` |
+| `audiocpp` (music) | `POST {baseUrl}/v1/tasks/run` `{"model", "request": {"text": "...", "duration_seconds": 30, "lyrics": "[Instrumental]"}}` | JSON with base64 WAV (`audio`) and `timing` |
+| whisper-server (stt, `generic`) | `POST {baseUrl}/inference` (or the `--inference-path` in its command), multipart `file` | `{"text": "..."}` |
+
+- `apiKey: true` means the server wants `Authorization: Bearer <KLIF's API key>`. Use the key only from where the
+  user gave it to you (an environment variable); never read `api-key.txt`.
+- A param that has to change for the task (a mode, a size) is a lasting change: `presets param` prints the value it
+  replaced, put it back when you are done if the user did not ask to keep it.
+- Long jobs (a song, a big image) take as long as they take: give the request a generous timeout instead of retrying.
+
 ## Presets and params
 
 `plan` after every edit; change **one** thing at a time.

@@ -96,7 +96,7 @@ pub(crate) fn candidate(st: &State, s: &System) -> Candidate {
         None => (String::new(), None),
     };
     let gpus = if s.gpus.is_empty() { s.gpu.iter().cloned().collect() } else { s.gpus.clone() };
-    Candidate { id: s.id.clone(), host, port, gpus, exclusive: s.exclusive, need: expected_total(s) }
+    Candidate { id: s.id.clone(), host, port, gpus, exclusive: s.exclusive, need: expected_total(s), adapts: s.ram_offload }
 }
 
 /// "Needs System 1 stopped first (port 7030)."
@@ -414,6 +414,7 @@ impl Inner {
                 gpus: ctx.p.all_gpus(),
                 external: false,
                 exclusive: ctx.p.exclusive,
+                ram_offload: false,
                 editable: false,
                 controllable: true,
                 conflicts: Vec::new(),
@@ -602,6 +603,7 @@ fn merge_remote(systems: &mut Vec<System>, focus: &mut BTreeMap<SystemId, Focus>
                         gpus: Vec::new(),
                         external: false,
                         exclusive: false,
+                        ram_offload: false,
                         editable: false,
                         controllable: false,
                         conflicts: Vec::new(),

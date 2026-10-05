@@ -165,10 +165,19 @@ fn param(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let conn = conn::connect(loaded)?;
     let vm = conn.snapshot(None)?;
     let id = resolve(&vm, &sys)?;
+    let previous = find(&vm, &id).and_then(|s| s.params.iter().find(|p| p.name == name).map(|p| p.value.clone()));
     act(&conn, Action::SetParam { system: id.clone(), name: name.clone(), value: value.clone() })?;
     let vm = conn.snapshot(None)?;
-    let params = find(&vm, &id).map(|s| s.params.clone()).unwrap_or_default();
-    out.doc(val(&PresetsParamDoc { system: id.clone(), params }), || format!("{id}: {name} = {value} (applies on the next launch)."));
+    let sys = find(&vm, &id);
+    let params = sys.map(|s| s.params.clone()).unwrap_or_default();
+    let running = sys.is_some_and(|s| s.session.is_some());
+    let applies = if running { "restart" } else { "next launch" };
+    let doc = PresetsParamDoc { system: id.clone(), name: name.clone(), previous: previous.clone(), value: value.clone(), applies: applies.into(), params };
+    out.doc(val(&doc), || {
+        let was = previous.as_deref().map(|p| format!("{p} -> ")).unwrap_or_default();
+        let when = if running { "when it restarts" } else { "on the next launch" };
+        format!("{id}: {name} {was}{value} (applies {when}).")
+    });
     Ok(())
 }
 

@@ -24,7 +24,7 @@
 //! on-path relay can still read and alter cleartext payloads: that needs TLS (future work).
 
 use klif_common::secret::MASK;
-use klif_common::vm::{LlmClass, NodeState, SystemId, SystemKind, SystemStatus, ViewModel};
+use klif_common::vm::{AdapterId, LlmClass, NodeState, SystemId, SystemKind, SystemStatus, ViewModel};
 use klif_common::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -405,6 +405,13 @@ pub struct StatusSystem {
     /// Base URL clients use (LLM: ".../v1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    /// The server family of its preset ("llama.cpp", "sd.cpp", "vllm", "openai", "audiocpp", "generic"): which API
+    /// `baseUrl` speaks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<AdapterId>,
+    /// The server wants KLIF's API key (`Authorization: Bearer <key>`); absent when KLIF cannot tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -465,6 +472,15 @@ pub fn status_of(vm: &ViewModel) -> StatusJson {
         .map(|s| {
             let session = s.session.as_ref();
             let model = Some(s.model.name.trim()).filter(|n| !n.is_empty()).map(str::to_string);
+            let presets = match &s.node {
+                None => &vm.presets[..],
+                Some(n) => vm.nodes.iter().find(|x| &x.id == n).map_or(&[][..], |x| &x.presets[..]),
+            };
+            let adapter = s.preset.as_deref().and_then(|p| presets.iter().find(|x| x.id == p)).map(|x| x.adapter);
+            // A running session knows; otherwise the command's environment names the key (its value is masked).
+            let api_key = session.map(|x| x.api_key_set).or_else(|| {
+                s.command.as_ref().map(|c| c.env.iter().any(|e| !e.removed && e.name.to_ascii_uppercase().ends_with("API_KEY")))
+            });
             StatusSystem {
                 id: s.id.clone(),
                 label: s.label.clone(),
@@ -475,6 +491,8 @@ pub fn status_of(vm: &ViewModel) -> StatusJson {
                 reason: s.reason.clone(),
                 preset: s.preset.clone(),
                 base_url: s.endpoint.clone(),
+                adapter,
+                api_key,
                 model,
                 decode_tps: session.and_then(|x| x.llm.as_ref()).and_then(|l| finite(l.decode_tps)),
                 vram_gib: session.and_then(|x| x.vram_gib).and_then(finite),

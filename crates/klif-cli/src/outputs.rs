@@ -285,11 +285,20 @@ pub struct PresetsUseDoc {
     pub system: Option<SysBrief>,
 }
 
-/// `presets param`.
+/// `presets param`: the change, then every param of the System as it is now.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetsParamDoc {
     pub system: SystemId,
+    /// The param that was set.
+    pub name: String,
+    /// Its value before (None: the System did not show the param).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
+    /// Its value now.
+    pub value: String,
+    /// When it takes effect: "next launch", or "restart" for a System that runs.
+    pub applies: String,
     pub params: Vec<ParamView>,
 }
 
