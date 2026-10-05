@@ -38,9 +38,8 @@ Ubuntu 24.04 in WSL2 with WSLg; Windows and AMD stay the reference build, and ev
   themselves. Reproduced in WSL2 with an address removed under a running listener, fixed, and checked on Windows (a
   second engine reaching the node, the listen address changed while running).
 - **macOS.** `KLIF.app` carries `NSLocalNetworkUsageDescription`, so the Local Network prompt says why KLIF asks.
-- **GitHub.** A Check workflow builds and checks Windows, macOS and Linux on every pull request and push to `main`
-  (svelte-check, the UI build, `cargo check` of the crates and of the window app); issue forms for a bug report (with
-  `klif-cli --json diag`) and for a problem or idea; security reports go to private advisories.
+- **GitHub.** Issue forms for a bug report (with `klif-cli --json diag`) and for a problem or idea; security reports
+  go to private advisories. No CI: releases are built on each platform by the release scripts.
 - **Vite** reads its folder through `import.meta.dirname` (no warning about the coming native config loader).
 
 ### Skins
