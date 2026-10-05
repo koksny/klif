@@ -13,7 +13,8 @@
   <img src="https://img.shields.io/badge/version-0.3.2-5AB6EB" alt="Version 0.3.2">
   <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/GPU-AMD%20HIP%20%7C%20Vulkan-5AB6EB" alt="AMD GPUs, HIP and Vulkan">
+  <img src="https://img.shields.io/badge/macOS-13%2B%20Apple%20silicon-5AB6EB" alt="macOS 13 or later on Apple silicon">
+  <img src="https://img.shields.io/badge/GPU-AMD%20HIP%20%7C%20Vulkan%20%7C%20Apple%20Metal-5AB6EB" alt="AMD GPUs with HIP and Vulkan, Apple silicon with Metal">
 </p>
 
 <p align="center">
@@ -22,10 +23,13 @@
   </a>
 </p>
 
-KLIF manages a local inference stack from one window: the language-model, image, speech, transcription and video
-servers you already run, on one machine or several. Each server is a **System**: a tab with a live status, the exact
-command line that starts it, and what it is doing to your GPU right now. `klif-cli` does the same from a terminal or
-a coding agent.
+KLIF manages a local inference stack from one window: the language-model, image, speech, transcription, music and
+video servers you already run, on one machine or several. Each server is a **System**: a tab with a live status, the
+exact command line that starts it, and what it is doing to your GPU right now. `klif-cli` does the same from a
+terminal or a coding agent, and klif-webui from a phone.
+
+KLIF runs on Windows, where it is built and tuned for AMD GPUs, and on macOS with Apple silicon. One machine can
+launch and stop Systems on another, a Mac on a Windows desktop and the other way round.
 
 KLIF is not a model zoo and not an inference runtime. llama.cpp, stable-diffusion.cpp, vLLM and the rest are
 separate projects you install yourself; KLIF starts them, watches them and stops them. No weights are shipped.
@@ -124,9 +128,10 @@ The animations come from the browser mock engine with recorded timings, the same
 
 ## Quick start
 
-1. **Get KLIF.** Download `KLIF-<version>.zip` from [Releases](https://github.com/koksny/klif/releases), unzip it
-   anywhere and compare the SHA-256 with the one on the release page:
-   `Get-FileHash -Algorithm SHA256 .\klif.exe`.
+1. **Get KLIF.** Download `KLIF-<version>.zip` (Windows) or `KLIF-<version>-macos-arm64.zip` (macOS) from
+   [Releases](https://github.com/koksny/klif/releases), unzip it anywhere and compare the SHA-256 with the one on the
+   release page: `Get-FileHash -Algorithm SHA256 .\klif.exe` on Windows, `shasum -a 256 KLIF-<version>-macos-arm64.zip`
+   on a Mac.
 
    Or build it: Rust 1.90+ (MSVC toolchain), Node.js 20.19+ or 22.12+ with npm, then from a clone
 
@@ -144,8 +149,8 @@ The animations come from the browser mock engine with recorded timings, the same
    puts `KLIF.app` and `klif-cli` into `dist/KLIF/`, zips the folder and prints the SHA-256 of each. An unsigned
    build from someone else is stopped by Gatekeeper the first time: [docs/platforms.md](docs/platforms.md#gatekeeper).
 
-2. **Configure.** Start `klif.exe` with no configuration and use **Add a System**, or copy
-   [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` (macOS:
+2. **Configure.** Start KLIF (`klif.exe`, or `KLIF.app` on a Mac) with no configuration and use **Add a System**,
+   or copy [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` (macOS:
    `~/Library/Application Support/KLIF/klif.toml`) and replace the fictional
    paths (`D:\llama.cpp`, `D:\models`, `192.0.2.x`) with yours. `klif-cli` reads the same file; `KLIF_CONFIG` points
    it at another one.
@@ -220,7 +225,8 @@ that miss the bar are closed without a long discussion. That is about time, not 
 - [klif-cli](docs/cli.md): every command and the JSON contract
 - [Nodes](docs/nodes.md): several machines, rights, the security model
 - [klif-webui](docs/webui.md): the control page for a phone, pairing, the security model, the API
-- [Platforms](docs/platforms.md): Windows and AMD first; other GPUs and systems through pull requests
+- [Platforms](docs/platforms.md): Windows with AMD and macOS with Apple silicon, what each tests; other GPUs and
+  systems through pull requests
 - [Windows Defender and SmartScreen](docs/windows-defender.md)
 - [Brand](docs/brand.md), [Publishing](docs/publish.md), [Changelog](CHANGELOG.md), [Security](SECURITY.md)
 

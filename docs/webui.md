@@ -170,6 +170,9 @@ New-NetFirewallRule -DisplayName "KLIF klif-webui" -Direction Inbound -Protocol 
 
 Use the port you set in `[webui] port`. With `host = "127.0.0.1"` nothing leaves the computer and Windows asks nothing.
 
+On a Mac, `KLIF.app` serves the page the same way; when the macOS firewall is on, it asks once whether KLIF may accept
+incoming connections ([platforms.md](platforms.md#firewall)).
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |

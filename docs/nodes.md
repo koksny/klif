@@ -34,6 +34,10 @@ New-NetFirewallRule -DisplayName "KLIF node" -Direction Inbound -Protocol TCP -L
   -RemoteAddress 192.0.2.20 -Profile Private -Action Allow
 ```
 
+On a Mac that listens, macOS may ask whether KLIF may accept incoming connections (when its firewall is on). A Mac
+that **connects** needs the Local Network permission for KLIF (System Settings > Privacy & Security > Local Network);
+without it every connection fails with "No route to host". See [platforms.md](platforms.md#local-network).
+
 On the machine that **connects**, save the token into a file (or an environment variable) and add the node:
 
 ```toml

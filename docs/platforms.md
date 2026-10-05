@@ -1,9 +1,10 @@
 # Platforms
 
-KLIF is a front-end built for AMD and Windows. That is the build that is tested, and the one every decision here
-favours. Other GPUs and other operating systems are expected to arrive as pull requests, ideally written by your
-coding agent for your hardware. This page says what works today, which parts are platform-specific, and what a good
-port looks like.
+KLIF is a front-end built for AMD and Windows, and it runs on macOS with Apple silicon too. Windows with an AMD GPU
+is the reference build that every decision here favours; macOS is tested on an M4, and a Mac and a Windows machine
+drive each other's Systems as [nodes](nodes.md). Other GPUs and other operating systems are expected to arrive as
+pull requests, ideally written by your coding agent for your hardware. This page says what works today, which parts
+are platform-specific, and what a good port looks like.
 
 ## Status
 
@@ -129,7 +130,14 @@ which matters for a node listener (`[node] listen`). An ad-hoc build asks again 
 
 With `[node] listen` set, the first time KLIF listens macOS may ask whether KLIF may accept incoming network
 connections (when the firewall is on: System Settings > Network > Firewall). Allow it for a node that other machines
-use; KLIF never changes firewall settings itself.
+use; KLIF never changes firewall settings itself. The same goes for klif-webui (`[webui]`).
+
+### Local Network
+
+macOS asks before an app reaches other devices on the local network (System Settings > Privacy & Security > Local
+Network). Without that permission, connecting to a node fails with **"No route to host"**, although the other machine
+answers and its firewall lets the Mac in. Allow KLIF there. When no KLIF window runs, `klif-cli` runs its own engine
+inside the terminal, so the terminal app (Terminal, iTerm, the one your agent uses) needs the permission instead.
 
 ## Writing a port
 

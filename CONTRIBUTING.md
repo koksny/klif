@@ -39,8 +39,9 @@ closed without a long discussion: that is about time, not about you.
 
 ## Development setup
 
-You need Rust 1.90 or newer (MSVC toolchain on Windows), Node.js 20.19+ or 22.12+ with npm, and the WebView2
-runtime to run the desktop app.
+You need Rust 1.90 or newer (MSVC toolchain on Windows; on a Mac the Xcode Command Line Tools), Node.js 20.19+ or
+22.12+ with npm, and on Windows the WebView2 runtime to run the desktop app. The macOS release build is
+`scripts/build-release.sh` ([docs/platforms.md](docs/platforms.md)).
 
 ```powershell
 # Rust: from the repository root
