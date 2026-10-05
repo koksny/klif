@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.3 (unreleased, branch `0.3.3`)
+0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
+were built from source; their notes follow, newest first.
+
+## 0.3.3 (2026-10-06)
 
 KLIF on Linux.
 
@@ -51,6 +54,9 @@ Ubuntu 24.04 in WSL2 with WSLg; Windows and AMD stay the reference build, and ev
 
 ### Skins
 
+- **Skin in Tune.** Tune has a Skin choice next to the other settings of this machine (what the skin shows on hover),
+  so switching does not depend on knowing F2 or the tray menu. The display settings are one line each, and the drawer
+  is a little tighter, so it fits a 1440p window at 125 % without scrolling.
 - **Without WebGL.** Decode, Loom, Ether, Rings and Spirit show a note where their picture would be when the window
   cannot draw it: what is missing, that the rest of KLIF works, and how to switch (F2 or the tray's Skin menu; Cliff,
   Silicon, Instrument and Phosphor need no WebGL). It replaces the small error lines, and is centred on the picture
@@ -58,7 +64,7 @@ Ubuntu 24.04 in WSL2 with WSLg; Windows and AMD stay the reference build, and ev
   an alert without them), and says why its smoke is missing when the page has not started after 20 s of flowing
   frames or steps at under 10 frames per second (under WSLg: about 2).
 
-## 0.3.2 (unreleased, branch `0.3.2`)
+## 0.3.2 (2026-10-05)
 
 KLIF on a phone and on a Mac: a small page that shows every System and controls it from a device on your network,
 and the window app and `klif-cli` on macOS with Apple silicon.
@@ -153,7 +159,7 @@ an image, and said what was in its way.
 - **Secret files on unix** (`control.json`, `node-token.txt`, `api-key.txt`) are written readable by their owner
   only (0600). Windows is unchanged (the profile's ACL protects them).
 
-## 0.3.1 (unreleased, branch `0.3.1`)
+## 0.3.1 (2026-10-04 to 2026-10-05)
 
 KLIF now knows the machine it runs on: what it can compute, which models fit it, and the best each model file has
 reached on it.
@@ -204,7 +210,7 @@ reached on it.
 - The Stop button takes a colour from each skin's palette instead of one shared red.
 - The schema-1 recommendation list is replaced by the model pool; Tune's "Recommended" section is now "Models".
 
-## 0.3.0 (unreleased, branch `0.3`)
+## 0.3.0 (2026-10-03 to 2026-10-04)
 
 KLIF stops being a launcher for a fixed set of model "tiers" and becomes a manager for a whole local inference
 stack: any number of Systems side by side, on this machine or on others, each with a launch command you can read

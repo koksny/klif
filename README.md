@@ -65,7 +65,8 @@ the right script. Everything the window does is also in `klif-cli`, so scripts a
 ## Skins
 
 Nine looks over the same data. Every skin has a full window and a 960×640 layout for a small status screen, such as
-a 3.5-inch USB display next to the monitor.
+a 3.5-inch USB display next to the monitor. Pick one in Tune (Skin, at the bottom), from the tray's Skin menu, or with
+F2 (Shift+F2 back) and Ctrl+1..9.
 
 **Live decode**, a language model answering requests. Top row: the full window. Bottom row: the 3.5-inch panel.
 Left to right: Cliff, Silicon, Instrument, Phosphor, Decode, Loom, Ether, Rings, Spirit.

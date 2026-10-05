@@ -176,10 +176,10 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 14px 18px;
+    padding: 12px 18px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 11px;
     overscroll-behavior: contain;
   }
   :global(.tune-sheet .field) {
