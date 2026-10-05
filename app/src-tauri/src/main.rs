@@ -22,17 +22,24 @@ mod selftest;
 mod shell;
 mod tray;
 
-// Windows-only modules; other systems get stand-ins from `other_os` under the same names.
+// Windows-only modules; macOS has its own clipboard, other systems get stand-ins from `other_os` under the same
+// names.
 #[cfg(windows)]
 mod clipboard;
 #[cfg(windows)]
 mod gpu;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod webview;
 #[cfg(not(windows))]
 mod other_os;
+#[cfg(target_os = "macos")]
+use macos::clipboard;
+#[cfg(not(any(windows, target_os = "macos")))]
+use other_os::clipboard;
 #[cfg(not(windows))]
-use other_os::{clipboard, gpu, webview};
+use other_os::{gpu, webview};
 
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -174,8 +181,10 @@ fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: Strin
         .min_inner_size(MIN_W, MIN_H)
         .inner_size(1024.0, 1152.0)
         .visible(false)
-        .data_directory(webview_dir.clone())
         .on_page_load(move |w, p| on_page_load(&page_app, &w, &p));
+    // WebView2's profile folder. WKWebView keeps its data per app itself (~/Library/WebKit/<bundle id>).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.data_directory(webview_dir.clone());
     // WebView2 only: the GPU pin (and wry's own default arguments, re-appended there).
     #[cfg(windows)]
     let builder = builder.additional_browser_args(&browser_args);
@@ -186,7 +195,7 @@ fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: Strin
         "window built in {} ms (frameless {}, webview data {})",
         t.elapsed().as_millis(),
         cfg.ui.frameless,
-        webview_dir.display()
+        if cfg!(target_os = "macos") { "kept by WebKit".to_string() } else { webview_dir.display().to_string() }
     );
     // Panel mode comes back the way it was left: straight onto the small screen, before the first frame.
     let panel_target = panel::startup(app, &win);

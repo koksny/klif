@@ -23,23 +23,29 @@ enum Fact {
     File,
     /// Is a folder.
     Dir,
+    /// Is a regular file with an execute bit (unix).
+    Exec,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Answer {
     File(Option<u64>),
     Dir(bool),
+    Exec(bool),
 }
 
 impl Answer {
     fn size(self) -> Option<u64> {
         match self {
             Answer::File(s) => s,
-            Answer::Dir(_) => None,
+            Answer::Dir(_) | Answer::Exec(_) => None,
         }
     }
     fn dir(self) -> bool {
         matches!(self, Answer::Dir(true))
+    }
+    fn exec(self) -> bool {
+        matches!(self, Answer::Exec(true))
     }
 }
 
@@ -73,7 +79,19 @@ fn measure(fact: Fact, p: &Path) -> Answer {
             _ => None,
         }),
         Fact::Dir => Answer::Dir(std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)),
+        Fact::Exec => Answer::Exec(std::fs::metadata(p).is_ok_and(|m| m.is_file() && is_exec_mode(&m))),
     }
+}
+
+#[cfg(unix)]
+fn is_exec_mode(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_exec_mode(_: &std::fs::Metadata) -> bool {
+    true
 }
 
 impl FileProbe {
@@ -151,6 +169,16 @@ impl FileProbe {
     /// True when `p` is an existing folder.
     pub fn is_dir(&self, p: &Path) -> bool {
         self.ask(Fact::Dir, p).is_some_and(Answer::dir)
+    }
+
+    /// True when `p` is a regular file the system can run: any file on Windows (the extension decides there),
+    /// a file with an execute bit elsewhere.
+    pub fn is_executable(&self, p: &Path) -> bool {
+        if cfg!(unix) {
+            self.ask(Fact::Exec, p).is_some_and(Answer::exec)
+        } else {
+            self.is_file(p)
+        }
     }
 
     /// True when `p` exists (file or folder).

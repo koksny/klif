@@ -138,7 +138,7 @@ pub fn serve_local(handle: EngineHandle, state_dir: &Path) -> Result<ControlServ
     let file = ControlFile { pid: std::process::id(), port, token: token_hex, version: KLIF_VERSION.to_string() };
     let mut bytes = serde_json::to_vec_pretty(&file)?;
     drop(file);
-    let written = wire::write_atomic(&control_path, &bytes);
+    let written = wire::write_secret_atomic(&control_path, &bytes);
     bytes.iter_mut().for_each(|b| *b = 0);
     written.with_context(|| format!("{} could not be written", control_path.display()))?;
     let gate = Gate::Local { token, name: computer_name() };

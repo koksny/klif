@@ -18,7 +18,7 @@ klif-cli [--json] <command> ...
   then answers at once.
 - Only one engine runs per state folder. `klif-cli serve` refuses to start when one already runs (`engine_busy`).
 - Configuration comes from `KLIF_CONFIG`, else `.local\klif.toml` above the exe or the working folder, else
-  `%APPDATA%\KLIF\klif.toml`. **Set `KLIF_CONFIG` when you experiment**: even `status` starts an engine, which
+  `%APPDATA%\KLIF\klif.toml` (macOS: `~/Library/Application Support/KLIF/klif.toml`). **Set `KLIF_CONFIG` when you experiment**: even `status` starts an engine, which
   creates `engine.lock`, `state.v3.json` and other files in the state folder.
 - `KLIF_LOG=info|debug` (also `trace`, `error`, `off`) prints engine log lines on stderr. Warnings are on by
   default. Bench and download progress always go to stderr. `trace` covers KLIF's own records only: dependencies
@@ -149,6 +149,7 @@ presets set keys: command  args=["json","array"]  args+=TOKEN  args-=TOKEN  env.
           env_remove+=NAME  env_remove-=NAME  cwd  port  host  endpoint  health  model  mmproj  ctx  gpu  kind
           adapter  name  managed  api_key  model_name  quant  backend  device  notes   (empty value = unset)
 config:   KLIF_CONFIG=<klif.toml>, else .local\klif.toml above the exe or the current folder, else %APPDATA%\KLIF\klif.toml.
+          (macOS: .local/klif.toml ..., else ~/Library/Application Support/KLIF/klif.toml.)
 logs:     KLIF_LOG=info|debug (stderr; trace = KLIF's own records only, dependencies capped at debug).
 agents:   klif-cli --json help (every command), klif-cli schema (JSON Schema of every document), klif-cli watch (events
           instead of sleep-and-poll loops). Commands that change something need --yes.

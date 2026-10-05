@@ -1,10 +1,13 @@
-// Global shortcuts: Ctrl+1..4 / Alt+1..4 and F2 (Shift+F2 backwards) switch skins, F3 is panel mode (the
+// Global shortcuts: Ctrl+1..4 / Alt+1..4 (on a Mac also Cmd+1..4) and F2 (Shift+F2 backwards) switch skins, F3 is panel mode (the
 // desktop app moves the window onto the small status screen; a browser only switches the layout between
 // mini and full), backquote toggles the dev bar, R toggles the Records screen (full size), Escape closes drawers.
 // Nothing here fires while the user is typing in a field (Escape then only leaves the field).
 import { SKINS } from '../../skins/registry';
 import { player } from '../state/player.svelte';
 import { ui } from '../state/ui.svelte';
+
+// Cmd is the Mac's shortcut key; elsewhere the Meta (Windows) key belongs to the system.
+const MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
 
 function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -34,7 +37,7 @@ export function installKeys(): () => void {
       return;
     }
     // Alt+digit is an alias: a normal browser tab swallows Ctrl+digit before the page sees it.
-    if ((e.ctrlKey || e.altKey) && !e.metaKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+    if ((e.ctrlKey || e.altKey || (MAC && e.metaKey)) && (MAC || !e.metaKey) && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
       const n = Number(e.code.slice(5)) - 1;
       if (n < SKINS.length) {
         e.preventDefault();

@@ -33,7 +33,7 @@ because bench records are named after it. An id with a dot is read as a sub-tabl
 | `name` | Display name (default: the id) |
 | `adapter` | `llama.cpp` (default), `sd.cpp`, `vllm`, `openai`, `audiocpp`, `generic` |
 | `kind` | `llm`, `image`, `tts`, `stt`, `video`, `music`. Default: `image` for sd.cpp, `llm` for llama.cpp, vllm and openai. **Required for `generic`** |
-| `command` | The program: an absolute path, or a name on PATH. `.exe` and `.com` only. Empty when `endpoint` is set |
+| `command` | The program: an absolute path, or a name on PATH. Windows: `.exe` and `.com` only; macOS: a file with the execute bit, run directly (never through a shell). Empty when `endpoint` is set |
 | `args` | The argument list, one token per entry. KLIF never re-splits or merges tokens |
 | `cwd` | Working folder (absolute, must exist). Default: the program's folder |
 | `env` | Environment variables to set; values may use placeholders |
@@ -108,13 +108,16 @@ activity, so a chatty server looks busy.
    | `{p.NAME.VAR}` | the selected choice's variable `VAR` (one value) |
 
    Only `{identifier}` patterns count, so JSON braces in an argument stay as they are. An unknown placeholder or
-   a missing value is an error. `{env:NAME}` is shown as `%NAME%` and hashed as that text, not as its value, so
+   a missing value is an error. `{env:NAME}` is shown as `%NAME%` (macOS: `$NAME`) and hashed as that text, not as its value, so
    `klif.exe` and `klif-cli` (which may have different environments) agree on the hash. `{stamp}` is shown and
    hashed as the text `{stamp}` in the Tune drawer and in `klif-cli plan`: it has no value until a launch starts,
    and a hash that changed with every launch would mark every bench result stale.
 3. **Program:** an absolute `.exe`/`.com`, or a bare name searched on the preset's own `PATH` first, then on KLIF's.
    A `.bat`/`.cmd` file is an error with the way out (`command = "cmd.exe"`, `args = ["/c", "<the .bat file>", ...]`);
    `.ps1`, `.py`, `.sh`, `.js` and similar are errors too: set `command` to the interpreter and put the script in `args`.
+   On macOS the program is any file with the execute bit (a script with a `#!` line included: the system runs it,
+   not a shell of KLIF's); the PATH search skips files without it, like `which`. A file without the bit, a folder
+   and an `.app` bundle (point at `Contents/MacOS/<name>` inside it) are errors that say so.
 4. **Working folder:** `cwd`, else the program's folder.
 5. **Environment:** KLIF's own environment, minus `env_remove` and the key variables, plus the managed rows, the
    API key and your `env` (yours wins per key and is shown as "overridden").

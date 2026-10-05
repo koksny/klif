@@ -286,11 +286,13 @@ impl Exp<'_> {
                     err(out, Cat::Other, field, format!("{{{name}}}: \"{var}\" is not an environment variable name."));
                     return lit();
                 }
+                // Shown as this platform's shell writes a variable: %X% on Windows, $X elsewhere.
+                let shown = if cfg!(windows) { format!("%{var}%") } else { format!("${var}") };
                 match std::env::var_os(var) {
-                    Some(v) => (v.to_string_lossy().into_owned(), format!("%{var}%")),
+                    Some(v) => (v.to_string_lossy().into_owned(), shown),
                     None => {
                         warn(out, field, format!("{var} is not set in KLIF's environment, so {{env:{var}}} expands to nothing."));
-                        (String::new(), format!("%{var}%"))
+                        (String::new(), shown)
                     }
                 }
             }
@@ -510,6 +512,10 @@ enum ProgErr {
     Script(String),
     Relative,
     NotFound,
+    /// Unix: a regular file without an execute bit.
+    NotExecutable,
+    /// Unix: a folder (a macOS `.app` bundle included), not a program.
+    Folder,
 }
 
 /// Looks like an absolute path on this platform.
@@ -527,7 +533,9 @@ fn path_dirs(value: &str) -> Vec<PathBuf> {
     value.split(sep).map(|d| d.trim().trim_matches('"')).filter(|d| !d.is_empty() && looks_absolute(d)).map(PathBuf::from).collect()
 }
 
-/// Absolute as written (`.exe`/`.com` on Windows), else a bare name searched on the child's PATH, then KLIF's PATH.
+/// Absolute as written (`.exe`/`.com` on Windows, a file with an execute bit elsewhere, run directly and never
+/// through a shell), else a bare name searched on the child's PATH, then KLIF's PATH (macOS: then the Homebrew
+/// folders).
 fn resolve_program(raw: &str, child_path: Option<&str>, probe: &FileProbe) -> Result<PathBuf, ProgErr> {
     let mut cmd = raw.trim();
     if cmd.len() >= 2 && cmd.starts_with('"') && cmd.ends_with('"') {
@@ -538,7 +546,7 @@ fn resolve_program(raw: &str, child_path: Option<&str>, probe: &FileProbe) -> Re
     }
     let p = Path::new(cmd);
     let ext = p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    if matches!(ext.as_deref(), Some("bat" | "cmd")) {
+    if cfg!(windows) && matches!(ext.as_deref(), Some("bat" | "cmd")) {
         return Err(ProgErr::Batch);
     }
     const SCRIPTS: &[&str] = &["ps1", "psm1", "py", "pyw", "sh", "js", "vbs", "wsf", "lnk"];
@@ -562,7 +570,18 @@ fn resolve_program(raw: &str, child_path: Option<&str>, probe: &FileProbe) -> Re
             }
             return Err(ProgErr::NotFound);
         }
-        return if probe.is_file(p) { Ok(p.to_path_buf()) } else { Err(ProgErr::NotFound) };
+        if cfg!(windows) {
+            return if probe.is_file(p) { Ok(p.to_path_buf()) } else { Err(ProgErr::NotFound) };
+        }
+        return if probe.is_executable(p) {
+            Ok(p.to_path_buf())
+        } else if probe.is_file(p) {
+            Err(ProgErr::NotExecutable)
+        } else if probe.is_dir(p) {
+            Err(ProgErr::Folder)
+        } else {
+            Err(ProgErr::NotFound)
+        };
     }
     let names: Vec<String> = if cfg!(windows) && !matches!(ext.as_deref(), Some("exe" | "com")) {
         vec![format!("{cmd}.exe"), format!("{cmd}.com")]
@@ -577,10 +596,21 @@ fn resolve_program(raw: &str, child_path: Option<&str>, probe: &FileProbe) -> Re
             }
         }
     }
+    // macOS: an app started from Finder or the Dock gets launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), so the
+    // Homebrew folders a terminal has are searched last as well.
+    if cfg!(target_os = "macos") {
+        for d in ["/opt/homebrew/bin", "/usr/local/bin"] {
+            let d = PathBuf::from(d);
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    }
     for d in &dirs {
         for n in &names {
             let c = d.join(n);
-            if probe.is_file(&c) {
+            // Like `which`: a file without an execute bit does not hide a program later on PATH.
+            if probe.is_executable(&c) {
                 return Ok(c);
             }
         }
@@ -827,9 +857,9 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
     // ---- program --------------------------------------------------------------------------------
     let child_path = user_env.iter().find(|(n, _, _)| env_eq(n, "PATH")).map(|(_, r, _)| r.as_str());
     let shown_cmd = cmd_disp.trim().to_string();
-    // `{env:X}` (or `{stamp}`) in command: the view and the hash keep the written form (`%X%`, SPEC 2.3), so the
-    // hash does not depend on KLIF's environment; the supervisor still gets the resolved program. (Every other
-    // placeholder has one form.)
+    // `{env:X}` (or `{stamp}`) in command: the view and the hash keep the written form (`%X%`, `$X` off Windows,
+    // SPEC 2.3), so the hash does not depend on KLIF's environment; the supervisor still gets the resolved program.
+    // (Every other placeholder has one form.)
     let env_in_cmd = cmd_real != cmd_disp;
     match resolve_program(&cmd_real, child_path, req.probe) {
         Ok(p) => {
@@ -864,6 +894,26 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
                     if req.checks {
                         let how = if looks_absolute(cmd_real.trim().trim_matches('"')) { "does not exist" } else { "was not found on PATH" };
                         err(&mut out, Cat::Exe, "command", format!("The program {shown_cmd} {how}."));
+                    }
+                }
+                ProgErr::NotExecutable => {
+                    if req.checks {
+                        err(
+                            &mut out,
+                            Cat::Exe,
+                            "command",
+                            format!("{shown_cmd} is not executable: the file has no execute permission (chmod +x)."),
+                        );
+                    }
+                }
+                ProgErr::Folder => {
+                    if req.checks {
+                        let text = if shown_cmd.trim_end_matches('/').to_ascii_lowercase().ends_with(".app") {
+                            format!("{shown_cmd} is an app bundle; set command to the program inside it (Contents/MacOS/<name>).")
+                        } else {
+                            format!("{shown_cmd} is a folder, not a program.")
+                        };
+                        err(&mut out, Cat::Exe, "command", text);
                     }
                 }
             }

@@ -38,7 +38,8 @@ pub struct SessionRecord {
     pub job_name: Option<String>,
     pub root_pid: u32,
     /// Creation time of the root process: FILETIME (100 ns since 1601) on Windows; on Linux the start time in
-    /// clock ticks since boot (`/proc/<pid>/stat` field 22); 0 where the platform gives none.
+    /// clock ticks since boot (`/proc/<pid>/stat` field 22); on macOS microseconds since 1970 (`proc_pidinfo`);
+    /// 0 where the platform gives none.
     pub root_ctime: u64,
     pub started_at: f64,
     pub out_log: PathBuf,

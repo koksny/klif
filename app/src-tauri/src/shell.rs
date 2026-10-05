@@ -60,9 +60,12 @@ pub struct Shell {
     /// Panel mode: the small-screen target, the persisted preference and the enter / leave lock.
     pub panel: PanelCtl,
     /// The adapter the UI is pinned to, if any.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub ui_gpu: Option<Adapter>,
-    /// GPU process PID of the last check (re-checked when WebView2 restarts it).
+    /// GPU process PID of the last check (re-checked when WebView2 restarts it). WebView2 only.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub gpu_pid: Mutex<Option<u32>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub gpu_report: Mutex<Option<GpuReport>>,
     /// Debounce state for focus flaps (restore fires Focused four times within ~3 ms).
     pub focus_seq: AtomicU64,

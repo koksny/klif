@@ -333,8 +333,8 @@
     --warn: #ffb347;
     --danger: #ff5470;
     --grad: linear-gradient(90deg, #4fc3d9, #ff4fd8);
-    --disp: 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
-    --text: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+    --disp: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, system-ui, sans-serif;
+    --text: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, system-ui, sans-serif;
     --data: 'Iosevka', ui-monospace, monospace;
     --pad: calc(var(--u) * 36px);
     --fs-cap: max(10px, calc(var(--u) * 11px));

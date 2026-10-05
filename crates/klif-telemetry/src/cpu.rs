@@ -23,6 +23,11 @@
 //!
 //! The base clock is one number for the whole CPU (E-cores of a hybrid Intel chip clock lower than the registry's
 //! value, so their share is a little optimistic). It is the clock the vendor guarantees, not the boost.
+//!
+//! Apple silicon has no CPUID and macOS reports no clocks, so Apple chips are known by their brand string
+//! (`APPLE_CPUS`): the performance and efficiency cores' highest clocks as measured by third parties (Apple
+//! publishes none), times FLOP per cycle per core: performance cores 4 x 128-bit NEON FMA pipes = 32,
+//! efficiency cores 2 x 128-bit = 16. A chip missing from the table has no number ("?").
 
 /// The CPU maker, as far as the FLOP table cares.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -81,8 +86,22 @@ impl CpuFacts {
     }
 
     /// Theoretical peak FP32 TFLOPS: cores x FLOP/cycle x base clock, summed over the core classes. None without
-    /// CPUID, the topology or the clock.
+    /// CPUID, the topology or the clock. Apple chips: cores x FLOP/cycle x the class's highest clock.
     pub fn tflops_fp32(&self) -> Option<f64> {
+        if let Some(chip) = apple_cpu(&self.brand) {
+            if self.classes.is_empty() {
+                return None;
+            }
+            let mflops: u64 = self
+                .classes
+                .iter()
+                .map(|c| match self.kind_of(c) {
+                    CoreKind::Performance => u64::from(c.cores) * u64::from(APPLE_P_FLOPS) * u64::from(chip.p_mhz),
+                    CoreKind::Efficiency => u64::from(c.cores) * u64::from(APPLE_E_FLOPS) * u64::from(chip.e_mhz),
+                })
+                .sum();
+            return Some(mflops as f64 / 1e6);
+        }
         let id = self.id.as_ref()?;
         let mhz = self.base_mhz.filter(|m| *m > 0)?;
         if self.classes.is_empty() {
@@ -114,6 +133,10 @@ impl CpuFacts {
         }
         if let Some(mhz) = self.base_mhz.filter(|m| *m > 0) {
             parts.push(format!("{:.1} GHz", f64::from(mhz) / 1000.0));
+        }
+        if let Some(chip) = apple_cpu(&self.brand) {
+            parts.push("NEON".to_string());
+            parts.push(format!("up to {:.1} / {:.1} GHz", f64::from(chip.p_mhz) / 1000.0, f64::from(chip.e_mhz) / 1000.0));
         }
         parts.join(", ")
     }
@@ -148,6 +171,63 @@ fn simd_label(id: &CpuId) -> &'static str {
     } else {
         "SSE"
     }
+}
+
+// ------------------------------------------------------------------------------------------- Apple silicon
+
+/// FP32 FLOP per cycle of an Apple performance core (4 x 128-bit FMA pipes) and efficiency core (2 x 128-bit).
+const APPLE_P_FLOPS: u32 = 32;
+const APPLE_E_FLOPS: u32 = 16;
+
+/// One Apple chip: its brand string and the highest clocks of its performance and efficiency cores (MHz).
+struct AppleCpu {
+    brand: &'static str,
+    p_mhz: u32,
+    e_mhz: u32,
+}
+
+/// Clocks as third parties measured them (Apple publishes none); the source next to each row. FLOP per cycle:
+/// 4 x 128-bit pipes in the performance cores (Firestorm, Avalanche, Everest), 2 in the efficiency cores
+/// (Icestorm, Blizzard, Sawtooth): https://www.anandtech.com/show/16226/apple-silicon-m1-a14-deep-dive/2,
+/// https://dougallj.github.io/applecpu/icestorm.html, https://en.wikipedia.org/wiki/Comparison_of_ARM_processors.
+/// The M4's cores are listed as Everest and Sawtooth in its device tree. Not listed: chips without a sourced
+/// clock for both core types (M3 Ultra) or without a sourced pipe count (M5).
+const APPLE_CPUS: &[AppleCpu] = &[
+    // https://www.notebookcheck.net/Apple-M1-Processor-Benchmarks-and-Specs.503613.0.html
+    AppleCpu { brand: "Apple M1", p_mhz: 3228, e_mhz: 2064 },
+    // https://www.notebookcheck.net/Apple-M1-Pro-Processor-Benchmarks-and-Specs.579915.0.html
+    AppleCpu { brand: "Apple M1 Pro", p_mhz: 3220, e_mhz: 2060 },
+    // https://www.notebookcheck.net/Apple-M1-Max-Processor-Benchmarks-and-Specs.579971.0.html
+    AppleCpu { brand: "Apple M1 Max", p_mhz: 3220, e_mhz: 2060 },
+    // https://en.wikipedia.org/wiki/Apple_M1
+    AppleCpu { brand: "Apple M1 Ultra", p_mhz: 3220, e_mhz: 2060 },
+    // https://www.notebookcheck.net/Apple-M2-Processor-Benchmarks-and-Specs.632312.0.html
+    AppleCpu { brand: "Apple M2", p_mhz: 3500, e_mhz: 2400 },
+    // https://www.notebookcheck.net/Apple-M2-Pro-Processor-Benchmarks-and-Specs.682450.0.html
+    AppleCpu { brand: "Apple M2 Pro", p_mhz: 3700, e_mhz: 2420 },
+    // https://www.notebookcheck.net/Apple-M2-Max-Processor-Benchmarks-and-Specs.682771.0.html
+    AppleCpu { brand: "Apple M2 Max", p_mhz: 3700, e_mhz: 2420 },
+    // https://en.wikipedia.org/wiki/Apple_M2
+    AppleCpu { brand: "Apple M2 Ultra", p_mhz: 3700, e_mhz: 2420 },
+    // https://www.notebookcheck.net/Apple-MacBook-Air-13-M3-review-A-lot-faster-and-with-Wi-Fi-6E.811129.0.html
+    AppleCpu { brand: "Apple M3", p_mhz: 4056, e_mhz: 2748 },
+    // https://www.notebookcheck.net/Apple-MacBook-Pro-14-2023-M3-Pro-review-Improved-runtimes-and-better-performance.779538.0.html
+    AppleCpu { brand: "Apple M3 Pro", p_mhz: 4056, e_mhz: 2748 },
+    // https://www.notebookcheck.net/Apple-M3-Max-16-Core-Processor-Benchmarks-and-Specs.781712.0.html (P),
+    // https://en.wikipedia.org/wiki/MacBook_Pro_(Apple_silicon) (E)
+    AppleCpu { brand: "Apple M3 Max", p_mhz: 4056, e_mhz: 2570 },
+    // https://notebookcheck.net/Apple-M4-10-cores-Processor-Benchmarks-and-Specs.835975.0.html
+    AppleCpu { brand: "Apple M4", p_mhz: 4400, e_mhz: 2900 },
+    // https://www.notebookcheck.net/Apple-M4-Pro-12-cores-Processor-Benchmarks-and-Specs.922301.0.html
+    AppleCpu { brand: "Apple M4 Pro", p_mhz: 4510, e_mhz: 2590 },
+    // https://www.notebookcheck.net/Apple-M4-Max-16-cores-Processor-Benchmarks-and-Specs.920458.0.html
+    AppleCpu { brand: "Apple M4 Max", p_mhz: 4510, e_mhz: 2590 },
+];
+
+/// The table row of an Apple chip ("Apple M4 Pro"), by its exact brand string.
+fn apple_cpu(brand: &str) -> Option<&'static AppleCpu> {
+    let b = brand.trim();
+    APPLE_CPUS.iter().find(|c| c.brand.eq_ignore_ascii_case(b))
 }
 
 // ------------------------------------------------------------------------------------------- FLOP table

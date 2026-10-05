@@ -15,9 +15,9 @@ export const tokens: SkinTokens = {
   accentInk: '#06101F',
   warn: '#FFB347',
   danger: '#FF5470',
-  fontUi: '"Segoe UI Variable Text", "Segoe UI", sans-serif',
+  fontUi: '"Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif',
   // must stay monospace: the console drawer prints log lines with it
   fontData: '"Iosevka", ui-monospace, monospace',
-  fontDisplay: '"Segoe UI Variable Display", "Segoe UI", sans-serif',
+  fontDisplay: '"Segoe UI Variable Display", "Segoe UI", -apple-system, system-ui, sans-serif',
   radius: '10px',
 };

@@ -19,8 +19,8 @@
 //! (n = index among identical adapters in DXGI order; the first one keeps the plain "VEN:DEV", which is also
 //! what "VEN:DEV#0" means). `gpu_id_eq` compares ids with that rule.
 //!
-//! Platform: Windows readers live in `win` behind `platform` (`GpuPlatform` / `HostPlatform`); other targets get
-//! a stub (no GPU / RAM numbers) and still compile. The SMBIOS RAM-type reader exists only with the `smbios`
+//! Platform: Windows readers live in `win`, macOS (Apple silicon) readers in `mac`, both behind `platform`
+//! (`GpuPlatform` / `HostPlatform`); other targets get a stub (no GPU / RAM numbers) and still compile. The SMBIOS RAM-type reader exists only with the `smbios`
 //! feature (klif-cli diag); the GUI shows `[telemetry] ram_type`.
 
 pub mod audiocpp;
@@ -41,6 +41,8 @@ pub mod steps;
 pub mod tail;
 pub mod text;
 pub mod vram;
+#[cfg(target_os = "macos")]
+mod mac;
 #[cfg(windows)]
 mod win;
 
@@ -61,7 +63,11 @@ pub use session::SessionTracker;
 
 // ------------------------------------------------------------------------------------------- adapters
 
-/// A resolved DXGI adapter.
+/// Apple's PCI vendor id. Apple GPUs have no PCI device id: KLIF uses the SoC id ("t8132" -> 0x8132), so an M4
+/// is "106B:8132".
+pub const APPLE_VENDOR: u32 = 0x106B;
+
+/// A resolved DXGI adapter (macOS: the Metal device).
 #[derive(Debug, Clone, Default)]
 pub struct Adapter {
     pub name: String,
@@ -108,6 +114,19 @@ impl Adapter {
     /// AMD (vendor 0x1002): the only vendor the dormant detector (ULPS / D3) runs for.
     pub fn is_amd(&self) -> bool {
         self.vendor_id == 0x1002
+    }
+    /// Apple (vendor 0x106B): a GPU on unified memory with no dedicated memory; its memory is `shared_bytes`
+    /// (Metal's recommended working set).
+    pub fn is_apple(&self) -> bool {
+        self.vendor_id == APPLE_VENDOR
+    }
+    /// The memory the live bars measure against: the dedicated memory, or an Apple GPU's working set.
+    pub fn memory_bytes(&self) -> u64 {
+        if self.is_apple() {
+            self.shared_bytes
+        } else {
+            self.dedicated_bytes
+        }
     }
     fn same_device(&self, o: &Adapter) -> bool {
         self.vendor_id == o.vendor_id && self.device_id == o.device_id && self.luid_high == o.luid_high && self.luid_low == o.luid_low
@@ -388,7 +407,7 @@ impl GpuState {
         let nth = adapter_index(&adapter, all);
         let id = gpu_id(&adapter, all);
         GpuState {
-            total_gib: text::round_to(adapter.dedicated_bytes as f64 / text::GIB, 3),
+            total_gib: text::round_to(adapter.memory_bytes() as f64 / text::GIB, 3),
             adapter,
             id,
             nth,

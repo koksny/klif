@@ -1,7 +1,8 @@
 //! The platform layer for measurements: GPU adapters / memory / power state (`GpuPlatform`) and CPU / RAM
-//! (`HostPlatform`). Windows: DXGI, PDH, SetupDi (win.rs). Elsewhere: a stub that returns None / empty until
-//! someone adds sysfs / NVML / IOKit readers (Linux amdgpu: `/sys/class/drm/card*/device/mem_info_vram_used`,
-//! per-process `/proc/<pid>/fdinfo` `drm-memory-vram`; NVIDIA: NVML; macOS: IOKit / Metal). Owner: package D.
+//! (`HostPlatform`). Windows: DXGI, PDH, SetupDi (win.rs). macOS (Apple silicon): Metal, the IORegistry, sysctl
+//! and mach (mac.rs). Elsewhere: a stub that returns None / empty until someone adds sysfs / NVML readers (Linux
+//! amdgpu: `/sys/class/drm/card*/device/mem_info_vram_used`, per-process `/proc/<pid>/fdinfo`
+//! `drm-memory-vram`; NVIDIA: NVML). Owner: package D.
 //!
 //! The rest of the crate calls `gpu()` / `host()`, never `win::` directly, so non-Windows targets compile.
 //! The CPU name comes from CPUID on x86 / x86_64 on every OS (no registry read); the FP32 estimate (`cpu_facts`)
@@ -28,6 +29,20 @@ pub trait GpuPlatform: Send + Sync {
     fn device_luid(&self, _adapter: &Adapter, _nth: usize) -> Option<(i32, u32)> {
         None
     }
+    /// What the adapter's FP32 peak can be computed from when the GPU table has no number for it (Apple GPUs:
+    /// their core count and clock come from the machine). The default knows nothing.
+    fn units(&self, _adapter: &Adapter) -> Option<GpuUnits> {
+        None
+    }
+}
+
+/// A GPU's compute units, for the FP32 estimate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GpuUnits {
+    /// GPU cores (Apple: `gpu-core-count`, 128 FP32 ALUs each).
+    pub cores: u32,
+    /// The highest clock the GPU runs at.
+    pub max_mhz: Option<u32>,
 }
 
 /// CPU / RAM facts of the platform.
@@ -129,7 +144,11 @@ pub fn gpu() -> &'static dyn GpuPlatform {
     {
         &windows_impl::WinPlatform
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        &mac_impl::MacPlatform
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         &NoPlatform
     }
@@ -141,7 +160,11 @@ pub fn host() -> &'static dyn HostPlatform {
     {
         &windows_impl::WinPlatform
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        &mac_impl::MacPlatform
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         &NoPlatform
     }
@@ -360,6 +383,130 @@ mod windows_impl {
                 adapters: adapters.into_iter().map(|(key, dedicated)| AdapterMem { key, dedicated }).collect(),
                 procs: procs.into_values().collect(),
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- macOS
+
+#[cfg(target_os = "macos")]
+mod mac_impl {
+    use super::{AdapterMem, Frame, GpuPlatform, GpuUnits, HostPlatform, PowerHandle, ProcMem, Sampler};
+    use crate::cpu::{CoreClass, CpuFacts};
+    use crate::{mac, Adapter, PowerState, UlpsSetting, APPLE_VENDOR};
+
+    pub struct MacPlatform;
+
+    /// The Apple GPU as an adapter: no dedicated memory, the working set as its shared memory (the unified pool
+    /// the inventory and the suggester expect of an integrated GPU), Metal's registry id in place of a LUID.
+    fn adapter(g: &mac::AppleGpu) -> Adapter {
+        let name = if g.metal.name.trim().is_empty() { mac::gpu_model().unwrap_or_else(|| "Apple GPU".into()) } else { g.metal.name.clone() };
+        Adapter {
+            name,
+            vendor_id: APPLE_VENDOR,
+            device_id: g.soc.unwrap_or(0),
+            luid_high: (g.metal.registry_id >> 32) as i32,
+            luid_low: g.metal.registry_id as u32,
+            dedicated_bytes: 0,
+            shared_bytes: g.metal.working_set,
+            ..Adapter::default()
+        }
+    }
+
+    impl GpuPlatform for MacPlatform {
+        fn adapters(&self) -> Vec<Adapter> {
+            mac::gpu().map(|g| vec![adapter(&g)]).unwrap_or_default()
+        }
+
+        /// Power states and ULPS are AMD-on-Windows features.
+        fn power_state(&self, _pci: &str) -> Option<PowerState> {
+            None
+        }
+
+        fn sampler(&self) -> Option<Box<dyn Sampler>> {
+            Some(Box::new(MacSampler::open()))
+        }
+
+        fn power_handle(&self, _adapter: &Adapter, _nth: usize) -> Option<Box<dyn PowerHandle>> {
+            None
+        }
+
+        fn ulps(&self, _adapter: &Adapter, _nth: usize) -> Option<UlpsSetting> {
+            None
+        }
+
+        fn units(&self, a: &Adapter) -> Option<GpuUnits> {
+            if !a.is_apple() {
+                return None;
+            }
+            let g = mac::gpu()?;
+            Some(GpuUnits { cores: g.cores?, max_mhz: g.max_mhz })
+        }
+    }
+
+    impl HostPlatform for MacPlatform {
+        /// "M4", "M4 Pro".
+        fn cpu_name(&self) -> Option<String> {
+            mac::cpu_brand().map(|b| b.strip_prefix("Apple ").unwrap_or(&b).to_string())
+        }
+
+        fn memory(&self) -> Option<(u64, u64)> {
+            mac::memory()
+        }
+
+        /// The brand and the cores per performance level (level 0, the performance cores, is the highest
+        /// efficiency class). No CPUID and no clock: `cpu.rs` knows Apple chips by their brand.
+        fn cpu_facts(&self) -> Option<CpuFacts> {
+            let brand = mac::cpu_brand()?;
+            let levels = mac::core_levels();
+            let top = levels.len().saturating_sub(1) as u32;
+            let classes = levels
+                .iter()
+                .map(|&(level, cores, logical)| CoreClass { efficiency_class: (top - level.min(top)) as u8, cores, threads: logical })
+                .collect();
+            Some(CpuFacts { brand, id: None, base_mhz: None, classes })
+        }
+    }
+
+    /// Mach CPU ticks, the accelerator's memory in use, and each watched process's resident memory as its share of
+    /// the unified pool (mapped weights included; its footprint as the allocation when that is larger).
+    struct MacSampler {
+        key: String,
+        ticks: Option<(u64, u64)>,
+    }
+
+    impl MacSampler {
+        fn open() -> MacSampler {
+            let key = mac::gpu().map(|g| adapter(&g).pdh_luid()).unwrap_or_default();
+            MacSampler { key, ticks: mac::cpu_ticks() }
+        }
+    }
+
+    impl Sampler for MacSampler {
+        fn refresh_processes(&mut self) {}
+
+        fn read(&mut self, pids: &[u32]) -> Frame {
+            let ticks = mac::cpu_ticks();
+            let cpu_pct = match (self.ticks, ticks) {
+                (Some((b0, t0)), Some((b1, t1))) if t1 > t0 => Some((b1.saturating_sub(b0)) as f64 / (t1 - t0) as f64 * 100.0),
+                _ => None,
+            };
+            if ticks.is_some() {
+                self.ticks = ticks;
+            }
+            if self.key.is_empty() {
+                return Frame { cpu_pct, ..Frame::default() };
+            }
+            let adapters = mac::gpu_in_use().map(|u| vec![AdapterMem { key: self.key.clone(), dedicated: u as f64 }]).unwrap_or_default();
+            let procs = pids
+                .iter()
+                .filter_map(|&pid| {
+                    let (resident, footprint) = mac::process_memory(pid)?;
+                    let (resident, footprint) = (resident as f64, footprint as f64);
+                    Some(ProcMem { key: self.key.clone(), pid, dedicated: resident, shared: 0.0, committed: resident.max(footprint) })
+                })
+                .collect();
+            Frame { cpu_pct, adapters, procs }
         }
     }
 }

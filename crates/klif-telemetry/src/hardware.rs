@@ -5,6 +5,10 @@
 //!   Nothing here creates a D3D12 device or opens the card, so a sleeping GPU stays asleep. The peak FP32 number comes
 //!   from the embedded table (`data/gpus.toml`: vendor-published, found by name, then PCI ids), else `[hardware]
 //!   tflops`, else it is unknown ("?").
+//! - Apple GPUs (macOS): one adapter from Metal, always integrated (unified memory: no dedicated memory, Metal's
+//!   recommended working set as the shared pool). The table lists the figures Apple published, per SoC id and
+//!   core count; otherwise the peak is computed from the machine: cores x 128 FP32 lanes x 2 (FMA) x the GPU's
+//!   highest DVFS clock (`TflopsSource::Computed`).
 //! - Integrated GPUs: the table's flag, else a heuristic on the name and the memory size.
 //! - Counted: every discrete GPU; integrated GPUs only on a machine without a discrete one (their memory is then the
 //!   unified pool, `unified = true`); the CPU always. `[hardware] exclude / include` override.
@@ -12,7 +16,8 @@
 
 use crate::cpu::{self, CpuFacts};
 use crate::gputable::{self, GpuEntry};
-use crate::{gpu_id, gpu_id_eq, platform, text, Adapter};
+use crate::platform::GpuUnits;
+use crate::{gpu_id, gpu_id_eq, platform, text, Adapter, APPLE_VENDOR as APPLE};
 use klif_common::config::HardwareCfg;
 use klif_common::vm::{ComputeDevice, DeviceKind, HardwareInfo, TflopsSource};
 
@@ -30,6 +35,8 @@ const SMALL_CARVE_OUT_GIB: f64 = 4.0;
 pub struct Probe {
     /// DXGI order, software adapters skipped.
     pub adapters: Vec<Adapter>,
+    /// Per adapter (same order): its compute units when the platform knows them (Apple GPUs).
+    pub units: Vec<Option<GpuUnits>>,
     pub cpu: Option<CpuFacts>,
     /// Physical memory the OS can use.
     pub ram_bytes: u64,
@@ -40,7 +47,9 @@ impl Probe {
     /// topology: nothing that touches a GPU).
     pub fn read() -> Probe {
         let host = platform::host();
-        Probe { adapters: crate::adapters(), cpu: host.cpu_facts(), ram_bytes: host.memory().map_or(0, |(total, _)| total) }
+        let adapters = crate::adapters();
+        let units = adapters.iter().map(|a| platform::gpu().units(a)).collect();
+        Probe { adapters, units, cpu: host.cpu_facts(), ram_bytes: host.memory().map_or(0, |(total, _)| total) }
     }
 }
 
@@ -55,7 +64,8 @@ pub fn inventory(probe: &Probe, cfg: &HardwareCfg) -> HardwareInfo {
     let tflops_of = |id: &str| cfg.tflops.iter().find(|(k, _)| gpu_id_eq(k, id)).map(|(_, v)| *v);
 
     let adapters: Vec<&Adapter> = probe.adapters.iter().filter(|a| a.vendor_id != MICROSOFT).collect();
-    let mut gpus: Vec<ComputeDevice> = adapters.iter().map(|a| gpu_device(a, &gpu_id(a, &probe.adapters))).collect();
+    let units_of = |a: &Adapter| probe.adapters.iter().position(|x| std::ptr::eq(x, a)).and_then(|i| probe.units.get(i).copied().flatten());
+    let mut gpus: Vec<ComputeDevice> = adapters.iter().map(|a| gpu_device(a, &gpu_id(a, &probe.adapters), units_of(a))).collect();
     let any_discrete = gpus.iter().any(|g| !g.integrated);
     for g in &mut gpus {
         // Excluding wins over including; otherwise the rule: discrete always, integrated only without a discrete one.
@@ -114,9 +124,18 @@ pub fn inventory(probe: &Probe, cfg: &HardwareCfg) -> HardwareInfo {
 
 // ------------------------------------------------------------------------------------------------ GPUs
 
-fn gpu_device(a: &Adapter, id: &str) -> ComputeDevice {
-    let entry = gputable::lookup(&a.name, a.vendor_id, a.device_id, a.revision);
+fn gpu_device(a: &Adapter, id: &str, units: Option<GpuUnits>) -> ComputeDevice {
+    let entry = if a.vendor_id == APPLE {
+        gputable::lookup_apple(a.device_id, units.map(|u| u.cores))
+    } else {
+        gputable::lookup(&a.name, a.vendor_id, a.device_id, a.revision)
+    };
     let integrated = entry.and_then(|e| e.integrated).unwrap_or_else(|| looks_integrated(a));
+    let (tflops_fp32, tflops_source) = match (entry.and_then(|e| e.tflops_fp32), units.and_then(computed_tflops)) {
+        (Some(t), _) => (Some(t), TflopsSource::Table),
+        (None, Some(t)) => (Some(text::round_to(t, 2)), TflopsSource::Computed),
+        (None, None) => (None, TflopsSource::Unknown),
+    };
     let vram = a.dedicated_bytes as f64 / text::GIB;
     let memory_type = match entry.and_then(|e| e.memory_type.clone()) {
         Some(t) => Some(t),
@@ -132,10 +151,27 @@ fn gpu_device(a: &Adapter, id: &str) -> ComputeDevice {
         vram_gib: (vram > 0.0).then(|| text::round_to(vram, 2)),
         shared_gib: None,
         memory_type,
-        tflops_fp32: entry.and_then(|e| e.tflops_fp32),
-        tflops_source: if entry.is_some_and(|e| e.tflops_fp32.is_some()) { TflopsSource::Table } else { TflopsSource::Unknown },
-        detail: entry.and_then(|e| gpu_detail(a.vendor_id, e)),
+        tflops_fp32,
+        tflops_source,
+        detail: entry.and_then(|e| gpu_detail(a.vendor_id, e)).or_else(|| units.and_then(units_detail)),
     }
+}
+
+/// FP32 lanes per Apple GPU core (4 execution units x 32 lanes, the same since the M1).
+const APPLE_LANES_PER_CORE: f64 = 128.0;
+
+/// cores x 128 lanes x 2 (FMA) x clock. Checked against Apple's own figures: M1 8 cores x 256 x 1.278 GHz =
+/// 2.62 TFLOPS (Apple: 2.6).
+fn computed_tflops(u: GpuUnits) -> Option<f64> {
+    let mhz = u.max_mhz.filter(|m| *m > 0)?;
+    (u.cores > 0).then(|| f64::from(u.cores) * APPLE_LANES_PER_CORE * 2.0 * f64::from(mhz) / 1e6)
+}
+
+/// "8 cores, 1470 MHz".
+fn units_detail(u: GpuUnits) -> Option<String> {
+    let mut parts = vec![format!("{} cores", u.cores)];
+    parts.extend(u.max_mhz.map(|m| format!("{m} MHz")));
+    (u.cores > 0).then(|| parts.join(", "))
 }
 
 /// "64 CU, 2970 MHz" (AMD), "16384 CUDA cores, 2520 MHz" (NVIDIA), "2560 shaders, 1905 MHz".
@@ -143,6 +179,7 @@ fn gpu_detail(vendor_id: u32, e: &GpuEntry) -> Option<String> {
     let units = e.shaders.map(|s| match vendor_id {
         AMD => format!("{} CU", s / 64),
         0x10DE => format!("{s} CUDA cores"),
+        APPLE => format!("{} cores", s / 128),
         _ => format!("{s} shaders"),
     });
     let clock = e.boost_mhz.map(|m| format!("{m} MHz"));
@@ -154,6 +191,10 @@ fn gpu_detail(vendor_id: u32, e: &GpuEntry) -> Option<String> {
 /// Intel and small AMD carve-outs a dedicated memory of at most 4 GiB. A Strix Halo style APU can carve out far more,
 /// so its "8060S" model token is enough.
 fn looks_integrated(a: &Adapter) -> bool {
+    if a.vendor_id == APPLE {
+        // Every Apple silicon GPU sits on the SoC's unified memory.
+        return true;
+    }
     let n = gputable::normalize_name(&a.name);
     let tokens: Vec<&str> = n.split(' ').collect();
     let small = a.dedicated_bytes as f64 / text::GIB <= SMALL_CARVE_OUT_GIB;

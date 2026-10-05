@@ -1,7 +1,9 @@
 //! Stand-ins for the Windows-only modules (`clipboard`, `gpu`, `webview`) so the shell's own code does not need
-//! `cfg` at every call site. Compiled only off Windows; main.rs re-exports the three modules at the crate root.
-//! Windows + AMD is the tested build: these do the least that is honest (no GPU pin, no clipboard copy).
+//! `cfg` at every call site. Compiled only off Windows; main.rs re-exports them at the crate root. They do the
+//! least that is honest: no GPU pin (WKWebView picks its own GPU; a Mac has one), no WebView2 visibility calls,
+//! and off macOS (which has `macos::clipboard`) no clipboard copy.
 
+#[cfg(not(target_os = "macos"))]
 pub mod clipboard {
     use tauri::{AppHandle, Runtime};
 

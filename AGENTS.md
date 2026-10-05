@@ -98,9 +98,10 @@ cd app\ui; npm run dev                     # Vite on http://127.0.0.1:5193
 ## klif.toml
 
 Looked up through `KLIF_CONFIG`, then `.local\klif.toml` above the exe or the working folder, then
-`%APPDATA%\KLIF\klif.toml`. Edits are picked up while KLIF runs; a file that does not parse keeps the last good
-configuration. Sections and entries are read one by one, so one bad `[presets.x]` does not hide the rest. Unknown
-sections (`[launcher]`, `[krea]`) are ignored. Full template: `config/klif.example.toml`.
+`%APPDATA%\KLIF\klif.toml` (macOS: `~/Library/Application Support/KLIF/klif.toml`). Edits are picked up while
+KLIF runs; a file that does not parse keeps the last good configuration. Sections and entries are read one by one,
+so one bad `[presets.x]` does not hide the rest. Unknown sections (`[launcher]`, `[krea]`) are ignored. Full
+template: `config/klif.example.toml`.
 
 ```toml
 [net]        llm_host, image_host            # default "127.0.0.1"; image presets use image_host, the others llm_host
@@ -132,10 +133,10 @@ Placeholders in `command`, `args`, `cwd` and `env` values: `{model} {mmproj} {ct
 {state_dir} {data_dir} {stamp} {env:NAME} {p.NAME} {p.NAME.VAR}`. `{p.NAME}` must be a whole argument and expands
 to the selected choice's `args`. `{stamp}` is the launch's time stamp (`yyyyMMdd-HHmmss-fff`, local time) for file
 names that must differ per launch, such as a server's `--log-file`; previews and `plan` show it as written.
-`command` is an absolute path or a name on PATH to an `.exe` or `.com`; KLIF does not run `.bat` or `.ps1` files
-for you. Pass `--host {host} --port {port}` through (`--listen-ip` / `--listen-port` for sd.cpp) or the server
-listens where KLIF is not looking. `gpu` is for display and fit only: the command itself must select the device
-(for example `HIP_VISIBLE_DEVICES`).
+`command` is an absolute path or a name on PATH to an `.exe` or `.com` (macOS: to a file with the execute bit, run
+directly); KLIF does not run `.bat` or `.ps1` files for you. Pass `--host {host} --port {port}` through
+(`--listen-ip` / `--listen-port` for sd.cpp) or the server listens where KLIF is not looking. `gpu` is for display
+and fit only: the command itself must select the device (for example `HIP_VISIBLE_DEVICES`).
 
 Prefer `klif-cli presets set|save|param` and `klif-cli systems ...` over editing the file by hand: they validate,
 keep comments and table order, and refuse a file that does not parse. Comments inside an array KLIF rewrites (an

@@ -62,6 +62,10 @@ fn human(hw: &HardwareInfo, node: Option<&str>) -> String {
         hw.vram_pool_gib, hw.largest_gpu_gib, hw.ram_total_gib
     ));
     out.push_str("\nFP32 is the theoretical peak: the vendor's published figure for a GPU, cores x FLOP per cycle x base clock for the CPU.\n");
+    if hw.gpus.iter().any(|g| g.tflops_source == TflopsSource::Computed) {
+        // Apple GPUs without a published figure, and Apple CPUs, whose clocks Apple does not publish.
+        out.push_str("An Apple GPU without a published figure: cores x 128 lanes x 2 x its highest clock; Apple CPU cores: their highest clock.\n");
+    }
     out
 }
 
