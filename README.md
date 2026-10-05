@@ -24,6 +24,13 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="docs/media/live-loom.webp" width="47%" alt="KLIF during inference in the Loom skin: System 1 decoding, the model drawn as a tower of layers from embedding to logits">
+  <img src="docs/media/panel-photo.jpg" width="25.6%" alt="KLIF on a 3.5-inch 960x640 panel on the desk, System 2 decoding">
+  <img src="docs/media/in-use-cliff.webp" width="23.4%" alt="KLIF in daily use: System 2 idle with the GPU asleep and its VRAM paged out">
+</p>
+<p align="center"><sub>The mock engine in the Loom skin · the 960×640 panel on a desk · a real session, the GPU asleep between requests</sub></p>
+
 KLIF manages a local inference stack from one window: the language-model, image, speech, transcription, music and
 video servers you already run, on one machine or several. Each server is a **System**: a tab with a live status, the
 exact command line that starts it, and what it is doing to your GPU right now. `klif-cli` does the same from a
