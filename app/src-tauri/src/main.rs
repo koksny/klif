@@ -316,6 +316,7 @@ fn start_engine(app: AppHandle, loaded: LoadedConfig) {
                 }));
                 // Host facts may have changed while the engine started.
                 h.set_host(s.host.lock().unwrap().clone());
+                h.set_web_assets(webui_assets(&app));
             }
             Err(e) => log::error!("engine failed to start: {e}"),
         }
@@ -324,6 +325,19 @@ fn start_engine(app: AppHandle, loaded: LoadedConfig) {
     if let Err(e) = spawned {
         log::error!("could not start the engine thread: {e}");
     }
+}
+
+/// klif-webui's files from the UI build inside klif.exe (a debug build reads app/ui/dist from disk): `webui.html` and
+/// `assets/*`. Only names that exist are answered: Tauri's resolver would fall back to index.html.
+fn webui_assets(app: &AppHandle) -> engine::WebAssets {
+    let resolver = app.asset_resolver();
+    let names: std::collections::HashSet<String> = resolver.iter().map(|(k, _)| k.trim_start_matches('/').to_string()).collect();
+    std::sync::Arc::new(move |path: &str| {
+        if !names.is_empty() && !names.contains(path) {
+            return None;
+        }
+        resolver.get(path.to_string()).map(|a| (a.bytes().to_vec(), a.mime_type().to_string()))
+    })
 }
 
 /// One start attempt. The `selftest` build can pretend that klif-cli holds the engine (KLIF_SELFTEST_BUSY).

@@ -46,6 +46,8 @@ static REGISTRY: &[Entry] = &[
     entry!("stop", "The Systems that were stopped", StopDoc),
     entry!("dismiss", "A System after dismissing its fault", DismissDoc),
     entry!("settings", "This machine's display settings", SettingsDoc),
+    entry!("webui", "klif-webui: settings, state, paired devices", WebUiDoc),
+    entry!("webui-pair", "An open klif-webui pairing: code and address (a credential)", WebUiPairDoc),
     entry!("logs", "A System's console lines", LogsDoc),
     entry!("log-event", "One line of logs --follow --json", LogEvent),
     entry!("watch-event", "One line of watch --json", WatchEvent),

@@ -52,9 +52,10 @@ klif-cli [--json] <command> ...
   not answer), `fault` (a launched System faulted; the message has the log tail), `stopped` (it stopped before it was
   ready), `timeout`, `unsupported`, `invalid` (a file or preset does not parse), `io`, `bench`, `download`,
   `cancelled`, `error`.
-- **Nothing happens without `--yes`** when it starts, stops, restarts, removes, deletes, downloads or replaces a
-  token: `launch`, `stop`, `restart`, `systems remove`, `presets delete`, `models download`, `key clear`, `node
-  token --create` when a token exists, `records forget`, and `bench` when it has to launch the System.
+- **Nothing happens without `--yes`** when it starts, stops, restarts, removes, deletes, downloads, replaces a
+  token or opens a pairing: `launch`, `stop`, `restart`, `systems remove`, `presets delete`, `models download`, `key
+  clear`, `node token --create` when a token exists, `records forget`, `webui pair`, `webui forget`, and `bench` when
+  it has to launch the System.
 
 ## System arguments
 
@@ -123,7 +124,13 @@ usage: klif-cli [--json] <command> ...
   models adopt <rec-id> [--system S] [--ctx N] [--kv TYPE]
                                            Make a preset from a downloaded model (ctx / KV: this machine's suggestion)
 
-  settings [record-moment on|off]          This machine's display settings ([ui] in klif.toml): show, or set one
+  settings [record-moment on|off | skin <id>]
+                                           This machine's display settings ([ui] in klif.toml): show, or set one
+  webui [on|off] [--host IP] [--port N]    klif-webui, the LAN control page: show it, turn it on or off, set its address
+  webui pair --yes                         Open a pairing: a one-time code and address (a credential, 5 minutes)
+  webui cancel                             Close the open pairing
+  webui forget <device> --yes | webui forget --all --yes
+                                           Remove a paired device (or every device); it has to pair again
   key status                               Whether an API key is set (never printed)
   key set                                  Store the API key (reads one line from stdin)
   key clear --yes                          Remove the stored API key
@@ -543,7 +550,8 @@ that document, derived from the types the program prints with, so it follows the
 works too (`schema launch`, `schema "records history"`). The schema describes what is printed (the serialize side:
 optional fields are not required), has `schemaVersion` as a required property, and is itself a JSON document with a
 `schemaVersion` keyword. The names: `status`, `status-system`, `diag`, `hardware`, `suggest`, `plan`, `select`,
-`launch`, `restart`, `stop`, `dismiss`, `logs`, `log-event`, `watch-event`, `systems-list`, `systems-add`,
+`launch`, `restart`, `stop`, `dismiss`, `settings`, `webui`, `webui-pair`, `logs`, `log-event`, `watch-event`,
+`systems-list`, `systems-add`,
 `systems-remove`, `systems-update`, `presets-list`, `presets-show`, `presets-use`, `presets-param`, `presets-save`,
 `presets-delete`, `bench`, `bench-list`, `records`, `records-forget`, `records-history`, `models-list`,
 `models-download`, `models-adopt`, `download-event`, `key-status`, `key-update`, `node-status`, `node-token`,
@@ -552,9 +560,78 @@ the error codes as an enum). `klif-cli schema` prints the list with the commands
 
 ### Settings
 
-**`settings [record-moment on|off]`** shows or sets this machine's display settings in `[ui]`: `record-moment` is the
-"new record" moment over the skin (on by default; records are kept either way). Local only, never over the network.
-JSON: `{schemaVersion, recordMoment}`.
+**`settings [record-moment on|off | skin <id>]`** shows or sets this machine's display settings in `[ui]`.
+`record-moment` is the "new record" moment over the skin (on by default; records are kept either way). `skin` is the
+skin the window shows, by id (`cliff`, `silicon`, `instrument`, `phosphor`, `decode`, `loom`, `ether`, `rings`,
+`spirit`): a running window switches to it, a window that starts later opens in it, and [klif-webui](webui.md)
+follows it. The window writes `[ui] skin` itself whenever you change skins there, so it is also how a script learns
+which skin is showing; a skin id the window does not have is replaced by the window's own the next time it runs. Both
+are local only, never over the network. JSON: `{schemaVersion, recordMoment, skin?}` (`skin` is absent until a skin
+was chosen).
+
+```
+record-moment  on     (the "new record" moment over the skin; [ui] record_moment)
+skin           cliff  ([ui] skin; the window writes it, klif-webui follows it)
+```
+
+### webui
+
+klif-webui is a small control page for a phone or a browser on your network; [webui.md](webui.md) describes it, its
+pairing and its security model. These commands change `[webui]` in `klif.toml` and manage pairing through the engine;
+none of them works over the network.
+
+- **`webui`** shows the state: whether it is on, the address it listens on, whether it serves now, the addresses to
+  open, why it does not serve when it should (`error`), the paired devices, and whether a pairing is open. It never
+  prints a pairing code, secret or address with a secret.
+- **`webui on`** and **`webui off`** turn it on or off, **`--host <ip>`** sets the address to listen on (`0.0.0.0`,
+  the default, is every network of this machine) and **`--port <n>`** the port (default 7341). They combine
+  (`webui on --host 192.0.2.10 --port 7341`) and work alone (`webui --port 7350`); the result is the same document as
+  `webui`. Only the KLIF window app serves the page, so with no window running `webui on` still writes `[webui]`, and
+  `error` says that the engine of `klif-cli` has no page to serve.
+- **`webui pair --yes`** opens a pairing and prints its **one-time credential**: the 6-digit code, the address that
+  carries the QR secret, and when it ends (5 minutes; one success or 5 wrong codes close it earlier; another `pair`
+  replaces it). Anyone who has the code or the address can pair a device that then controls KLIF, so run it only when
+  the person pairing is there and show the output to them alone. Without `--yes` it exits with `needs_yes`. A note
+  about this goes to stderr in both output modes. It is refused when klif-webui is off or does not serve.
+- **`webui cancel`** closes the open pairing.
+- **`webui forget <device> --yes`** and **`webui forget --all --yes`** remove a paired device (the id comes from
+  `webui`) or every device; each has to pair again. An id that is not paired is `not_found`.
+
+```
+$ klif-cli webui
+klif-webui is on and serving on 0.0.0.0:7341.
+Open on a paired device: http://192.0.2.10:7341/
+
+ID        DEVICE         PAIRED                LAST SEEN
+1a2b3c4d  Example phone  2026-10-04 07:46 UTC  2026-10-04 19:02 UTC
+
+No pairing is open (klif-cli webui pair --yes opens one).
+```
+
+JSON (`webui`, also after `on`, `off`, `cancel` and `forget`):
+
+```json
+{
+  "schemaVersion": 1,
+  "enabled": true, "host": "0.0.0.0", "port": 7341,
+  "listening": true,
+  "urls": [ "http://192.0.2.10:7341/" ],
+  "devices": [ { "id": "1a2b3c4d", "name": "Example phone", "pairedAt": 1791100000.0, "lastSeen": 1791150000.0 } ],
+  "pairingOpen": false
+}
+```
+
+`error` (one sentence) appears when it is on but does not serve; `pairingExpiresAt` (epoch seconds) appears while a
+pairing is open; `lastSeen` is absent for a device that never came back. `urls` is empty while nothing is served.
+
+JSON of `webui pair --yes` (`webui-pair`; this is the credential, so the values here are placeholders):
+
+```json
+{ "schemaVersion": 1, "code": "<6 digits>", "url": "http://192.0.2.10:7341/#pair=<64 hex characters>", "expiresAt": 1791100300.0 }
+```
+
+`url` is absent when this machine has no route to a network (then only the code exists). The text output prints the code
+as `123 456`, the address and the expiry.
 
 ## Recipes for agents
 
@@ -593,5 +670,5 @@ klif-cli systems add --kind stt --label "System STT" --preset stt-local
 klif-cli plan stt
 ```
 
-Never print `api-key.txt`, `node-token.txt`, `control.json` or the output of `node token --create` where others can
-read it. See [AGENTS.md](../AGENTS.md).
+Never print `api-key.txt`, `node-token.txt`, `control.json`, the output of `node token --create` or the output of
+`webui pair` where others can read it. See [AGENTS.md](../AGENTS.md).

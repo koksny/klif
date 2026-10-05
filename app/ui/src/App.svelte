@@ -12,10 +12,13 @@
   import Toast from './lib/shell/Toast.svelte';
   import TuneDrawer from './lib/shell/TuneDrawer.svelte';
   import { player } from './lib/state/player.svelte';
+  import { installSkinSync } from './lib/state/skinSync.svelte';
   import { ui } from './lib/state/ui.svelte';
 
   // Start the player before the first render so the first frame already shows the right scenario.
   player.init(ui.params);
+  // The window's skin goes to klif.toml ([ui] skin) for klif-webui; a change made there is followed.
+  installSkinSync();
 
   onMount(() => {
     const offTier = installTierDriver();

@@ -172,6 +172,7 @@ impl Inner {
         self.sync_gpus(&cfg);
         self.sync_hardware(&cfg);
         self.sync_listener(&cfg);
+        self.sync_webui(&cfg);
         true
     }
 
@@ -248,6 +249,91 @@ impl Inner {
         st.engine_issues.extend(issue);
     }
 
+    /// Start, stop or move klif-webui to match `[webui]`. It serves only when the host gave the engine the page's
+    /// files (the window app does; klif-cli does not).
+    pub(super) fn sync_webui(&self, cfg: &Config) {
+        self.sync_webui_with(cfg, false)
+    }
+
+    /// `retry`: try again to start a page that is wanted but not serving (port was busy, the files arrived).
+    pub(crate) fn sync_webui_with(&self, cfg: &Config, retry: bool) {
+        let want = cfg.webui.listen_addr();
+        let assets = lock(&self.web_assets).clone();
+        let mut s = lock(&self.servers);
+        if s.webui_addr == want && !(retry && want.is_some() && s.webui.is_none()) {
+            return;
+        }
+        if let Some(w) = s.webui.take() {
+            w.shutdown();
+        }
+        // A code shown for the old page must not pair with the new one.
+        self.web_auth.pair_cancel();
+        s.webui_addr = want.clone();
+        let last_error = s.webui_error.take();
+        s.webui_urls = (0.0, Vec::new());
+        let Some(addr) = want else { return };
+        s.last_webui_try = klif_common::now_s();
+        let Some(assets) = assets else {
+            s.webui_error = Some("This KLIF engine has no page to serve: klif-webui runs in the KLIF window app, not in klif-cli.".into());
+            return;
+        };
+        match self.handle().map(|h| crate::webui::serve(h, self.web_auth.clone(), assets, &addr)) {
+            Some(Ok(w)) => {
+                log::info!("klif-webui on {}", w.addr());
+                s.webui = Some(w);
+            }
+            Some(Err(e)) => {
+                let kind = e.root_cause().downcast_ref::<std::io::Error>().map(std::io::Error::kind);
+                s.webui_error = Some(match kind {
+                    Some(std::io::ErrorKind::AddrInUse) => {
+                        format!("Port {} is taken by another program. Choose another port.", cfg.webui.port)
+                    }
+                    Some(std::io::ErrorKind::AddrNotAvailable) => {
+                        format!("This machine has no address {}. Choose 0.0.0.0 (every network) or one of its addresses.", cfg.webui.host)
+                    }
+                    _ => format!("klif-webui could not listen on {addr}: {e:#}"),
+                });
+                if s.webui_error != last_error {
+                    log::warn!("klif-webui: {}", s.webui_error.as_deref().unwrap_or_default());
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Whether klif-webui serves now.
+    pub(crate) fn webui_serving(&self) -> bool {
+        lock(&self.servers).webui.is_some()
+    }
+
+    /// klif-webui as Tune shows it: settings, whether it serves and where, devices, the open pairing.
+    pub(crate) fn webui_info(&self, cfg: &Config, now: f64) -> klif_common::vm::WebUiInfo {
+        let (listening, error, urls) = {
+            let mut s = lock(&self.servers);
+            let listening = s.webui.is_some();
+            let age = now - s.webui_urls.0;
+            if listening && (age >= 30.0 || (s.webui_urls.1.is_empty() && age >= 5.0)) {
+                s.webui_urls = (now, crate::webui::page_urls(&cfg.webui.host, cfg.webui.port));
+            }
+            (listening, if cfg.webui.enabled { s.webui_error.clone() } else { None }, if listening { s.webui_urls.1.clone() } else { Vec::new() })
+        };
+        let pairing = self.web_auth.pairing(now).filter(|_| listening).map(|(secret, code, expires_at)| klif_common::vm::WebUiPairing {
+            url: urls.first().map(|u| format!("{u}#pair={secret}")).unwrap_or_default(),
+            code,
+            expires_at,
+        });
+        klif_common::vm::WebUiInfo {
+            enabled: cfg.webui.enabled,
+            host: cfg.webui.host.clone(),
+            port: cfg.webui.port,
+            listening,
+            urls,
+            error,
+            devices: self.web_auth.devices(),
+            pairing,
+        }
+    }
+
     /// The API key info (re-read when api-key.txt changes), the listener's auth, the bench cache and downloads.
     pub(super) fn refresh_side_facts(&self, now: f64) {
         let cfg = self.cfg();
@@ -286,6 +372,17 @@ impl Inner {
         }
         if retry {
             self.sync_listener_with(&cfg, true);
+        }
+        let webui_retry = {
+            let mut s = lock(&self.servers);
+            let due = s.webui_addr.is_some() && s.webui.is_none() && now - s.last_webui_try >= LISTEN_RETRY_S;
+            if due {
+                s.last_webui_try = now;
+            }
+            due
+        };
+        if webui_retry {
+            self.sync_webui_with(&cfg, true);
         }
         // Downloads: a finished file changes the installed flags.
         let rebuild = {

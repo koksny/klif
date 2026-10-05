@@ -30,6 +30,7 @@ pub mod nodes;
 pub mod records;
 mod state;
 mod timefmt;
+pub mod webui;
 pub mod wire;
 
 use anyhow::Result;
@@ -114,6 +115,12 @@ impl EngineHandle {
     /// Register a callback invoked (on the engine thread) with every new view model (2 Hz).
     pub fn subscribe(&self, f: Box<dyn Fn(&ViewModel) + Send + Sync>) {
         self.inner.subscribe(f)
+    }
+
+    /// The host's klif-webui page files (the window app passes its embedded UI build). Without them the engine
+    /// serves no page, whatever `[webui]` says.
+    pub fn set_web_assets(&self, assets: webui::WebAssets) {
+        self.inner.set_web_assets(assets)
     }
 
     /// Execute an action. Errors are user-facing sentences (shown as toasts / inline).

@@ -10,7 +10,7 @@
 # How the file is organised:
 #   [systems.<id>]   one tab, one server at a time, in the order you write them here.
 #   [presets.<id>]   one launch command (program, arguments, environment). A System points at one preset.
-#   [net] [gpu] [ui] [telemetry] [paths] [security] [launch] [hardware]   machine-wide settings.
+#   [net] [gpu] [ui] [telemetry] [paths] [security] [launch] [hardware] [webui]   machine-wide settings.
 #   [node] / [nodes.<id>]   optional, for several machines (examples at the end, commented out).
 #
 # KLIF edits this file when you change something in the Tune drawer or with klif-cli. It keeps your comments and
@@ -43,6 +43,10 @@ frameless = true
 # panel_monitor = "960x640"
 # Celebrate a broken record over the skin (the "new record" moment). Records are kept either way.
 # record_moment = false
+# The skin the window shows (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit). The window
+# writes this line when you change skins and follows a change made here; klif-webui follows it too.
+# klif-cli settings skin <id> sets it.
+# skin = "cliff"
 
 [telemetry]
 # Skins warn when free VRAM falls below this many GiB.
@@ -78,6 +82,19 @@ on_conflict = "ask"
 # exclude = ["10DE:2684#1", "cpu"]                    # leave a card (or the CPU) out of the pool and the total
 # include = ["1002:164E"]                             # count an integrated GPU although a discrete one exists
 # tflops = { "1002:7550" = 48.7, cpu = 4.4 }          # peak FP32 TFLOPS for a card the built-in table lacks or gets wrong
+
+# klif-webui: a small control page for a phone or a browser on your network (docs/webui.md). Off unless enabled here,
+# in Tune > Web UI, or with klif-cli webui on. The KLIF window app (klif.exe) serves it over plain HTTP, and a device
+# sees or controls nothing until it is paired (Tune > Web UI, or klif-cli webui pair --yes). Use it on a network you
+# trust and never forward its port to the internet. Windows Defender Firewall asks about klif.exe the first time it
+# listens on a network address: allow Private networks only. KLIF never changes firewall rules.
+#   host  an IP address to listen on: "0.0.0.0" = every network of this machine (default), or the address of one
+#         network of this machine ("127.0.0.1" = this computer only)
+#   port  1 to 65535 (default 7341)
+# [webui]
+# enabled = true
+# host = "0.0.0.0"
+# port = 7341
 
 # ------------------------------------------------------------------------------------------------ Systems
 # Tab order = the order of these tables. Systems are independent: each has its own server, session and logs.

@@ -39,6 +39,8 @@ pub const FILE_NAME: &str = "klif.toml";
 pub const FILE_FIELD: &str = "file";
 /// Default port of the node listener (`[node] listen`, `[nodes.X] address`).
 pub const NODE_PORT: u16 = 7340;
+/// klif-webui's default port (`[webui] port`).
+pub const WEBUI_PORT: u16 = 7341;
 
 // ------------------------------------------------------------------------------------------ types
 
@@ -67,6 +69,8 @@ pub struct Config {
     pub security: SecurityCfg,
     pub launch: LaunchCfg,
     pub hardware: HardwareCfg,
+    /// `[webui]`: the LAN control page (off by default).
+    pub webui: WebUiCfg,
     /// `[node]`: this machine as a node others connect to (None = not reachable from the network).
     pub node: Option<NodeCfg>,
     /// `[nodes.<id>]`: remote nodes shown here, in file order.
@@ -136,11 +140,59 @@ pub struct UiCfg {
     pub panel_monitor: Option<String>,
     /// Celebrate a broken record over the skin (the "new record" moment). Default on.
     pub record_moment: bool,
+    /// The skin the window uses (its id, e.g. "cliff"); the window reports it, klif-webui follows it. Unset = the
+    /// window's own choice.
+    pub skin: Option<String>,
 }
 
 impl Default for UiCfg {
     fn default() -> Self {
-        Self { frameless: true, panel_monitor: None, record_moment: true }
+        Self { frameless: true, panel_monitor: None, record_moment: true, skin: None }
+    }
+}
+
+/// `[webui]`: klif-webui, the small control page for a phone or a browser on the LAN. Off by default; a device must
+/// be paired (Tune shows a QR code) before it sees or controls anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebUiCfg {
+    pub enabled: bool,
+    /// The address to listen on: "0.0.0.0" (every network of this machine) or one interface's IP address.
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for WebUiCfg {
+    fn default() -> Self {
+        Self { enabled: false, host: "0.0.0.0".into(), port: WEBUI_PORT }
+    }
+}
+
+impl WebUiCfg {
+    /// "host:port" to listen on ("[v6]:port" for IPv6); None when the page is off.
+    pub fn listen_addr(&self) -> Option<String> {
+        self.enabled.then(|| match self.host.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V6(v6)) => format!("[{v6}]:{}", self.port),
+            _ => format!("{}:{}", self.host, self.port),
+        })
+    }
+
+    /// A host that is not an IP address or a port of 0 falls back to the default, with an issue.
+    fn clean(&mut self, issues: &mut Vec<Issue>) {
+        let host = self.host.trim().trim_start_matches('[').trim_end_matches(']').to_string();
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            self.host = host;
+        } else {
+            issues.push(Issue::warn(
+                Some("webui.host"),
+                format!("[webui] host: \"{}\" is not an IP address (\"0.0.0.0\" for every network); KLIF uses 0.0.0.0.", self.host),
+            ));
+            self.host = WebUiCfg::default().host;
+        }
+        if self.port == 0 {
+            issues.push(Issue::warn(Some("webui.port"), format!("[webui] port: 0 is not a port; KLIF uses {WEBUI_PORT}.")));
+            self.port = WEBUI_PORT;
+        }
     }
 }
 
@@ -1141,6 +1193,7 @@ impl Config {
             security: SecurityCfg::default(),
             launch: LaunchCfg::default(),
             hardware: HardwareCfg::default(),
+            webui: WebUiCfg::default(),
             node: None,
             nodes: Vec::new(),
             systems: Vec::new(),
@@ -1176,6 +1229,8 @@ impl Config {
         cfg.launch = section(&mut raw, "launch", &mut issues);
         cfg.hardware = section(&mut raw, "hardware", &mut issues);
         cfg.hardware.clean(&mut issues);
+        cfg.webui = section(&mut raw, "webui", &mut issues);
+        cfg.webui.clean(&mut issues);
         if parse_api_key_source(&cfg.security.api_key).is_none() {
             // Never echo the value: it may be the key itself.
             issues.push(Issue::error(

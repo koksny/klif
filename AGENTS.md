@@ -6,7 +6,8 @@ This repository is the **public** KLIF tree: [github.com/koksny/klif](https://gi
 
 - Keep commits small and publishable.
 - Prefer `$PSScriptRoot` and environment/config over absolute paths.
-- Default HTTP bind to `127.0.0.1`.
+- Default HTTP bind to `127.0.0.1`. The one exception is klif-webui (`[webui] host`, default `0.0.0.0`): its purpose is
+  a phone on the LAN, and it is off until the user turns it on.
 - Follow [docs/publish.md](docs/publish.md) before adding files that originated in a private workshop.
 - If `AGENTS.local.md` exists in the working copy, treat it as the private map (workshop root, hardware, LAN). Do not copy its contents into git.
 
@@ -63,10 +64,10 @@ Details that matter to you are repeated here so you can work from this file.
 | `crates/klif-catalog` | Presets to commands: placeholder and param resolution, validation issues, launch plans, model facts, comment-preserving `klif.toml` edits (`store.rs`), the embedded model pool (`data/recommendations.toml`) and the per-machine suggestions (`suggest.rs`) |
 | `crates/klif-supervisor` | Starts, adopts and stops server processes (Windows job objects; basic process groups elsewhere) |
 | `crates/klif-telemetry` | GPU, CPU and RAM readings (`platform.rs`), per-adapter log parsers and probes |
-| `crates/klif-core` | The engine (`engine.rs`, `engine/`), `state.v3.json`, the control protocol (`wire.rs`, `control.rs`, `link.rs`), nodes (`nodes.rs`), `bench.rs`, `download.rs`, `keys.rs` |
+| `crates/klif-core` | The engine (`engine.rs`, `engine/`), `state.v3.json`, the control protocol (`wire.rs`, `control.rs`, `link.rs`), nodes (`nodes.rs`), klif-webui (`webui.rs`), `bench.rs`, `download.rs`, `keys.rs` |
 | `crates/klif-cli` | `klif-cli.exe` |
 | `app/src-tauri` | `klif.exe`: Tauri 2 shell, tray, panel mode, IPC commands. Its own Cargo workspace |
-| `app/ui` | Svelte 5 + Vite front end: `src/skins` (nine skins), `src/lib/shell` (Tune drawer in `shell/tune`), `src/lib/mock` (the browser mock engine) |
+| `app/ui` | Svelte 5 + Vite front end: `src/skins` (nine skins), `src/lib/shell` (Tune drawer in `shell/tune`), `src/lib/mock` (the browser mock engine), `src/webui` (the klif-webui page) |
 | `config/klif.example.toml` | A complete, parseable configuration template |
 | `docs/`, `scripts/Build-Release.ps1` | Documentation; the release build |
 | `skills/klif/SKILL.md` | The Agent Skill (Agent Skills format) that teaches a coding agent to drive KLIF with `klif-cli`; the release build copies it next to the exes |
@@ -104,12 +105,13 @@ sections (`[launcher]`, `[krea]`) are ignored. Full template: `config/klif.examp
 ```toml
 [net]        llm_host, image_host            # default "127.0.0.1"; image presets use image_host, the others llm_host
 [gpu]        inference, ui, inference_name   # PCI "VEN:DEV"; "VEN:DEV#1" = second identical card; inference is the default GPU of presets
-[ui]         frameless, panel_monitor, record_moment (the "new record" moment; default true)
+[ui]         frameless, panel_monitor, record_moment (the "new record" moment; default true), skin   # skin = the window's skin id; the window writes it, klif-webui follows it
 [telemetry]  warn_below_gib, verbose_llama_logs, ram_type
 [paths]      models_dir, logs_dir            # models_dir has no default: downloads are refused until it is set
 [security]   api_key = "file" | "env:NAME" | "none"
 [launch]     on_conflict = "ask" | "stop"
 [hardware]   exclude = ["VEN:DEV"], include = ["VEN:DEV"], tflops = { "VEN:DEV" = 48.7, cpu = 4.4 }   # corrects klif-cli hardware; ids as in [gpu], or "cpu"
+[webui]      enabled (default false), host (an IP address, default "0.0.0.0"), port (default 7341)   # klif-webui, the control page for a phone on the LAN: docs/webui.md; only klif.exe serves it
 
 [systems.<id>]       # id: [a-z0-9][a-z0-9_-]{0,31}; tab order = file order
 label, kind = "llm"|"image"|"tts"|"stt"|"video" (required), class = "fast"|"deep"|"max" (llm only),
@@ -154,7 +156,12 @@ new preset does not declare, so run `plan` afterwards and set the ones you still
   engine_busy engine control fault stopped timeout unsupported invalid io bench download cancelled error`.
   `message` is one sentence meant to be shown to the user.
 - **`--yes`** is required to launch, stop, restart, remove a System, delete a preset, download a model, clear the
-  key, forget a record, or replace a node token. It is the user's decision; do not add it to make an error go away.
+  key, forget a record, replace a node token, open a klif-webui pairing (`webui pair`) or remove a paired device
+  (`webui forget`). It is the user's decision; do not add it to make an error go away.
+- **`webui`** shows klif-webui (on or off, where it listens, `error`, the paired devices, whether a pairing is open;
+  never a pairing code); `webui on|off [--host IP] [--port N]` changes `[webui]`, `webui cancel` closes a pairing.
+  Only the KLIF window app serves the page: with no window `klif-cli` reports `error` and `webui pair` is refused.
+  See [docs/webui.md](docs/webui.md). `settings skin <id>` sets `[ui] skin`.
 - **System arguments:** an id (`s1`, `render-box/s1`), a label ignoring case and spaces (`system1`), or the 0.2
   names `low|medium|high|krea` for `s1|s2|s3|cgi`.
 - **`status`** returns `StatusJson`:
@@ -255,6 +262,13 @@ context and KV type (or `--ctx N --kv TYPE`). Every number there is an estimate:
 - **Remote nodes:** `--node <id>` on `presets set|save|delete` or `systems add` runs arbitrary commands on another
   machine when that node grants `edit`. Do it only on explicit instruction. Do not enable `[node] listen` or
   `allow = ["edit"]` on your own initiative; read [docs/nodes.md](docs/nodes.md) first.
+- **The klif-webui pairing code and address are a credential.** `klif-cli webui pair` prints a one-time code and an
+  address with a secret in it; whoever has them can pair a device that then launches and stops Systems. Never run it
+  unless the user asked for a pairing, show its output only to the user, and never paste it into a file, a log, an
+  issue or a pull request. Remove a paired device (`webui forget`) only when the user asks.
+- **Do not turn klif-webui on, or point its `host` at a LAN address, on your own initiative.** It is off by default,
+  speaks plain HTTP and opens a port to the network; the user decides (read [docs/webui.md](docs/webui.md)). On a
+  scratch configuration for an experiment, keep it off or on `127.0.0.1`.
 - **Keep servers on loopback** unless the user wants LAN access, and then keep the API key on. KLIF refuses to
   launch llama.cpp or vLLM on a non-loopback host without one (unless `[security] api_key = "none"`).
 - **Never run `git commit` or `git push` unless the user asked for that commit.**

@@ -12,6 +12,7 @@
   import CommandSection from './CommandSection.svelte';
   import FitPanel from './FitPanel.svelte';
   import NodesSection from './NodesSection.svelte';
+  import WebUiSection from './WebUiSection.svelte';
   import ParamsBlock from './ParamsBlock.svelte';
   import PresetRow from './PresetRow.svelte';
   import Recommendations from './Recommendations.svelte';
@@ -73,5 +74,6 @@
     <DisplayRow config={vm.config} />
   {/if}
   <NodesSection nodes={vm.nodes} />
+  {#if !system.node}<WebUiSection info={vm.config.webui} />{/if}
 </div>
 <TuneFooter {vm} {system} {viewedId} />

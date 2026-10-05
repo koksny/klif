@@ -71,6 +71,7 @@ export class TuneState {
   commandOpen = $state(false);
   recOpen = $state(false);
   nodesOpen = $state(false);
+  webuiOpen = $state(false);
   confirmReq = $state<ConfirmRequest | null>(null);
   private seq = 0;
 

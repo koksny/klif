@@ -464,6 +464,8 @@ impl Inner {
             models_dir: cfg.models_dir().map(|p| p.display().to_string()),
             on_conflict: cfg.launch.on_conflict,
             record_moment: cfg.ui.record_moment,
+            skin: cfg.ui.skin.clone(),
+            webui: self.webui_info(cfg, klif_common::now_s()),
         };
         // The inventory and its suggestions under one guard (a second lock inside the literal would deadlock).
         let (hardware, suggestions) = {

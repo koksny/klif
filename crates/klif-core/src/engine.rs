@@ -46,6 +46,7 @@ use klif_supervisor::Supervisor;
 use klif_telemetry::{Telemetry, UlpsSetting};
 
 use crate::control::{ControlServer, NetworkServer, NodeAuth};
+use crate::webui::{WebAssets, WebAuth, WebServer};
 use crate::download::DownloadHandle;
 use crate::nodes::NodeHub;
 use crate::state::{self, PersistedLast, PersistedState, STATE_VERSION};
@@ -192,6 +193,13 @@ struct Servers {
     auth: Option<Arc<NodeAuth>>,
     last_auth_refresh: f64,
     last_listen_try: f64,
+    /// klif-webui: the address it serves on (None: off), the server, why it does not serve, the last start attempt.
+    webui_addr: Option<String>,
+    webui: Option<WebServer>,
+    webui_error: Option<String>,
+    last_webui_try: f64,
+    /// The page's address(es) for Tune and the QR code, and when they were worked out.
+    webui_urls: (f64, Vec<String>),
 }
 
 type Stat = (std::time::SystemTime, u64);
@@ -279,6 +287,10 @@ pub(crate) struct Inner {
     nodes_sig: Mutex<String>,
     /// Best values per model file and backend (`crate::records`; its locks are leaves).
     records: crate::records::Records,
+    /// klif-webui's paired devices and open pairing.
+    web_auth: Arc<WebAuth>,
+    /// The page's files, from the host (the window app); None: this engine serves no page.
+    web_assets: Mutex<Option<WebAssets>>,
     /// `engine.lock`, held for the engine's lifetime.
     engine_lock: Mutex<Option<File>>,
     state_dir: PathBuf,
@@ -454,6 +466,8 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
         nodes_sig: Mutex::new(nodes_sig),
         records: crate::records::Records::open(&data_dir, &crate::records::machine_name(&cfg)),
         engine_lock: Mutex::new(Some(lock_file)),
+        web_auth: Arc::new(WebAuth::load(&state_dir)),
+        web_assets: Mutex::new(None),
         state_dir,
         data_dir,
     });
@@ -544,6 +558,15 @@ impl Inner {
         }
         let cfg = self.cfg();
         self.sync_listener(&cfg);
+        self.sync_webui(&cfg);
+    }
+
+    /// The host's klif-webui files arrived: serve the page if `[webui]` wants it.
+    pub(crate) fn set_web_assets(&self, assets: WebAssets) {
+        *lock(&self.web_assets) = Some(assets);
+        let cfg = self.cfg();
+        self.sync_webui_with(&cfg, true);
+        self.poke();
     }
 
     // ---- tick -------------------------------------------------------------------------------
@@ -831,8 +854,12 @@ impl Inner {
             if let Some(l) = s.local.take() {
                 l.shutdown();
             }
+            if let Some(w) = s.webui.take() {
+                w.shutdown();
+            }
             s.auth = None;
         }
+        self.web_auth.flush();
         self.nodes.shutdown();
         for (_, h) in std::mem::take(&mut lock(&self.downloads).handles) {
             h.cancel();

@@ -26,6 +26,7 @@ import type {
   RecordMetric,
   RecordModel,
   RecordValue,
+  SettingsPatch,
   Session,
   System,
   SystemId,
@@ -34,6 +35,9 @@ import type {
   ViewModel,
   VramLayer,
   VramLayerId,
+  WebUiDevice,
+  WebUiInfo,
+  WebUiPairing,
 } from '../model/types';
 import { specNumberProblem } from '../model/presets';
 import { bootLines, bootView, planBoot, type BootLine, type BootPlan, type LogStyle } from './boot';
@@ -411,6 +415,12 @@ export class MockEngine {
   private onConflict: ConfigInfo['onConflict'];
   /** `[ui] record_moment` of the mock machine. */
   private recordMoment = true;
+  /** `[ui] skin` as the window reported it. */
+  private skin?: string;
+  /** `[webui]`, its paired devices and the open pairing (the browser mock serves no page). */
+  private webui = { enabled: false, host: '0.0.0.0', port: 7341 };
+  private webDevices: WebUiDevice[] = [{ id: '3fa1c2d4', name: 'Phone', pairedAt: 1790000000, lastSeen: 1790100000 }];
+  private webPairing?: WebUiPairing;
   private downloaded: Set<string>;
   private downloads: Download[] = [];
   private rng: Rng;
@@ -884,9 +894,50 @@ export class MockEngine {
    * Remove a junk record. `key` is the key as that machine knows it (a node's entry: without the "<node>/" prefix,
    * `node` set; the prefixed form is accepted too). A node must grant "edit".
    */
-  /** Action UpdateSettings: `[ui] record_moment`. */
-  updateSettings(patch: { recordMoment?: boolean }) {
+  /** Action UpdateSettings: `[ui]` and `[webui]`. */
+  updateSettings(patch: SettingsPatch) {
+    if (patch.webuiHost !== undefined && !/^(\d{1,3}\.){3}\d{1,3}$|:/.test(patch.webuiHost.trim())) {
+      throw new Error(`"${patch.webuiHost}" is not an IP address. Use 0.0.0.0 for every network, or the address of one network of this machine.`);
+    }
+    if (patch.webuiPort !== undefined && !(patch.webuiPort >= 1 && patch.webuiPort <= 65535)) {
+      throw new Error('That is not a port; use 1 to 65535 (default 7341).');
+    }
     if (patch.recordMoment !== undefined) this.recordMoment = patch.recordMoment;
+    if (patch.skin !== undefined) this.skin = patch.skin;
+    if (patch.webuiEnabled !== undefined) this.webui.enabled = patch.webuiEnabled;
+    if (patch.webuiHost !== undefined) this.webui.host = patch.webuiHost.trim();
+    if (patch.webuiPort !== undefined) this.webui.port = patch.webuiPort;
+    if (!this.webui.enabled) this.webPairing = undefined;
+  }
+
+  /** Actions PairWebDevice / CancelWebPairing / ForgetWebDevice. */
+  pairWebDevice() {
+    if (!this.webui.enabled) throw new Error('Turn klif-webui on first.');
+    const hex = Array.from({ length: 64 }, () => '0123456789abcdef'[Math.floor(this.rng.next() * 16)]).join('');
+    const code = String(Math.floor(this.rng.next() * 1_000_000)).padStart(6, '0');
+    this.webPairing = { url: `${this.webuiUrls()[0]}#pair=${hex}`, code, expiresAt: Date.now() / 1000 + 300 };
+  }
+
+  cancelWebPairing() {
+    this.webPairing = undefined;
+  }
+
+  forgetWebDevice(device?: string) {
+    if (device && !this.webDevices.some((d) => d.id === device)) throw new Error(`There is no paired device "${device}".`);
+    this.webDevices = device ? this.webDevices.filter((d) => d.id !== device) : [];
+  }
+
+  private webuiUrls(): string[] {
+    if (!this.webui.enabled) return [];
+    const ip = this.webui.host === '0.0.0.0' ? '192.0.2.10' : this.webui.host;
+    return [`http://${ip.includes(':') ? `[${ip}]` : ip}:${this.webui.port}/`];
+  }
+
+  private webuiInfo(): WebUiInfo {
+    if (this.webPairing && this.webPairing.expiresAt <= Date.now() / 1000) this.webPairing = undefined;
+    const info: WebUiInfo = { ...this.webui, listening: this.webui.enabled, urls: this.webuiUrls(), devices: this.webDevices.map((d) => ({ ...d })) };
+    if (this.webPairing) info.pairing = { ...this.webPairing };
+    return info;
   }
 
   forgetRecord(key: string, node?: string) {
@@ -1745,7 +1796,9 @@ export class MockEngine {
       apiKey: { source: 'file', set: this.apiKeySet },
       onConflict: this.onConflict,
       recordMoment: this.recordMoment,
+      webui: this.webuiInfo(),
     };
+    if (this.skin) config.skin = this.skin;
     if (this.modelsDir) config.modelsDir = this.modelsDir;
     const downloads: DownloadInfo[] = this.downloads.map((d) => {
       const info: DownloadInfo = { id: d.id, file: d.file, doneBytes: Math.round(d.done), totalBytes: d.total, state: d.state };

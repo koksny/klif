@@ -348,6 +348,81 @@ pub fn set_record_moment(path: &Path, on: bool) -> Result<()> {
     )
 }
 
+/// `[ui] skin` and `[webui]` as one edit (UpdateSettings): absent fields stay. A default value removes its key.
+pub fn set_settings(path: &Path, skin: Option<&str>, webui_enabled: Option<bool>, webui_host: Option<&str>, webui_port: Option<u16>) -> Result<()> {
+    if let Some(s) = skin {
+        if !valid_skin_id(s) {
+            bail!("\"{s}\" is not a skin id (lowercase letters, digits, - and _).");
+        }
+    }
+    let host = webui_host.map(|h| h.trim().trim_start_matches('[').trim_end_matches(']').to_string());
+    if let Some(h) = &host {
+        if h.parse::<std::net::IpAddr>().is_err() {
+            bail!("\"{h}\" is not an IP address. Use 0.0.0.0 for every network, or the address of one network of this machine.");
+        }
+    }
+    if webui_port == Some(0) {
+        bail!("0 is not a port; use 1 to 65535 (default {}).", klif_common::config::WEBUI_PORT);
+    }
+    let table = |doc: &mut DocumentMut, name: &str| -> Result<()> {
+        if doc.get(name).is_none() {
+            doc.insert(name, Item::Table(Table::new()));
+        }
+        doc[name].as_table_mut().map(|_| ()).ok_or_else(|| anyhow!("[{name}] in klif.toml is not a table."))
+    };
+    edit(
+        path,
+        |doc, _cfg| {
+            if let Some(s) = skin {
+                table(doc, "ui")?;
+                set_value(doc["ui"].as_table_mut().expect("table"), "skin", Value::from(s));
+            }
+            if webui_enabled.is_some() || host.is_some() || webui_port.is_some() {
+                table(doc, "webui")?;
+                let w = doc["webui"].as_table_mut().expect("table");
+                if let Some(on) = webui_enabled {
+                    set_value(w, "enabled", Value::from(on));
+                }
+                if let Some(h) = &host {
+                    if h == "0.0.0.0" {
+                        w.remove("host");
+                    } else {
+                        set_value(w, "host", Value::from(h.as_str()));
+                    }
+                }
+                if let Some(p) = webui_port {
+                    if p == klif_common::config::WEBUI_PORT {
+                        w.remove("port");
+                    } else {
+                        set_value(w, "port", Value::from(i64::from(p)));
+                    }
+                }
+            }
+            Ok(())
+        },
+        |cfg, _| {
+            let ok = skin.is_none_or(|s| cfg.ui.skin.as_deref() == Some(s))
+                && webui_enabled.is_none_or(|on| cfg.webui.enabled == on)
+                && host.as_deref().is_none_or(|h| cfg.webui.host == h)
+                && webui_port.is_none_or(|p| cfg.webui.port == p);
+            if ok {
+                Ok(())
+            } else {
+                bail!("[ui] / [webui] do not read back from klif.toml; nothing was written.")
+            }
+        },
+    )
+}
+
+/// A skin id as the window names them: `[a-z0-9][a-z0-9_-]{0,31}`.
+pub fn valid_skin_id(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b.len() <= 32
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
+}
+
 pub fn ensure_file(cfg: &Config) -> Result<PathBuf> {
     let path = cfg.file_path();
     if path.is_file() {

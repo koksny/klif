@@ -123,13 +123,43 @@ pub fn start_owned(loaded: &LoadedConfig) -> CliResult<EngineHandle> {
             },
         )),
         Ok(None) => match Engine::start(loaded.clone(), host_info()) {
-            Ok(h) => Ok(h),
+            Ok(h) => {
+                dev_web_assets(&h);
+                Ok(h)
+            }
             Err(StartError::Busy { pid }) => Err(CliError::new("engine_busy", format!("A KLIF engine already runs for this configuration (pid {pid})."))),
             Err(StartError::Other(e)) => Err(CliError::new("engine", format!("The engine could not start: {e:#}"))),
         },
         Err(e) => Err(CliError::new("control", format!("The control channel could not be checked: {e:#}"))),
     }
 }
+
+/// Debug builds only: `KLIF_WEBUI_DIR=<app/ui/dist>` lets `serve` answer klif-webui from a UI build on disk, so the
+/// page can be checked without the window app. Release builds serve no page from klif-cli.
+#[cfg(debug_assertions)]
+fn dev_web_assets(h: &EngineHandle) {
+    let Some(dir) = std::env::var_os("KLIF_WEBUI_DIR").map(std::path::PathBuf::from) else { return };
+    note(&format!("note: klif-webui files from {} (debug build)", dir.display()));
+    h.set_web_assets(std::sync::Arc::new(move |path: &str| {
+        if path.split('/').any(|p| p.is_empty() || p == "..") {
+            return None;
+        }
+        let bytes = std::fs::read(dir.join(path)).ok()?;
+        let mime = match path.rsplit('.').next().unwrap_or_default() {
+            "html" => "text/html",
+            "js" => "text/javascript",
+            "css" => "text/css",
+            "woff2" => "font/woff2",
+            "png" => "image/png",
+            "svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+        Some((bytes, mime.to_string()))
+    }));
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_web_assets(_h: &EngineHandle) {}
 
 /// Give a fresh in-process engine up to 3 s for its first health results: adopted sessions show "starting"
 /// until the first probe answers, remote nodes "connecting" until their first hello.

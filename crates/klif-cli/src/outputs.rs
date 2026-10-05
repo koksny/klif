@@ -9,7 +9,7 @@
 use klif_core::bench::BenchRecord;
 use klif_core::klif_common::vm::{
     ApiKeyInfo, BenchSummary, DownloadInfo, DownloadState, Ended, HardwareInfo, Issue, NodeView, ParamView, PresetDetail, PresetInfo,
-    RecommendationInfo, RecordEntry, RecordEvent, RecordMetric, Suggestion, System, SystemId, SystemKind, SystemStatus,
+    RecommendationInfo, RecordEntry, RecordEvent, RecordMetric, Suggestion, System, SystemId, SystemKind, SystemStatus, WebUiDevice,
 };
 use klif_core::wire::{StatusJson, StatusSystem};
 use schemars::JsonSchema;
@@ -153,12 +153,57 @@ pub struct DismissDoc {
     pub system: Option<SysBrief>,
 }
 
-/// `settings [record-moment on|off]`: this machine's display settings.
+/// `settings [record-moment on|off | skin <id>]`: this machine's display settings.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDoc {
     /// `[ui] record_moment`: the "new record" moment is shown.
     pub record_moment: bool,
+    /// `[ui] skin`: the skin the window uses (its id); absent until the window has reported one or `settings skin`
+    /// set one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
+}
+
+/// `webui`, `webui on|off`, `webui cancel`, `webui forget`: klif-webui as the engine reports it. It never carries the
+/// pairing secret, the pairing URL or the code; `webui pair` prints those.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebUiDoc {
+    /// `[webui] enabled`.
+    pub enabled: bool,
+    /// `[webui] host`: "0.0.0.0" (every network of this machine) or one IP address.
+    pub host: String,
+    pub port: u16,
+    /// The page is served now (only the KLIF window app serves it, see `error`).
+    pub listening: bool,
+    /// What a phone opens ("http://192.0.2.10:7341/"), best first; empty while nothing is served.
+    pub urls: Vec<String>,
+    /// Why it is not served although `enabled`: one sentence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The paired devices; `pairedAt` and `lastSeen` are Unix seconds.
+    pub devices: Vec<WebUiDevice>,
+    /// A pairing is open (its code and URL are not part of this document).
+    pub pairing_open: bool,
+    /// Unix seconds; present while a pairing is open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_expires_at: Option<f64>,
+}
+
+/// `webui pair`: the one-time credential of an open pairing. Whoever holds it can pair a device that then controls
+/// KLIF; it expires at `expiresAt` (5 minutes after it was opened) or when one device has paired.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebUiPairDoc {
+    /// Six digits, typed on the device.
+    pub code: String,
+    /// What the QR code carries: the page's address with the one-time secret after `#pair=`. Absent when this
+    /// machine has no network address to give (then only the code exists).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Unix seconds.
+    pub expires_at: f64,
 }
 
 // --------------------------------------------------------------------------------------- systems, nodes

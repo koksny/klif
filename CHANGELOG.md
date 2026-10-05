@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.2 (unreleased, branch `0.3.2`)
+
+KLIF on a phone: a small page that shows every System and controls it from a device on your network.
+
+### Added
+
+- **klif-webui.** A control page for a phone or a browser on the network, served by the KLIF window app (`[webui]`
+  in `klif.toml`: `enabled`, `host`, `port`; off by default, `0.0.0.0:7341`). It shows each machine, its GPUs as memory
+  bars that name who holds what, and the Systems with their status. A sheet per System launches, stops, restarts and
+  dismisses it ("Stop X & launch" when a launch has to stop others), chooses its preset and params and reads its
+  console. It wears the window's skin and has no animations. See [docs/webui.md](docs/webui.md).
+- **Pairing.** A device sees and controls nothing until it is paired, by a QR code or a 6-digit code that Tune opens
+  for 5 minutes (one success or 5 wrong codes close it). A device holds a random token in its browser; KLIF stores
+  only its SHA-256 in `webui-devices.json`. The page is plain HTTP (authenticated, not encrypted, like nodes); KLIF
+  checks the Host header, accepts only JSON in a POST, limits connections and sizes, and sends a Content-Security-Policy.
+  KLIF never changes firewall rules.
+- **Tune > Web UI.** The switch, the address and port, **Pair a device** (QR code and code), and the paired devices
+  with **Remove**.
+- **`klif-cli webui`.** `webui` shows the state and the devices (never a pairing code), `webui on|off [--host IP]
+  [--port N]` changes `[webui]`, `webui pair --yes` opens a pairing and prints its one-time code and address,
+  `webui cancel` closes it, `webui forget <device>|--all --yes` removes devices. Documents `webui` and `webui-pair`
+  in `klif-cli schema`.
+- **`[ui] skin`.** The window writes the skin it shows to `klif.toml` and follows a change made elsewhere; klif-webui
+  follows it. `klif-cli settings skin <id>` sets it.
+- **Agents.** `AGENTS.md` and the Agent Skill treat the pairing code and address as a credential, and tell agents not
+  to turn klif-webui on, or open it to the LAN, on their own.
+
 ## 0.3.1 (unreleased, branch `0.3.1`)
 
 KLIF now knows the machine it runs on: what it can compute, which models fit it, and the best each model file has

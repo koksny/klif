@@ -7,7 +7,8 @@
        tauri.conf.json, app/ui/package.json, VERSION) and that no `private` folder would ship.
     2. app/ui:        npm run build -- --emptyOutDir   -> app/ui/dist  (the Svelte UI, minified)
        app/ui/dist is emptied first, so nothing left by an older build (a 0.2 dist\private, old hashed assets)
-       can be embedded; the private-folder and woff2-only font checks then run on the fresh output.
+       can be embedded; the private-folder and woff2-only font checks then run on the fresh output. The build
+       has two pages: index.html (the window) and webui.html (klif-webui, which the engine in klif.exe serves).
     3. app/src-tauri: cargo build --release --features custom-protocol   -> klif.exe
        The custom-protocol feature makes Tauri serve the UI embedded from app/ui/dist at compile time
        (http://tauri.localhost) instead of tauri.conf.json's devUrl. Without it a release build still loads
@@ -274,6 +275,10 @@ if ($SkipUi) {
 $uiIndex = Join-Path $uiDist 'index.html'
 if (-not (Test-Path -LiteralPath $uiIndex)) {
     throw "app/ui/dist/index.html is missing: nothing to embed."
+}
+# klif-webui's page is the second entry of the same build; the engine in klif.exe serves it on the LAN.
+if (-not (Test-Path -LiteralPath (Join-Path $uiDist 'webui.html'))) {
+    throw "app/ui/dist/webui.html is missing: klif-webui would have no page to serve."
 }
 if (-not $SkipUi -and (Get-Item -LiteralPath $uiIndex).LastWriteTime -lt $uiStart.AddSeconds(-2)) {
     throw "app/ui/dist/index.html is older than this UI build: the build did not write app/ui/dist."

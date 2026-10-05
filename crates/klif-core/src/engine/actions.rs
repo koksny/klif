@@ -194,10 +194,35 @@ impl Inner {
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
             Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
             Action::ForgetRecord { key, node: _ } => self.forget_record(&key),
-            Action::UpdateSettings { record_moment } => match record_moment {
-                Some(on) => self.write(|path| store::set_record_moment(path, on)),
-                None => Ok(()),
-            },
+            Action::UpdateSettings { record_moment, skin, webui_enabled, webui_host, webui_port } => {
+                if let Some(on) = record_moment {
+                    self.write(|path| store::set_record_moment(path, on))?;
+                }
+                if skin.is_some() || webui_enabled.is_some() || webui_host.is_some() || webui_port.is_some() {
+                    self.write(|path| store::set_settings(path, skin.as_deref(), webui_enabled, webui_host.as_deref(), webui_port))?;
+                }
+                Ok(())
+            }
+            Action::PairWebDevice => {
+                if !self.cfg().webui.enabled {
+                    bail!("Turn klif-webui on first.");
+                }
+                if !self.webui_serving() {
+                    let why = self.webui_info(&self.cfg(), klif_common::now_s()).error.unwrap_or_else(|| "it is starting".into());
+                    bail!("klif-webui is not serving, so no device can pair: {why}");
+                }
+                self.web_auth.pair_begin(klif_common::now_s())
+            }
+            Action::CancelWebPairing => {
+                self.web_auth.pair_cancel();
+                Ok(())
+            }
+            Action::ForgetWebDevice { device } => {
+                if !self.web_auth.forget(device.as_deref())? {
+                    bail!("There is no paired device \"{}\".", device.unwrap_or_default());
+                }
+                Ok(())
+            }
         }
     }
 

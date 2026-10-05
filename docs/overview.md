@@ -16,6 +16,7 @@ runs.
 | **Session** | One run of a System's server: its process, logs, measurements. |
 | **Node** | A machine running KLIF. This machine can be one for others (`[node]`), and can show other nodes' Systems (`[nodes.<id>]`). [nodes.md](nodes.md) |
 | **Recommendation** | A model suggestion per kind and class that can become a preset and be downloaded on request. |
+| **klif-webui** | A small control page for a phone or a browser on the LAN, served by the window app, off by default. Devices pair first. [webui.md](webui.md) |
 
 ## Programs
 
@@ -70,6 +71,7 @@ whose data lives in `%LOCALAPPDATA%\KLIF`.
 | `control.json` | Port and per-run token of the local control channel; removed on shutdown |
 | `api-key.txt` | The KLIF API key (when `[security] api_key = "file"`) |
 | `node-token.txt` | This node's token, when you created one |
+| `webui-devices.json` | The devices paired with klif-webui: name, dates and the SHA-256 of each token |
 | `instance-id` | Random id of this installation (nodes use it to spot themselves) |
 | `window.json`, `panel.json` | Window geometry |
 
@@ -92,6 +94,7 @@ Downloaded models go to `[paths] models_dir` (`<models_dir>\<owner>--<repo>\<fil
 | (none) | `generic` presets must give a port or a health check |
 | random, `127.0.0.1` | The local control channel (see `control.json`) |
 | 7340 | The node listener, only when `[node] listen` is set |
+| 7341 | klif-webui, only when `[webui] enabled` is true and the window app runs |
 | 5193, `127.0.0.1` | The UI dev server (development only) |
 
 Everything binds to loopback unless you set a host. Committed code and examples never carry a real LAN address.

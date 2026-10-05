@@ -99,6 +99,9 @@ The animations come from the browser mock engine with recorded timings, the same
   KLIF reads for telemetry.
 - **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys and nodes, with `--json` and a
   stable `schemaVersion`. [docs/cli.md](docs/cli.md)
+- **klif-webui.** An opt-in page for a phone or a browser on your network: every System's status, with launch, stop,
+  restart, preset and params. Devices pair with a QR code; it is off by default and plain HTTP, so use it on a network
+  you trust. [docs/webui.md](docs/webui.md)
 - **Models that fit this machine.** KLIF knows every GPU and the CPU, their theoretical FP32 TFLOPS and the VRAM
   and RAM they add up to, and suggests a model from its embedded pool for each System: quant, context and KV type
   sized to the memory that System may use. It downloads from huggingface.co only when you ask. The suggestions are
@@ -205,6 +208,7 @@ that miss the bar are closed without a long discussion. That is about time, not 
 - [Presets](docs/presets.md): launch commands, placeholders, params, adapters, recommendations
 - [klif-cli](docs/cli.md): every command and the JSON contract
 - [Nodes](docs/nodes.md): several machines, rights, the security model
+- [klif-webui](docs/webui.md): the control page for a phone, pairing, the security model, the API
 - [Platforms](docs/platforms.md): Windows and AMD first; other GPUs and systems through pull requests
 - [Windows Defender and SmartScreen](docs/windows-defender.md)
 - [Brand](docs/brand.md), [Publishing](docs/publish.md), [Changelog](CHANGELOG.md), [Security](SECURITY.md)

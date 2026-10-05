@@ -348,6 +348,46 @@ export interface ConfigInfo {
   onConflict: OnConflict;
   /** `[ui] record_moment`: show the "new record" moment (default on). */
   recordMoment: boolean;
+  /** `[ui] skin`: the skin this window reported last (klif-webui follows it; klif-cli can set it). */
+  skin?: string;
+  /** klif-webui, the LAN control page (`[webui]`, pairing, devices). */
+  webui: WebUiInfo;
+}
+
+/** klif-webui as Tune shows it. */
+export interface WebUiInfo {
+  /** `[webui] enabled`. */
+  enabled: boolean;
+  /** `[webui] host`: "0.0.0.0" (every network) or one IP address. */
+  host: string;
+  port: number;
+  /** Serving now. */
+  listening: boolean;
+  /** What a phone opens ("http://192.0.2.10:7341/"), best first; empty while it does not serve. */
+  urls: string[];
+  /** Why it does not serve although enabled: one sentence. */
+  error?: string;
+  devices: WebUiDevice[];
+  /** The open pairing, for the QR code. */
+  pairing?: WebUiPairing;
+}
+
+export interface WebUiDevice {
+  id: string;
+  /** What the device called itself when it paired. */
+  name: string;
+  /** Unix seconds. */
+  pairedAt: number;
+  lastSeen?: number;
+}
+
+/** An open pairing: the QR code carries `url` (the secret in its # part), `code` is for typing. */
+export interface WebUiPairing {
+  url: string;
+  /** Six digits. */
+  code: string;
+  /** Unix seconds. */
+  expiresAt: number;
 }
 
 // ------------------------------------------------------------------------------------------- systems
@@ -900,7 +940,22 @@ export type EngineAction =
   | { type: 'adoptRecommendation'; id: string; system?: SystemId; ctx?: number; kv?: string }
   /** Remove a junk record (the key as that machine knows it; node = a remote node's entry). */
   | { type: 'forgetRecord'; key: string; node?: string }
-  | { type: 'updateSettings'; recordMoment?: boolean };
+  | { type: 'updateSettings' } & SettingsPatch
+  /** klif-webui: open a pairing (QR code + 6-digit code, 5 minutes), close it, remove a device (none: all). */
+  | { type: 'pairWebDevice' }
+  | { type: 'cancelWebPairing' }
+  | { type: 'forgetWebDevice'; device?: string };
+
+/** This machine's settings in `[ui]` and `[webui]`; absent fields stay as they are. */
+export interface SettingsPatch {
+  recordMoment?: boolean;
+  /** The skin the window shows (klif-webui follows it). */
+  skin?: string;
+  webuiEnabled?: boolean;
+  /** An IP address ("0.0.0.0": every network). */
+  webuiHost?: string;
+  webuiPort?: number;
+}
 // Serde shape: Action::ForgetRecord { key, node? } (klif_common::vm), tagged "forgetRecord"; needs the node's "edit"
 // right when it is a remote entry.
 
@@ -950,8 +1005,12 @@ export interface Actions {
    * pass the node). A remote node must grant "edit".
    */
   forgetRecord(key: string, node?: string, call?: CallOpts): Promise<void>;
-  /** This machine's display settings (`[ui]` in klif.toml). */
-  updateSettings(patch: { recordMoment?: boolean }, call?: CallOpts): Promise<void>;
+  /** This machine's settings (`[ui]` and `[webui]` in klif.toml). */
+  updateSettings(patch: SettingsPatch, call?: CallOpts): Promise<void>;
+  /** klif-webui pairing and devices (this machine only). */
+  pairWebDevice(call?: CallOpts): Promise<void>;
+  cancelWebPairing(call?: CallOpts): Promise<void>;
+  forgetWebDevice(device?: string, call?: CallOpts): Promise<void>;
   // ---- shell actions ----
   openEndpoint(system?: SystemId): void;
   copyEndpoint(system?: SystemId): void;

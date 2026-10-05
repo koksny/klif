@@ -37,8 +37,9 @@ klif-cli schema                      # the documents; klif-cli schema <name> pri
 - `watch` and `logs --follow` print JSON **lines** instead (`schemaVersion`, `type`, `at`); `models download --json`
   prints its progress as JSON lines on stderr.
 - **`--yes` is the user's decision.** It is required to launch, stop, restart, remove a System, delete a preset,
-  download a model, clear the key, forget a record, replace a node token, and for `bench` when it must launch the
-  System. Never add it to make an error go away; ask the user, then add it.
+  download a model, clear the key, forget a record, replace a node token, open a klif-webui pairing, remove a paired
+  device, and for `bench` when it must launch the System. Never add it to make an error go away; ask the user, then
+  add it.
 - `<system>` is an id (`s1`, `render-box/s1`), a label ignoring case and spaces (`system1`) or `low|medium|high|krea`
   (`s1|s2|s3|cgi`). Use ids in scripts.
 
@@ -148,12 +149,31 @@ klif-cli --json records history <key> --metric decode    # how a record climbed
 5. Bench covers llm, image, tts, stt (stt needs `--audio file.wav`) and music (audio.cpp servers only; a run lasts as
    long as the song takes, so try `--runs 1`); a System on another node is benched on that machine.
 
+## klif-webui (the phone page)
+
+klif-webui is a small control page for a phone or a browser on the LAN (`docs/webui.md`). It is off by default, plain
+HTTP, and served only by the KLIF window app (`klif.exe`), not by `klif-cli`.
+
+```powershell
+klif-cli --json webui                 # on or off, address, listening, error, devices, pairingOpen (never a code)
+klif-cli webui on --host 127.0.0.1    # [webui] in klif.toml: on|off, --host IP, --port N
+klif-cli webui pair --yes             # one-time code and address, valid 5 minutes: a credential
+klif-cli webui cancel                 # close the open pairing
+klif-cli webui forget <id> --yes      # remove a paired device (--all --yes: every device)
+klif-cli settings skin cliff          # [ui] skin: the skin the window shows, which the page follows
+```
+
+- Do not turn it on, or point `host` at a LAN address, on your own initiative: the user decides.
+- The `webui pair` output (code, address with a secret) is a credential. Run it only when the user asks for a pairing,
+  show it only to them, and never write it into a file, a log or a message anywhere else.
+
 ## Safety
 
 - **Secrets:** never print, log, commit or paste the API key (`api-key.txt`), node tokens (`node-token.txt`,
   `*.token`), `control.json`, Hugging Face tokens, or any env value whose name holds KEY, TOKEN, SECRET, PASS or
   AUTH. Do not `cat` those files. `klif-cli key set` reads the key from stdin; `node token --create` prints a token
-  once: have the user run it, or redirect it to a file without echoing it.
+  once: have the user run it, or redirect it to a file without echoing it. The same goes for the output of
+  `webui pair`.
 - **Do not change what is not yours.** Never kill a process by name; stop Systems through KLIF. A port held by a
   foreign process is reported, not cleared.
 - **Keep servers on loopback** unless the user wants LAN access, and then keep the API key on. Do not enable

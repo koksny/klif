@@ -63,5 +63,10 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     target: 'es2022',
+    // Two pages: the window (index.html) and klif-webui (webui.html), which the engine serves on the LAN. They
+    // share the skins' token and font chunks.
+    rolldownOptions: {
+      input: { main: resolve(__dirname, 'index.html'), webui: resolve(__dirname, 'webui.html') },
+    },
   },
 }));

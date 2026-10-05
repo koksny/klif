@@ -1067,6 +1067,64 @@ pub struct ConfigInfo {
     /// `[ui] record_moment`: show the "new record" moment (default on).
     #[serde(default = "yes")]
     pub record_moment: bool,
+    /// `[ui] skin`: the skin the window reported last (klif-webui follows it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
+    /// klif-webui, the LAN control page (`[webui]`, pairing, devices). Local only: a node's peers never see it.
+    #[serde(default)]
+    pub webui: WebUiInfo,
+}
+
+/// klif-webui as Tune shows it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct WebUiInfo {
+    /// `[webui] enabled`.
+    pub enabled: bool,
+    /// `[webui] host`: "0.0.0.0" (every network) or one IP address.
+    pub host: String,
+    pub port: u16,
+    /// Serving now.
+    pub listening: bool,
+    /// What a phone opens ("http://192.0.2.10:7341/"), best first; empty while it does not listen.
+    pub urls: Vec<String>,
+    /// Why it does not serve although enabled: one sentence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub devices: Vec<WebUiDevice>,
+    /// The open pairing, for the QR code (None: none open).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<WebUiPairing>,
+}
+
+/// A paired klif-webui device.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct WebUiDevice {
+    pub id: String,
+    /// What the device called itself when it paired ("Phone", "Firefox on Windows"...).
+    pub name: String,
+    /// Unix seconds.
+    pub paired_at: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<f64>,
+}
+
+/// An open klif-webui pairing: the QR code carries `url` (the secret in its `#` part), `code` is for typing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct WebUiPairing {
+    pub url: String,
+    /// Six digits.
+    pub code: String,
+    /// Unix seconds.
+    pub expires_at: f64,
 }
 
 fn yes() -> bool {
@@ -1877,10 +1935,30 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
     },
-    /// This machine's display settings in `[ui]` (absent fields stay as they are). Never over the network.
+    /// This machine's settings in `[ui]` and `[webui]` (absent fields stay as they are). Never over the network.
     UpdateSettings {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_moment: Option<bool>,
+        /// The skin the window shows (its id); klif-webui follows it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skin: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        webui_enabled: Option<bool>,
+        /// An IP address ("0.0.0.0": every network).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        webui_host: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        webui_port: Option<u16>,
+    },
+    /// Open a klif-webui pairing: a one-time secret for a QR code plus a 6-digit code, valid a few minutes
+    /// (`config.webui.pairing`). Replaces an open one. Never over the network.
+    PairWebDevice,
+    /// Close the open klif-webui pairing. Never over the network.
+    CancelWebPairing,
+    /// Remove a paired klif-webui device (None: every device); it has to pair again. Never over the network.
+    ForgetWebDevice {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
     },
 }
 
@@ -1906,6 +1984,9 @@ impl Action {
             Action::AdoptRecommendation { .. } => "adoptRecommendation",
             Action::ForgetRecord { .. } => "forgetRecord",
             Action::UpdateSettings { .. } => "updateSettings",
+            Action::PairWebDevice => "pairWebDevice",
+            Action::CancelWebPairing => "cancelWebPairing",
+            Action::ForgetWebDevice { .. } => "forgetWebDevice",
         }
     }
 
@@ -1929,7 +2010,10 @@ impl Action {
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
             | Action::ForgetRecord { .. }
-            | Action::UpdateSettings { .. } => None,
+            | Action::UpdateSettings { .. }
+            | Action::PairWebDevice
+            | Action::CancelWebPairing
+            | Action::ForgetWebDevice { .. } => None,
         }
     }
 
@@ -1959,7 +2043,10 @@ impl Action {
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
             | Action::ForgetRecord { .. }
-            | Action::UpdateSettings { .. } => {}
+            | Action::UpdateSettings { .. }
+            | Action::PairWebDevice
+            | Action::CancelWebPairing
+            | Action::ForgetWebDevice { .. } => {}
         }
         a
     }
@@ -2016,7 +2103,11 @@ impl Action {
     /// The right a network peer needs for this action (SPEC 16.11).
     pub fn required_right(&self) -> Right {
         match self {
-            Action::Select { .. } | Action::UpdateSettings { .. } => Right::LocalOnly,
+            Action::Select { .. }
+            | Action::UpdateSettings { .. }
+            | Action::PairWebDevice
+            | Action::CancelWebPairing
+            | Action::ForgetWebDevice { .. } => Right::LocalOnly,
             Action::Launch { .. }
             | Action::Stop { .. }
             | Action::StopAll
@@ -2124,7 +2215,17 @@ impl fmt::Debug for Action {
                 .field("kv", kv)
                 .finish(),
             Action::ForgetRecord { key, node } => f.debug_struct("ForgetRecord").field("key", key).field("node", node).finish(),
-            Action::UpdateSettings { record_moment } => f.debug_struct("UpdateSettings").field("record_moment", record_moment).finish(),
+            Action::UpdateSettings { record_moment, skin, webui_enabled, webui_host, webui_port } => f
+                .debug_struct("UpdateSettings")
+                .field("record_moment", record_moment)
+                .field("skin", skin)
+                .field("webui_enabled", webui_enabled)
+                .field("webui_host", webui_host)
+                .field("webui_port", webui_port)
+                .finish(),
+            Action::PairWebDevice => f.write_str("PairWebDevice"),
+            Action::CancelWebPairing => f.write_str("CancelWebPairing"),
+            Action::ForgetWebDevice { device } => f.debug_struct("ForgetWebDevice").field("device", device).finish(),
         }
     }
 }
