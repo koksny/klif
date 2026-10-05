@@ -1,9 +1,23 @@
 //! Stand-ins for the Windows-only modules (`clipboard`, `gpu`, `webview`) so the shell's own code does not need
 //! `cfg` at every call site. Compiled only off Windows; main.rs re-exports them at the crate root. They do the
-//! least that is honest: no GPU pin (WKWebView picks its own GPU; a Mac has one), no WebView2 visibility calls,
-//! and off macOS (which has `macos::clipboard`) no clipboard copy.
+//! least that is honest: no GPU pin (WKWebView and WebKitGTK pick their own GPU), no WebView2 visibility calls. The
+//! clipboard is macOS's own module there, GTK's on Linux, and missing elsewhere.
 
-#[cfg(not(target_os = "macos"))]
+/// GTK's CLIPBOARD selection, on the main thread (commands.rs calls through `on_main`). A secret is copied as plain
+/// text: Linux desktops share no marker that keeps it out of a clipboard manager's history.
+#[cfg(target_os = "linux")]
+pub mod clipboard {
+    use tauri::{AppHandle, Runtime};
+
+    pub fn copy<R: Runtime>(_app: &AppHandle<R>, text: &str, _secret: bool) -> Result<(), String> {
+        let cb = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+        cb.set_text(text);
+        cb.store();
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub mod clipboard {
     use tauri::{AppHandle, Runtime};
 

@@ -39,9 +39,10 @@ closed without a long discussion: that is about time, not about you.
 
 ## Development setup
 
-You need Rust 1.90 or newer (MSVC toolchain on Windows; on a Mac the Xcode Command Line Tools), Node.js 20.19+ or
-22.12+ with npm, and on Windows the WebView2 runtime to run the desktop app. The macOS release build is
-`scripts/build-release.sh` ([docs/platforms.md](docs/platforms.md)).
+You need Rust 1.90 or newer (MSVC toolchain on Windows; on a Mac the Xcode Command Line Tools; on Linux the
+packages in [docs/platforms.md](docs/platforms.md#linux-specifics)), Node.js 20.19+ or 22.12+ with npm, and on Windows
+the WebView2 runtime to run the desktop app. The release builds are `scripts/Build-Release.ps1` (Windows),
+`scripts/build-release.sh` (macOS) and `scripts/build-release-linux.sh` (Linux).
 
 ```powershell
 # Rust: from the repository root
@@ -96,8 +97,8 @@ See the repo map in [AGENTS.md](AGENTS.md). Two contracts to keep in step: the v
 - [ ] Describes the hardware and OS you tested on, driver and backend versions, and what you did not test.
 - [ ] Windows behaviour is unchanged (the Windows and AMD build stays the reference); platform code is behind
       `cfg` or a trait ([docs/platforms.md](docs/platforms.md) lists the seams).
-- [ ] Pure crates still check for `x86_64-unknown-linux-gnu`
-      (`cargo check -p klif-common -p klif-catalog -p klif-supervisor -p klif-telemetry --target x86_64-unknown-linux-gnu`).
+- [ ] It still builds on Linux (`cargo check --workspace --all-targets` and `cargo check` in `app/src-tauri` on a Linux
+      machine or in WSL2; [docs/platforms.md](docs/platforms.md#linux-specifics) has the packages).
       Checking `klif-core` and `klif-cli` there also needs the OpenSSL development files and `pkg-config`
       (`ureq`'s `native-tls`, see [docs/platforms.md](docs/platforms.md)).
 - [ ] Evidence that it works: `klif-cli --json status` and `klif-cli bench` output from the real hardware.

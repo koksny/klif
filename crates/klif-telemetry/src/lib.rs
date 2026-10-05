@@ -41,6 +41,8 @@ pub mod steps;
 pub mod tail;
 pub mod text;
 pub mod vram;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(windows)]

@@ -1,9 +1,9 @@
 # Overview
 
-KLIF is a front end for a local inference stack on Windows and on macOS with Apple silicon. You describe each server
-once as a **preset** (a launch command), put presets into **Systems** (tabs), and KLIF starts, watches and stops
-them, on this machine or, through **nodes**, on others. It does not train models, it does not vendor weights, and it
-does not replace the servers it runs.
+KLIF is a front end for a local inference stack on Windows, on macOS with Apple silicon and on Linux. You describe
+each server once as a **preset** (a launch command), put presets into **Systems** (tabs), and KLIF starts, watches
+and stops them, on this machine or, through **nodes**, on others. It does not train models, it does not vendor
+weights, and it does not replace the servers it runs.
 
 ## Concepts
 
@@ -105,7 +105,8 @@ Everything binds to loopback unless you set a host. Committed code and examples 
 For each running System KLIF reads the process (alive, exit code), the server's log files, health and metrics
 endpoints (`/health`, `/slots`, `/v1/models`, `/metrics`, depending on the adapter), and the GPU: on Windows adapter
 memory through DXGI and per-process dedicated memory through performance counters, on a Mac Metal and the IORegistry
-for the GPU and each process's physical footprint (the memory is unified). From these it draws
+for the GPU and each process's physical footprint (the memory is unified), on Linux the DRM class in sysfs and each
+process's DRM fdinfo. From these it draws
 VRAM composition, prefill and decode progress, requests in flight, and fits (will this System's memory need fit
 next to the others?). A probe sends the KLIF API key as a Bearer header, and only to the System's own host.
 Servers that print little still get a process, health and per-process VRAM view.

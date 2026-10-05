@@ -106,7 +106,7 @@
 </script>
 
 <div class="mini" bind:clientWidth={w} bind:clientHeight={h}>
-  <Cloud {vm} {shift} />
+  <Cloud {vm} {shift} panel />
   <div class="sheet" style="transform: translate({ox}px, {oy}px) scale({u})">
     <div class="scrim"></div>
 

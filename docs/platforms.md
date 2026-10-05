@@ -1,10 +1,10 @@
 # Platforms
 
-KLIF is a front-end built for AMD and Windows, and it runs on macOS with Apple silicon too. Windows with an AMD GPU
-is the reference build that every decision here favours; macOS is tested on an M4, and a Mac and a Windows machine
-drive each other's Systems as [nodes](nodes.md). Other GPUs and other operating systems are expected to arrive as
-pull requests, ideally written by your coding agent for your hardware. This page says what works today, which parts
-are platform-specific, and what a good port looks like.
+KLIF is a front-end built for AMD and Windows, and it runs on macOS with Apple silicon and on Linux too. Windows with
+an AMD GPU is the reference build that every decision here favours; macOS is tested on an M4, Linux in WSL2, and a
+Mac, a Linux machine and a Windows machine drive each other's Systems as [nodes](nodes.md). Other GPUs and other
+operating systems are expected to arrive as pull requests, ideally written by your coding agent for your hardware.
+This page says what works today, which parts are platform-specific, and what a good port looks like.
 
 ## Status
 
@@ -13,7 +13,7 @@ are platform-specific, and what a good port looks like.
 | Windows 10/11 x64, AMD RDNA GPU, HIP and Vulkan builds of the servers | Tested. The reference build |
 | Windows, NVIDIA or Intel GPU | Untested. Presets are plain commands, so a CUDA or SYCL build of llama.cpp can be launched; GPU memory is read through DXGI and Windows counters, which are not AMD-specific, but nobody has checked them. The dormant-GPU detection is AMD-only |
 | macOS 13+ on Apple silicon, Metal build of llama.cpp | Tested on an M4 (8-core GPU, 16 GB, macOS 27) with llama.cpp b11399 (Metal) and Qwen3.5 4B Q4_K_M: `KLIF.app` and `klif-cli` from `scripts/build-release.sh`, the nine skins in WKWebView, the server launched, stopped (SIGTERM; SIGKILL after 5 s for one that ignores it) and adopted after the app was killed and restarted, `klif-cli bench` (28.1 tok/s decode, 265 tok/s prefill, 2.0 s to the first token of a 512-token prompt, 1.6 s load, 3.8 GiB peak), records, hardware facts and suggestions; a build signed with a Developer ID and notarized by `--notarize` (Gatekeeper: "Notarized Developer ID", also for a quarantined download). Untested: other M-series chips (their GPU facts are read the same way), panel mode on a real second screen. Intel Macs are not a target |
-| Linux | Not supported. The pure crates (`klif-common`, `klif-catalog`, `klif-supervisor`, `klif-telemetry`) compile for `x86_64-unknown-linux-gnu`; the process host has a basic process-group implementation that has never run; GPU and host telemetry return nothing; `klif-core` and `klif-cli` do not build there yet (they need OpenSSL for `ureq`'s `native-tls`, see below); the shell was never built |
+| Linux x86_64 | Tested on Ubuntu 24.04 in WSL2 (with WSLg for the window): `klif` and `klif-cli` from `scripts/build-release-linux.sh`; the window app starts, loads the UI and follows the engine; a server (a stand-in llama-server) launched, stopped and adopted by a new engine, `klif-cli bench`, records, hardware facts (CPU and RAM), and a Windows machine controlling it as a node. Untested: GPU memory and power (WSL has no amdgpu or NVIDIA driver in sysfs: those readers follow the kernel's documentation), the window and tray on a real desktop (GNOME, KDE), the skins' look in WebKitGTK, other distributions |
 
 "Not supported" means: not tested, not promised, welcome as a PR.
 
@@ -21,14 +21,14 @@ are platform-specific, and what a good port looks like.
 
 | Layer | Windows | macOS | Linux |
 | --- | --- | --- | --- |
-| **Process host** (`klif-supervisor`) | `CreateProcessW` with a named job object (`Local\KLIF-<session>`) and an explicit handle list; output appended to log files; stop = terminate the job and wait; adoption by job name | `unix.rs`: each server leads its own process group (`pgid:<n>`), run with `execve` (never a shell), output appended to log files. Stop = SIGTERM to the group, SIGKILL after 5 s, 20 s in all. Adoption: the group, only when the root's start time (`proc_pidinfo`) matches the record; a group whose root has exited only when a member still writes to the session's log. Port owners from `proc_pidfdinfo` (the user's own processes). Tested | The same process groups with `/proc`; never run |
-| **GPU and host facts** (`klif-telemetry/src/platform.rs`: `GpuPlatform`, `HostPlatform`) | DXGI adapters and memory, PDH counters for per-process VRAM (dedicated, shared, committed), SetupDi power state, the AMD ULPS setting (read-only), CPUID for the CPU name, `GlobalMemoryStatusEx` | `mac.rs`: Metal's default device (name, `recommendedMaxWorkingSetSize` as the unified pool), the `AGXAccelerator` IORegistry entry (core count; "In use system memory" live), the device tree (SoC id, GPU clock table), `sysctl` for the CPU and RAM, `host_statistics64` for free memory, `proc_pid_rusage` (physical footprint) per process. No root, no `powermetrics` | A stub that returns nothing. Where to read: AMD `/sys/class/drm/card*/device/mem_info_vram_used` and per-process `/proc/<pid>/fdinfo` (`drm-memory-vram`); NVIDIA through NVML |
+| **Process host** (`klif-supervisor`) | `CreateProcessW` with a named job object (`Local\KLIF-<session>`) and an explicit handle list; output appended to log files; stop = terminate the job and wait; adoption by job name | `unix.rs`: each server leads its own process group (`pgid:<n>`), run with `execve` (never a shell), output appended to log files. Stop = SIGTERM to the group, SIGKILL after 5 s, 20 s in all. Adoption: the group, only when the root's start time (`proc_pidinfo`) matches the record; a group whose root has exited only when a member still writes to the session's log. Port owners from `proc_pidfdinfo` (the user's own processes). Tested | The same process groups; the start time from `/proc/<pid>/stat`, port owners from `/proc/net/tcp` and the processes' sockets. Tested in WSL2 |
+| **GPU and host facts** (`klif-telemetry/src/platform.rs`: `GpuPlatform`, `HostPlatform`) | DXGI adapters and memory, PDH counters for per-process VRAM (dedicated, shared, committed), SetupDi power state, the AMD ULPS setting (read-only), CPUID for the CPU name, `GlobalMemoryStatusEx` | `mac.rs`: Metal's default device (name, `recommendedMaxWorkingSetSize` as the unified pool), the `AGXAccelerator` IORegistry entry (core count; "In use system memory" live), the device tree (SoC id, GPU clock table), `sysctl` for the CPU and RAM, `host_statistics64` for free memory, `proc_pid_rusage` (physical footprint) per process. No root, no `powermetrics` | `linux.rs`: GPUs from `/sys/class/drm/card*` (AMD, NVIDIA, Intel by PCI ids; VRAM total and use from amdgpu's `mem_info_vram_*`, GTT as shared memory), each process's GPU memory from `/proc/<pid>/fdinfo` (`drm-resident-vram`, `drm-total-vram`, the `gtt` twins, each client once), the PCI device's `power_state`; CPUID for the CPU, cores per efficiency class from sysfs (Intel P and E cores), the base clock from cpufreq (in a VM the hypervisor's `cpu MHz`), RAM from `/proc/meminfo`. No root. CPU and RAM tested in WSL2; the GPU readers untested; NVIDIA shows without memory figures (NVML is not read) |
 | **Adapters** (`klif-telemetry`, `klif-catalog/src/facts.rs`) | llama.cpp, sd.cpp, vllm, openai, audiocpp, generic | OS-neutral: they parse logs and call HTTP | OS-neutral |
-| **Shell** (`app/src-tauri`) | Windows-only code behind `cfg(windows)`: clipboard (secret formats), GPU pinning for the WebView, WebView2 setup; Tauri for window and tray | `macos.rs`: clipboard (NSPasteboard; a secret stays on this Mac and carries the concealed and transient markers), native Yes / No alerts; a template icon in the menu bar; WKWebView keeps its own data (`~/Library/WebKit/<bundle id>`); no GPU pinning | `other_os.rs` stand-ins; never built |
+| **Shell** (`app/src-tauri`) | Windows-only code behind `cfg(windows)`: clipboard (secret formats), GPU pinning for the WebView, WebView2 setup; Tauri for window and tray | `macos.rs`: clipboard (NSPasteboard; a secret stays on this Mac and carries the concealed and transient markers), native Yes / No alerts; a template icon in the menu bar; WKWebView keeps its own data (`~/Library/WebKit/<bundle id>`); no GPU pinning | `other_os.rs`: the clipboard through GTK (a secret is plain text there: Linux desktops share no marker that keeps it out of a clipboard manager), no GPU pin; WebKitGTK 4.1; the tray through libayatana-appindicator. Built and started in WSLg |
 | **Downloads and bench TLS** | `ureq` with the system trust store (SChannel) | `native-tls` is Security.framework: nothing to install | `native-tls` is OpenSSL: the build needs the OpenSSL development files and `pkg-config` (`libssl-dev` and `pkg-config` on Debian and Ubuntu, `openssl-devel` on Fedora), and `cargo check` of `klif-core` and `klif-cli` stops in `openssl-sys` without them. The pure crates are unaffected (`klif-telemetry` probes over plain HTTP and uses no TLS) |
-| **Config and state locations** | `%APPDATA%\KLIF`, `%LOCALAPPDATA%\KLIF` | `~/Library/Application Support/KLIF` (config, state, secrets), its `data` subfolder (records, bench, node cache), logs in `~/Library/Logs/KLIF` | `$XDG_CONFIG_HOME/klif` and `$XDG_DATA_HOME/klif` (untested) |
+| **Config and state locations** | `%APPDATA%\KLIF`, `%LOCALAPPDATA%\KLIF` | `~/Library/Application Support/KLIF` (config, state, secrets), its `data` subfolder (records, bench, node cache), logs in `~/Library/Logs/KLIF` | `$XDG_CONFIG_HOME/klif` (default `~/.config/klif`) and `$XDG_DATA_HOME/klif` (default `~/.local/share/klif`) |
 | **Command building** | Windows command-line quoting; `.exe`/`.com` only; `.bat` explained | POSIX quoting in previews; any file with the execute bit, run directly; a missing bit, a folder or an `.app` bundle is explained | As macOS |
-| **Release** | `scripts/Build-Release.ps1` | `scripts/build-release.sh`: `KLIF.app`, `klif-cli`, a zip and its SHA-256; ad-hoc, Developer ID or notarized | none |
+| **Release** | `scripts/Build-Release.ps1` | `scripts/build-release.sh`: `KLIF.app`, `klif-cli`, a zip and its SHA-256; ad-hoc, Developer ID or notarized | `scripts/build-release-linux.sh`: `klif`, `klif-cli`, `klif.desktop`, a tar.gz and its SHA-256 |
 
 The engine, the catalog, the view model, the UI and `klif-cli` are the same everywhere. The seams above are small
 on purpose.
@@ -139,6 +139,47 @@ Network). Without that permission, connecting to a node fails with **"No route t
 answers and its firewall lets the Mac in. Allow KLIF there. When no KLIF window runs, `klif-cli` runs its own engine
 inside the terminal, so the terminal app (Terminal, iTerm, the one your agent uses) needs the permission instead.
 
+## Linux specifics
+
+### Building and running
+
+The release build is `scripts/build-release-linux.sh` on an x86_64 machine. On Debian or Ubuntu it needs
+`build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev`,
+Rust 1.90+ and Node.js 20.19+ or 22.12+. It puts `klif`, `klif-cli`, `skills/klif/SKILL.md`, `klif.desktop` and
+`klif.png` into `dist/KLIF/` and packs `KLIF-<version>-linux-x86_64.tar.gz` with its SHA-256.
+
+To run the programs a machine needs `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1` and `libssl3` (`klif-cli`:
+`libssl3` only). The binaries link the glibc of the machine that built them, so build on the oldest distribution you
+want them to run on (the tested build: Ubuntu 24.04).
+
+Unpack the tar.gz anywhere and start `klif` from that folder. `klif.desktop` names `klif` and `klif.png` without
+paths: for a menu entry, set `Exec` and `Icon` to their absolute paths and copy it to
+`~/.local/share/applications/`.
+
+Locations: `$XDG_CONFIG_HOME/klif/klif.toml` (default `~/.config/klif`, with the state and secrets), data and logs in
+`$XDG_DATA_HOME/klif` (default `~/.local/share/klif`). The lookup order is the same as elsewhere (`KLIF_CONFIG`,
+`.local/klif.toml` above the program or the working folder, then the default).
+
+### WSL
+
+WSL2 runs KLIF as a Linux machine: `klif-cli` and the engine work as on any Linux, and with WSLg (Windows 11) the
+window opens on the Windows desktop. Three things differ from a real Linux machine:
+
+- **No GPU figures.** WSL passes the GPU through DirectX (`/dev/dxg`), not through amdgpu or the NVIDIA driver, so
+  `/sys/class/drm` is empty and KLIF lists the CPU only. Model servers that use the GPU inside WSL (CUDA, ROCm on
+  WSL) still run; KLIF just does not see their VRAM.
+- **Networking.** With WSL's default NAT, a node listening inside WSL on `0.0.0.0` is reached from Windows at
+  `127.0.0.1` (WSL forwards localhost). Other machines on the network do not reach it without a port proxy on
+  Windows or WSL's mirrored networking.
+- **Spirit is slow.** WebKitGTK's WebGL under WSLg ran Spirit's million particles at about 2 frames per second in
+  our test, so the skin says so over its picture. The other WebGL skins (Decode, Loom, Ether, Rings) draw normally.
+
+### Firewall
+
+KLIF never changes firewall settings. With `ufw` (or `firewalld`) active, a node listener (`[node] listen`) and
+klif-webui (`[webui]`) need their port opened for the machines that use them, for example
+`sudo ufw allow from 192.0.2.20 to any port 7340 proto tcp`.
+
 ## Writing a port
 
 A useful port is small and says what it was tested on. Typical pieces:
@@ -149,16 +190,17 @@ A useful port is small and says what it was tested on. Typical pieces:
 2. **A server adapter for a CUDA/SYCL/Metal build.** Usually only a preset (`backend = "CUDA"`, the right environment
    variable). If the server's log format differs, extend the parser behind the existing adapter instead of adding a
    new one.
-3. **Linux or macOS.** In order:
-   - make `klif-core` and `klif-cli` build (install the OpenSSL development files and `pkg-config` for
-     `native-tls`, or pick a TLS provider per platform; unix paths);
-   - implement `GpuPlatform` and `HostPlatform` for the platform;
-   - harden the unix `ProcessHost` (the process group needs a reliable adoption and stop story);
-   - compile `app/src-tauri` and replace the Windows-only shell code behind `cfg`;
-   - `config` already has XDG locations; check them.
+3. **Another operating system.** The macOS and Linux ports show the order:
+   - make `klif-core` and `klif-cli` build (TLS through `native-tls`: Security.framework, OpenSSL; paths);
+   - implement `GpuPlatform` and `HostPlatform` for the platform (`mac.rs`, `linux.rs`);
+   - give the unix `ProcessHost` a start time and port owners for that kernel (`unix.rs`);
+   - compile `app/src-tauri` and give `other_os.rs` (or a module of its own) the clipboard and anything else;
+   - a release script, and a row in the tables above with what was tested.
+   **Linux GPUs** are the most useful next step: run KLIF on a real Linux machine with an AMD (amdgpu) card and
+   report whether `klif-cli hardware`, the memory bars and a System's `vramGiB` are right; NVIDIA needs NVML.
 4. **Keep Windows intact.** The Windows and AMD build is the reference. Use `cfg` or the platform traits; do not
    change behaviour there without saying so.
 
-Checks to run and report in the PR: [CONTRIBUTING.md](../CONTRIBUTING.md) lists them, including the Linux
-`cargo check` of the four pure crates. Include `klif-cli --json status` and a `klif-cli bench` from the real
-hardware, with the machine details made fictional where they identify you.
+Checks to run and report in the PR: [CONTRIBUTING.md](../CONTRIBUTING.md) lists them, including a Linux build.
+Include `klif-cli --json status` and a `klif-cli bench` from the real hardware, with the machine details made
+fictional where they identify you.

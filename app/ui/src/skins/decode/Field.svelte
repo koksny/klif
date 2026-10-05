@@ -6,6 +6,8 @@
   import { getTier, onFrame, onTier } from '../../lib/render/scheduler';
   import type { ViewModel } from '../../lib/model/types';
   import { DecodeField } from './field';
+  import NoGl from '../../lib/fx/NoGl.svelte';
+  import { glDetail } from '../../lib/fx/nogl';
 
   interface Props {
     vm: ViewModel;
@@ -27,7 +29,8 @@
   let w = $state(0);
   let h = $state(0);
   let field = $state.raw<DecodeField | null>(null);
-  let error = $state('');
+  /** Set when the terminal could not be built (no WebGL 2): the browser's sentence worth showing, or ''. */
+  let failed = $state<string | null>(null);
   let last = 0;
 
   const flowing = () => {
@@ -59,7 +62,7 @@
         try {
           field = new DecodeField(canvas, { margin: untrack(() => margin), fontPx: untrack(() => fontPx), compact: untrack(() => compact) });
         } catch (e) {
-          error = e instanceof Error ? e.message : String(e);
+          failed = glDetail(e);
           return;
         }
         unsub = onFrame(
@@ -119,7 +122,7 @@
 
 <div class="term" bind:clientWidth={w} bind:clientHeight={h} role="img" aria-label={label}>
   <canvas bind:this={canvas} aria-hidden="true"></canvas>
-  {#if error}<div class="err">{error}</div>{/if}
+  {#if failed !== null}<NoGl skin="Decode" needs="WebGL 2" detail={failed} panel={compact} />{/if}
 </div>
 
 <style>
@@ -134,12 +137,5 @@
     width: 100%;
     height: 100%;
     display: block;
-  }
-  .err {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    color: #ff4d6d;
   }
 </style>

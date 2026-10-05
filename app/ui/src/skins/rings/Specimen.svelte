@@ -11,6 +11,8 @@
   import type { System, SystemKind, ViewModel } from '../../lib/model/types';
   import { Drive } from '../../lib/fx/drive';
   import { RingsVis, SPHERE_R } from '../../lib/fx/rings/rings';
+  import NoGl from '../../lib/fx/NoGl.svelte';
+  import { glDetail } from '../../lib/fx/nogl';
   import type { Sleep } from './sleep.svelte';
   import { arc, CAPTION_Y, CYAN, DANGER, mixRgb, rgba, styleOf, targetsOf, ticks, WARN } from './gauges';
 
@@ -39,7 +41,8 @@
   let canvas: HTMLCanvasElement;
   let w = $state(0);
   let h = $state(0);
-  let error = $state('');
+  /** Set when the sphere could not be built (no WebGL 2): the browser's sentence worth showing, or ''. */
+  let failed = $state<string | null>(null);
   let vis: RingsVis | null = null;
   const drive = new Drive();
   let off: (() => void) | null = null;
@@ -131,7 +134,7 @@
     try {
       v = new RingsVis(canvas);
     } catch (e) {
-      error = `Rings unavailable: ${e instanceof Error ? e.message : String(e)}`;
+      failed = glDetail(e);
       return;
     }
     vis = v;
@@ -190,7 +193,9 @@
 
 <div class="specimen" bind:clientWidth={w} bind:clientHeight={h}>
   <canvas bind:this={canvas} aria-hidden="true"></canvas>
-  {#if error}<div class="err">{error}</div>{/if}
+  {#if failed !== null}
+    <NoGl skin="Rings" needs="WebGL 2" detail={failed} at={{ x: cx, y: cy }} panel={variant === 'mini'} />
+  {/if}
   {#if r > 4}
     <svg class="gauges" width={w} height={h} role="img" aria-label={label} style="opacity:{1 - 0.65 * sleepK}">
       <g fill="none" stroke-linecap="round">
@@ -248,11 +253,5 @@
   }
   .legend .n {
     fill: #8fa9b8;
-  }
-  .err {
-    position: absolute;
-    inset: auto 16px 16px;
-    color: #ff5c7a;
-    font: 13px/1.3 'Barlow', system-ui, sans-serif;
   }
 </style>

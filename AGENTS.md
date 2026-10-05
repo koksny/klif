@@ -30,9 +30,9 @@ Window title **KLIF**. Tagline: **Koksny.com LOCAL INFERENCE FORNICATOR**. Subli
 This section is for an agent working for someone who installed KLIF or who is changing this repository. The
 policy KLIF asks of agents:
 
-> KLIF is a front-end built for AMD and Windows, and it runs on macOS with Apple silicon. Different GPU or OS? Let
-> your agent open a PR. Installed KLIF? Let your agent tune and calibrate it. Want other models than the defaults?
-> Let your agent set them up.
+> KLIF is a front-end built for AMD and Windows, and it runs on macOS with Apple silicon and on Linux. Different GPU
+> or OS? Let your agent open a PR. Installed KLIF? Let your agent tune and calibrate it. Want other models than the
+> defaults? Let your agent set them up.
 
 **Before you open a pull request**, read [CONTRIBUTING.md](CONTRIBUTING.md). KLIF is maintained for its author's
 daily use, and the bar is the same for agents and humans:

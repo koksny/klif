@@ -221,7 +221,12 @@ fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: Strin
     // invisible and show() does not change that.
     webview::set_visible(&win, true);
     let _ = win.set_focus();
+    // GTK maps the window after show() returns: reading its geometry now warns (gtk_widget_get_scale_factor) and
+    // gives 0x0, so on Linux the geometry is logged once the page has loaded.
+    #[cfg(not(target_os = "linux"))]
     log::info!("window shown: {}", panel::describe(&win));
+    #[cfg(target_os = "linux")]
+    log::info!("window shown");
     shell::set_showing(app, true);
     {
         let h = app.clone();
@@ -358,7 +363,7 @@ fn begin_engine(loaded: LoadedConfig, host: HostInfo, _attempt: u32) -> Result<e
     engine::Engine::start(loaded, host)
 }
 
-fn on_page_load<R: Runtime>(app: &AppHandle<R>, _w: &WebviewWindow<R>, p: &PageLoadPayload<'_>) {
+fn on_page_load<R: Runtime>(app: &AppHandle<R>, w: &WebviewWindow<R>, p: &PageLoadPayload<'_>) {
     let url = p.url().to_string();
     match p.event() {
         PageLoadEvent::Started => log::info!("page load started: {url}"),
@@ -366,6 +371,10 @@ fn on_page_load<R: Runtime>(app: &AppHandle<R>, _w: &WebviewWindow<R>, p: &PageL
             log::info!("page loaded: {url} (UI source: {})", if tauri::is_dev() { "DEV SERVER (devUrl)" } else { "embedded assets" });
             let s = shell::shell(app);
             if !s.page_loaded.swap(true, Ordering::Relaxed) {
+                #[cfg(target_os = "linux")]
+                log::info!("window on screen: {}", panel::describe(w));
+                #[cfg(not(target_os = "linux"))]
+                let _ = w;
                 check_ui_gpu(app);
                 #[cfg(feature = "selftest")]
                 {

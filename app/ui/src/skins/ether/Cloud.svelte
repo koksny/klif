@@ -10,6 +10,8 @@
   import type { ViewModel } from '../../lib/model/types';
   import { Drive } from '../../lib/fx/drive';
   import { EtherVis } from '../../lib/fx/ether/ether';
+  import NoGl from '../../lib/fx/NoGl.svelte';
+  import { glDetail } from '../../lib/fx/nogl';
 
   interface Props {
     vm: ViewModel;
@@ -17,14 +19,19 @@
     shift: number;
     /** The cloud's centre moved up by this many screen heights (0 = the original composition). */
     lift?: number;
+    /** The 960x640 panel. */
+    panel?: boolean;
   }
-  let { vm, shift, lift = 0 }: Props = $props();
+  let { vm, shift, lift = 0, panel = false }: Props = $props();
 
   let box: HTMLDivElement;
   let canvas: HTMLCanvasElement;
   let vis: EtherVis | null = null;
   let unsub: (() => void) | null = null;
-  let error = $state('');
+  /** Set when the cloud could not be built (no WebGL 2): the browser's sentence worth showing, or ''. */
+  let failed = $state<string | null>(null);
+  let bw = $state(0);
+  let bh = $state(0);
   const drive = new Drive();
 
   /** True while the scheduler delivers frames to the cloud. */
@@ -76,7 +83,7 @@
     try {
       v = new EtherVis(canvas);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      failed = glDetail(e);
       return;
     }
     vis = v;
@@ -121,9 +128,11 @@
   });
 </script>
 
-<div class="cloud" bind:this={box} aria-hidden="true">
-  <canvas bind:this={canvas}></canvas>
-  {#if error}<div class="err">background unavailable: {error}</div>{/if}
+<div class="cloud" bind:this={box} bind:clientWidth={bw} bind:clientHeight={bh}>
+  <canvas bind:this={canvas} aria-hidden="true"></canvas>
+  {#if failed !== null}
+    <NoGl skin="Ether" needs="WebGL 2" detail={failed} at={{ x: bw / 2 - shift * bh, y: bh / 2 - lift * bh }} {panel} />
+  {/if}
 </div>
 
 <style>
@@ -140,12 +149,5 @@
     width: 100%;
     height: 100%;
     display: block;
-  }
-  .err {
-    position: absolute;
-    left: 4%;
-    top: 50%;
-    font: 300 12px/1.4 'Iosevka', ui-monospace, monospace;
-    color: rgba(237, 232, 245, 0.35);
   }
 </style>

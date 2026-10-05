@@ -11,7 +11,7 @@ members = [
 # app/src-tauri is its own crate (Tauri convention) and depends on crates/klif-core by path.
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 license = "MIT"
 rust-version = "1.90"

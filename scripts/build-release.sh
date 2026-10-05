@@ -220,6 +220,8 @@ else
     rm -f "$marker"
 fi
 [ -f "$ui_dist/index.html" ] || fail "app/ui/dist/index.html is missing: nothing to embed."
+# klif-webui's page is the second entry of the same build; the engine in KLIF.app serves it on the LAN.
+[ -f "$ui_dist/webui.html" ] || fail "app/ui/dist/webui.html is missing: klif-webui would have no page to serve."
 assert_no_private "$ui_dist" "app/ui/dist (what KLIF.app embeds)"
 assert_woff2_only "$ui_dist" "app/ui/dist (what KLIF.app embeds)"
 ui_done=$(date +%s)

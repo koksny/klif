@@ -10,10 +10,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.2-5AB6EB" alt="Version 0.3.2">
+  <img src="https://img.shields.io/badge/version-0.3.3-5AB6EB" alt="Version 0.3.3">
   <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/macOS-13%2B%20Apple%20silicon-5AB6EB" alt="macOS 13 or later on Apple silicon">
+  <img src="https://img.shields.io/badge/Linux-x86__64-5AB6EB" alt="Linux x86_64">
   <img src="https://img.shields.io/badge/GPU-AMD%20HIP%20%7C%20Vulkan%20%7C%20Apple%20Metal-5AB6EB" alt="AMD GPUs with HIP and Vulkan, Apple silicon with Metal">
 </p>
 
@@ -28,8 +29,8 @@ video servers you already run, on one machine or several. Each server is a **Sys
 exact command line that starts it, and what it is doing to your GPU right now. `klif-cli` does the same from a
 terminal or a coding agent, and klif-webui from a phone.
 
-KLIF runs on Windows, where it is built and tuned for AMD GPUs, and on macOS with Apple silicon. One machine can
-launch and stop Systems on another, a Mac on a Windows desktop and the other way round.
+KLIF runs on Windows, where it is built and tuned for AMD GPUs, on macOS with Apple silicon, and on Linux. One machine
+can launch and stop Systems on another, a Mac on a Windows desktop and the other way round.
 
 KLIF is not a model zoo and not an inference runtime. llama.cpp, stable-diffusion.cpp, vLLM and the rest are
 separate projects you install yourself; KLIF starts them, watches them and stops them. No weights are shipped.
@@ -52,8 +53,7 @@ If you are happy driving your models from a terminal, keep doing that. There are
 launcher script of your own is a weekend's work.
 
 KLIF is for the other case: several servers at once, one glance to see what each of them is doing, no hunting for
-the right script. Everything the window does is also in `klif-cli`, with JSON output, so scripts and agents are
-covered as well.
+the right script. Everything the window does is also in `klif-cli`, so scripts and agents are covered as well.
 
 ## Skins
 
@@ -120,6 +120,8 @@ The animations come from the browser mock engine with recorded timings, the same
   Windows 10 installs).
 - Or macOS 13 or later on Apple silicon (M1 or newer): tested on an M4 with a Metal build of llama.cpp. KLIF reads
   the GPU through Metal and the IORegistry; nothing needs administrator rights. [docs/platforms.md](docs/platforms.md)
+- Or Linux x86_64 with WebKitGTK 4.1 (tested on Ubuntu 24.04 in WSL2; GPU memory readings are untested so far).
+  [docs/platforms.md](docs/platforms.md#linux-specifics)
 - An AMD GPU is the first-class target: the tested setups run HIP (ROCm) and Vulkan builds of llama.cpp and
   stable-diffusion.cpp. GPU memory is read through DXGI and Windows performance counters, which are not
   AMD-specific, but nothing else is tested. [docs/platforms.md](docs/platforms.md)
@@ -128,10 +130,10 @@ The animations come from the browser mock engine with recorded timings, the same
 
 ## Quick start
 
-1. **Get KLIF.** Download `KLIF-<version>.zip` (Windows) or `KLIF-<version>-macos-arm64.zip` (macOS) from
-   [Releases](https://github.com/koksny/klif/releases), unzip it anywhere and compare the SHA-256 with the one on the
-   release page: `Get-FileHash -Algorithm SHA256 .\klif.exe` on Windows, `shasum -a 256 KLIF-<version>-macos-arm64.zip`
-   on a Mac.
+1. **Get KLIF.** Download `KLIF-<version>.zip` (Windows), `KLIF-<version>-macos-arm64.zip` (macOS) or
+   `KLIF-<version>-linux-x86_64.tar.gz` (Linux) from [Releases](https://github.com/koksny/klif/releases), unpack it
+   anywhere and compare the SHA-256 with the one on the release page: `Get-FileHash -Algorithm SHA256 .\klif.exe` on
+   Windows, `shasum -a 256 <file>` on a Mac, `sha256sum <file>` on Linux.
 
    Or build it: Rust 1.90+ (MSVC toolchain), Node.js 20.19+ or 22.12+ with npm, then from a clone
 
@@ -148,10 +150,12 @@ The animations come from the browser mock engine with recorded timings, the same
 
    puts `KLIF.app` and `klif-cli` into `dist/KLIF/`, zips the folder and prints the SHA-256 of each. An unsigned
    build from someone else is stopped by Gatekeeper the first time: [docs/platforms.md](docs/platforms.md#gatekeeper).
+   On Linux (the packages in [docs/platforms.md](docs/platforms.md#linux-specifics)), `./scripts/build-release-linux.sh`
+   puts `klif` and `klif-cli` into `dist/KLIF/` and packs a tar.gz.
 
-2. **Configure.** Start KLIF (`klif.exe`, or `KLIF.app` on a Mac) with no configuration and use **Add a System**,
-   or copy [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` (macOS:
-   `~/Library/Application Support/KLIF/klif.toml`) and replace the fictional
+2. **Configure.** Start KLIF (`klif.exe`, `KLIF.app` on a Mac, `klif` on Linux) with no configuration and use **Add a
+   System**, or copy [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` (macOS:
+   `~/Library/Application Support/KLIF/klif.toml`, Linux: `~/.config/klif/klif.toml`) and replace the fictional
    paths (`D:\llama.cpp`, `D:\models`, `192.0.2.x`) with yours. `klif-cli` reads the same file; `KLIF_CONFIG` points
    it at another one.
 
@@ -225,7 +229,7 @@ that miss the bar are closed without a long discussion. That is about time, not 
 - [klif-cli](docs/cli.md): every command and the JSON contract
 - [Nodes](docs/nodes.md): several machines, rights, the security model
 - [klif-webui](docs/webui.md): the control page for a phone, pairing, the security model, the API
-- [Platforms](docs/platforms.md): Windows with AMD and macOS with Apple silicon, what each tests; other GPUs and
+- [Platforms](docs/platforms.md): Windows with AMD, macOS with Apple silicon, Linux, what each tests; other GPUs and
   systems through pull requests
 - [Windows Defender and SmartScreen](docs/windows-defender.md)
 - [Brand](docs/brand.md), [Publishing](docs/publish.md), [Changelog](CHANGELOG.md), [Security](SECURITY.md)

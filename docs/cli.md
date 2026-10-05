@@ -2,7 +2,7 @@
 
 `klif-cli.exe` is KLIF without the window: the same engine, from a terminal, a script or a coding agent. It reads
 the same `klif.toml`, edits it through the same comment-preserving code, and shows the same commands the window
-shows. This page is checked against `klif-cli --help` and the code of version 0.3.2.
+shows. This page is checked against `klif-cli --help` and the code of version 0.3.3.
 
 ```
 klif-cli [--json] <command> ...
@@ -155,7 +155,7 @@ agents:   klif-cli --json help (every command), klif-cli schema (JSON Schema of 
           instead of sleep-and-poll loops). Commands that change something need --yes.
 ```
 
-Also: `klif-cli --version` (`klif-cli 0.3.2`; JSON `{"version": "0.3.2"}`) and `klif-cli --help`.
+Also: `klif-cli --version` (`klif-cli 0.3.3`; JSON `{"version": "0.3.3"}`) and `klif-cli --help`.
 
 ### Looking
 
@@ -163,7 +163,7 @@ Also: `klif-cli --version` (`klif-cli 0.3.2`; JSON `{"version": "0.3.2"}`) and `
 KLIF measures and the nodes:
 
 ```
-KLIF 0.3.2 · engine: in-process (this klif-cli holds the engine)
+KLIF 0.3.3 · engine: in-process (this klif-cli holds the engine)
 
    ID        LABEL       KIND   STATUS   PRESET       MODEL                       ENDPOINT                    TOK/S  VRAM
 *  s1        System 1    llm    offline  fast-8b      Fast 8B                     http://127.0.0.1:7030/v1    -      -

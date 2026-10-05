@@ -60,7 +60,7 @@
 </script>
 
 <div class="mini" bind:clientWidth={w} bind:clientHeight={h}>
-  <Smoke {vm} shift={SHIFT * u} bind:ready />
+  <Smoke {vm} shift={SHIFT * u} bind:ready panel />
   <div class="sheet" class:err={faulted} style="transform: translate({ox}px, {oy}px) scale({u})">
     <i class="cn tl"></i><i class="cn tr"></i><i class="cn bl"></i><i class="cn br2"></i>
     {#if !o.loading}<i class="cross"></i>{/if}

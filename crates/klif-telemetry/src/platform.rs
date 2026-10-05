@@ -1,8 +1,7 @@
 //! The platform layer for measurements: GPU adapters / memory / power state (`GpuPlatform`) and CPU / RAM
 //! (`HostPlatform`). Windows: DXGI, PDH, SetupDi (win.rs). macOS (Apple silicon): Metal, the IORegistry, sysctl
-//! and mach (mac.rs). Elsewhere: a stub that returns None / empty until someone adds sysfs / NVML readers (Linux
-//! amdgpu: `/sys/class/drm/card*/device/mem_info_vram_used`, per-process `/proc/<pid>/fdinfo`
-//! `drm-memory-vram`; NVIDIA: NVML). Owner: package D.
+//! and mach (mac.rs). Linux: the DRM class in sysfs, `/proc/<pid>/fdinfo` and `/proc` (linux.rs; NVIDIA memory
+//! would need NVML). Elsewhere: a stub that returns None / empty. Owner: package D.
 //!
 //! The rest of the crate calls `gpu()` / `host()`, never `win::` directly, so non-Windows targets compile.
 //! The CPU name comes from CPUID on x86 / x86_64 on every OS (no registry read); the FP32 estimate (`cpu_facts`)
@@ -148,7 +147,11 @@ pub fn gpu() -> &'static dyn GpuPlatform {
     {
         &mac_impl::MacPlatform
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        &linux_impl::LinuxPlatform
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         &NoPlatform
     }
@@ -164,7 +167,11 @@ pub fn host() -> &'static dyn HostPlatform {
     {
         &mac_impl::MacPlatform
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        &linux_impl::LinuxPlatform
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         &NoPlatform
     }
@@ -506,6 +513,147 @@ mod mac_impl {
                     Some(ProcMem { key: self.key.clone(), pid, dedicated: resident, shared: 0.0, committed: resident.max(footprint) })
                 })
                 .collect();
+            Frame { cpu_pct, adapters, procs }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- Linux
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use super::{cpu_brand, short_cpu_name, AdapterMem, Frame, GpuPlatform, HostPlatform, PowerHandle, ProcMem, Sampler};
+    use crate::cpu::{self, CpuFacts};
+    use crate::{gputable, linux, Adapter, PowerState, UlpsSetting};
+    use std::path::PathBuf;
+
+    pub struct LinuxPlatform;
+
+    /// A DRM card as an adapter: its PCI ids, the name from the GPU table (else the vendor and the ids), VRAM from
+    /// amdgpu (0 where the driver does not publish it), its GTT as shared memory, the PCI address as the LUID.
+    fn adapter(c: &linux::Card) -> Adapter {
+        let name = gputable::lookup("", c.vendor, c.device, c.revision).map(|e| e.name.clone()).unwrap_or_else(|| {
+            let vendor = match c.vendor {
+                0x1002 => "AMD",
+                0x10DE => "NVIDIA",
+                _ => "Intel",
+            };
+            format!("{vendor} GPU {:04X}:{:04X}", c.vendor, c.device)
+        });
+        let (luid_high, luid_low) = c.luid();
+        Adapter {
+            name,
+            vendor_id: c.vendor,
+            device_id: c.device,
+            luid_high,
+            luid_low,
+            dedicated_bytes: c.vram_total,
+            revision: c.revision,
+            subsys_id: c.subsys,
+            shared_bytes: c.gtt_total,
+        }
+    }
+
+    /// The n-th card with this "VEN:DEV" ("VEN:DEV#n" picks the n-th identical one).
+    fn find(pci: &str) -> Option<linux::Card> {
+        let (id, nth) = match pci.split_once('#') {
+            Some((id, n)) => (id, n.parse::<usize>().unwrap_or(0)),
+            None => (pci, 0),
+        };
+        let (v, d) = id.split_once(':')?;
+        let (v, d) = (u32::from_str_radix(v, 16).ok()?, u32::from_str_radix(d, 16).ok()?);
+        linux::cards().into_iter().filter(|c| c.vendor == v && c.device == d).nth(nth)
+    }
+
+    impl GpuPlatform for LinuxPlatform {
+        fn adapters(&self) -> Vec<Adapter> {
+            linux::cards().iter().map(adapter).collect()
+        }
+
+        fn power_state(&self, pci: &str) -> Option<PowerState> {
+            linux::power_state(&find(pci)?.dev)
+        }
+
+        fn sampler(&self) -> Option<Box<dyn Sampler>> {
+            Some(Box::new(LinuxSampler::open()))
+        }
+
+        fn power_handle(&self, adapter: &Adapter, _nth: usize) -> Option<Box<dyn PowerHandle>> {
+            let key = adapter.pdh_luid();
+            let card = linux::cards().into_iter().find(|c| self::adapter(c).pdh_luid() == key)?;
+            Some(Box::new(LinuxPower { dev: card.dev }))
+        }
+
+        /// ULPS is a Windows driver setting.
+        fn ulps(&self, _adapter: &Adapter, _nth: usize) -> Option<UlpsSetting> {
+            None
+        }
+    }
+
+    impl HostPlatform for LinuxPlatform {
+        fn cpu_name(&self) -> Option<String> {
+            cpu_brand().or_else(linux::cpu_model).map(|b| short_cpu_name(&b))
+        }
+
+        fn memory(&self) -> Option<(u64, u64)> {
+            linux::memory()
+        }
+
+        /// CPUID (x86), the cores per efficiency class from sysfs and the nominal clock where cpufreq publishes it.
+        fn cpu_facts(&self) -> Option<CpuFacts> {
+            let brand = cpu_brand().or_else(linux::cpu_model)?;
+            Some(CpuFacts { brand, id: cpu::read_cpuid(), base_mhz: linux::base_mhz(), classes: linux::core_classes() })
+        }
+    }
+
+    struct LinuxPower {
+        dev: PathBuf,
+    }
+
+    impl PowerHandle for LinuxPower {
+        fn read(&mut self) -> Option<PowerState> {
+            linux::power_state(&self.dev)
+        }
+    }
+
+    /// CPU ticks from /proc/stat, each card's VRAM in use (amdgpu), and each watched process's DRM memory per card.
+    struct LinuxSampler {
+        cards: Vec<(String, String, linux::Card)>,
+        ticks: Option<(u64, u64)>,
+    }
+
+    impl LinuxSampler {
+        fn open() -> LinuxSampler {
+            let cards = linux::cards().into_iter().map(|c| (adapter(&c).pdh_luid(), c.slot.clone(), c)).collect();
+            LinuxSampler { cards, ticks: linux::cpu_ticks() }
+        }
+    }
+
+    impl Sampler for LinuxSampler {
+        fn refresh_processes(&mut self) {}
+
+        fn read(&mut self, pids: &[u32]) -> Frame {
+            let ticks = linux::cpu_ticks();
+            let cpu_pct = match (self.ticks, ticks) {
+                (Some((b0, t0)), Some((b1, t1))) if t1 > t0 => Some(b1.saturating_sub(b0) as f64 / (t1 - t0) as f64 * 100.0),
+                _ => None,
+            };
+            if ticks.is_some() {
+                self.ticks = ticks;
+            }
+            let adapters = self
+                .cards
+                .iter()
+                .filter_map(|(key, _, c)| linux::vram_used(c).map(|u| AdapterMem { key: key.clone(), dedicated: u as f64 }))
+                .collect();
+            let mut procs = Vec::new();
+            for &pid in pids {
+                for (slot, (vram, gtt, total)) in linux::process_gpu_memory(pid) {
+                    if let Some((key, _, _)) = self.cards.iter().find(|(_, s, _)| *s == slot) {
+                        procs.push(ProcMem { key: key.clone(), pid, dedicated: vram as f64, shared: gtt as f64, committed: total as f64 });
+                    }
+                }
+            }
             Frame { cpu_pct, adapters, procs }
         }
     }

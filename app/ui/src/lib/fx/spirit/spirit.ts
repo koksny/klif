@@ -9,6 +9,25 @@ import { hexRgb as hex, mix, mix3 } from '../gl';
 /** The iframe source: 1m particles, frames driven by KLIF. */
 export const SPIRIT_SRC = '/spirit/index.html#amount=1m&external=1';
 
+/**
+ * What the original build needs and this window does not have, or '' when it is all there: a WebGL 1 context with
+ * texture units in the vertex shader and float textures that filter linearly (without them the page stops at an
+ * alert). The probe's context is released at once.
+ */
+export function spiritMissing(): string {
+  const c = document.createElement('canvas');
+  const gl = (c.getContext('webgl') ?? c.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+  if (!gl) return 'no WebGL context';
+  try {
+    if (!gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS)) return 'no textures in vertex shaders';
+    if (!gl.getExtension('OES_texture_float')) return 'no float textures';
+    if (!gl.getExtension('OES_texture_float_linear')) return 'no linear filtering of float textures';
+    return '';
+  } finally {
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+}
+
 interface SpiritSettings {
   speed: number;
   dieSpeed: number;

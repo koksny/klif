@@ -1,6 +1,6 @@
 ---
 name: klif
-description: Drive KLIF, a Windows and macOS manager for local AI model servers (llama.cpp, stable-diffusion.cpp, vLLM, speech and video servers), through its klif-cli command line. Use it to start, stop, restart, tune, benchmark and monitor those servers, to pick and download models that fit the machine, to read server logs and the best speeds KLIF has recorded, and to write or edit presets and Systems in klif.toml. Use it whenever a task mentions KLIF, klif-cli, klif.toml, Systems or presets, or local model servers on a machine where KLIF is installed.
+description: Drive KLIF, a Windows, macOS and Linux manager for local AI model servers (llama.cpp, stable-diffusion.cpp, vLLM, speech and video servers), through its klif-cli command line. Use it to start, stop, restart, tune, benchmark and monitor those servers, to pick and download models that fit the machine, to read server logs and the best speeds KLIF has recorded, and to write or edit presets and Systems in klif.toml. Use it whenever a task mentions KLIF, klif-cli, klif.toml, Systems or presets, or local model servers on a machine where KLIF is installed.
 ---
 
 # Driving KLIF with klif-cli

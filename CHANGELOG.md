@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.3 (unreleased, branch `0.3.3`)
+
+KLIF on Linux.
+
+### Linux
+
+KLIF builds and runs on Linux x86_64: the window app (`klif`, Tauri on WebKitGTK 4.1) and `klif-cli`. Tested on
+Ubuntu 24.04 in WSL2 with WSLg; Windows and AMD stay the reference build, and everything below sits behind
+`cfg(target_os = "linux")`, `cfg(unix)` or the platform traits.
+
+- **Telemetry** (`klif-telemetry/src/linux.rs`). GPUs from the DRM class in sysfs (AMD, NVIDIA and Intel by PCI ids;
+  VRAM total and use from amdgpu), each process's GPU memory from its DRM fdinfo, the PCI power state; the CPU through
+  CPUID with its cores per efficiency class from sysfs (Intel P and E cores) and its base clock from cpufreq (in a VM
+  the hypervisor's), RAM from `/proc/meminfo`. The GPU readers follow the kernel's documentation and are untested on
+  real Linux hardware so far (WSL has no amdgpu); NVIDIA shows without memory figures.
+- **Process host.** The unix process groups from the macOS port, with the start time and port owners read from
+  `/proc`: launch, stop and adoption by a new engine tested.
+- **Window app.** The clipboard through GTK (a secret is plain text there); the geometry is logged once the window is
+  on screen.
+- **Release.** `scripts/build-release-linux.sh`: the same checks as the other release scripts, `klif`, `klif-cli`, the
+  Agent Skill, `klif.desktop` and the icon in `dist/KLIF/`, and `KLIF-<version>-linux-x86_64.tar.gz` with its SHA-256.
+  The macOS script now also checks that the klif-webui page was built.
+- **Docs.** `docs/platforms.md` has the Linux status, the seams, the packages to build and to run, WSL's limits (no
+  GPU figures, localhost forwarding for a node, a slow Spirit) and the firewall; README, CONTRIBUTING and the Agent Skill name Linux.
+- **Tested** in WSL2 (Ubuntu 24.04.5, kernel 6.6, WSLg): `klif-cli` and the release build; a stand-in llama-server
+  launched, adopted by a new engine, benched and stopped; records; CPU and RAM facts (16 cores, AVX-512, 4.4 TFLOPS
+  FP32 estimated); the window app started and followed the engine; a Windows `klif-cli` controlled the WSL engine as
+  a node (launch, status, stop).
+
+### Skins
+
+- **Without WebGL.** Decode, Loom, Ether, Rings and Spirit show a note where their picture would be when the window
+  cannot draw it: what is missing, that the rest of KLIF works, and how to switch (F2 or the tray's Skin menu; Cliff,
+  Silicon, Instrument and Phosphor need no WebGL). It replaces the small error lines, and is centred on the picture
+  and sized for the 960x640 panel there. Spirit checks for float textures before it loads its page (which stopped at
+  an alert without them), and says why its smoke is missing when the page has not started after 20 s of flowing
+  frames or steps at under 10 frames per second (under WSLg: about 2).
+
 ## 0.3.2 (unreleased, branch `0.3.2`)
 
 KLIF on a phone and on a Mac: a small page that shows every System and controls it from a device on your network,
