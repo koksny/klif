@@ -1,0 +1,76 @@
+name: Bug report
+description: KLIF, klif-cli or klif-webui does not do what the docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        KLIF is maintained for its author's daily use ([CONTRIBUTING.md](https://github.com/koksny/klif/blob/main/CONTRIBUTING.md)). A clear report of a real bug is welcome.
+
+        **Before you paste anything:** make paths and addresses fictional (`C:\Users\you`, `D:\models`, `192.0.2.x`) and leave out host names. Never paste `api-key.txt`, a node token, `control.json`, a Hugging Face token or a klif-webui pairing code.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what KLIF did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KLIF version
+      description: "`klif-cli version`, or the number in the window's corner."
+      placeholder: 0.3.3
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple silicon)
+        - Linux
+        - Linux in WSL2
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - The window (a skin, Tune, records)
+        - klif-cli
+        - klif-webui
+        - Remote nodes
+        - Launching or stopping a model server
+        - GPU, VRAM, CPU or RAM figures
+        - Building KLIF
+  - type: input
+    id: hardware
+    attributes:
+      label: GPU and server
+      description: GPU, VRAM and driver; the model server and its build (llama.cpp b…, sd.cpp …, vLLM …).
+  - type: textarea
+    id: diag
+    attributes:
+      label: klif-cli --json diag
+      description: The output of `klif-cli --json diag` (it holds no secrets), with your paths and addresses made fictional.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The lines around the problem from `klif-shell.log` or `klif-cli logs <system>`, made fictional the same way.
+      render: text

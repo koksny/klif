@@ -285,6 +285,7 @@ cat > "$out_app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>${MACOSX_DEPLOYMENT_TARGET}</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>${copyright}</string>
+  <key>NSLocalNetworkUsageDescription</key><string>KLIF connects to the other KLIF machines and model servers you add on your local network, and serves klif-webui to your phone when you turn it on.</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 </dict>
 </plist>

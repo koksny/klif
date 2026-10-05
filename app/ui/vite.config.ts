@@ -49,7 +49,7 @@ function publicWithoutPrivate(publicDir: string): Plugin {
 
 // The dev-server port is registered in .studio/devserver.json. Never change it here alone.
 export default defineConfig(({ command }) => ({
-  plugins: [woff2Only(), svelte(), publicWithoutPrivate(resolve(__dirname, 'public'))],
+  plugins: [woff2Only(), svelte(), publicWithoutPrivate(resolve(import.meta.dirname, 'public'))],
   publicDir: command === 'build' ? false : 'public',
   server: {
     host: '127.0.0.1',
@@ -66,7 +66,7 @@ export default defineConfig(({ command }) => ({
     // Two pages: the window (index.html) and klif-webui (webui.html), which the engine serves on the LAN. They
     // share the skins' token and font chunks.
     rolldownOptions: {
-      input: { main: resolve(__dirname, 'index.html'), webui: resolve(__dirname, 'webui.html') },
+      input: { main: resolve(import.meta.dirname, 'index.html'), webui: resolve(import.meta.dirname, 'webui.html') },
     },
   },
 }));

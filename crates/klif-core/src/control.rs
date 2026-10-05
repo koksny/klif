@@ -21,7 +21,7 @@ use klif_common::vm::{Action, ConfigInfo, Right, SystemId, ViewModel};
 use klif_common::{Secret, KLIF_VERSION};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -582,21 +582,20 @@ fn reaper(rx: mpsc::Receiver<Reap>) {
     }
 }
 
+/// How often a non-blocking accept loop looks again (and sees a stop): the most a new connection waits.
+const ACCEPT_POLL: Duration = Duration::from_millis(20);
+
 /// One listening server (accept thread + a thread per connection + the reaper).
 struct Server {
     shared: Arc<Shared>,
-    wake_addr: SocketAddr,
     accept: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Server {
     fn start(listener: TcpListener, handle: EngineHandle, gate: Gate, limits: Limits, state_dir: &Path, name: &'static str) -> Result<Server> {
-        let local = listener.local_addr()?;
-        let wake_ip = match local.ip() {
-            IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-            ip => ip,
-        };
+        // Non-blocking: the accept loop sees a stop by itself. Waking a blocked accept() with a connection of our own
+        // fails when the address is gone (a LAN address after a DHCP change or sleep), and stop would wait forever.
+        listener.set_nonblocking(true).context("could not configure the listener")?;
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new().name(format!("{name}-reaper")).spawn(move || reaper(rx)).context("could not start a server thread")?;
         let shared = Arc::new(Shared {
@@ -620,7 +619,7 @@ impl Server {
                 bail!("could not start a server thread: {e}");
             }
         };
-        Ok(Server { shared, wake_addr: SocketAddr::new(wake_ip, local.port()), accept: Mutex::new(Some(accept)) })
+        Ok(Server { shared, accept: Mutex::new(Some(accept)) })
     }
 
     /// Stop everything; false when it was already stopped.
@@ -628,8 +627,7 @@ impl Server {
         if self.shared.stop.swap(true, Ordering::SeqCst) {
             return false;
         }
-        // Unblock accept() with a connection of our own.
-        let _ = TcpStream::connect_timeout(&self.wake_addr, Duration::from_millis(500));
+        // The accept loop polls the stop flag: it ends within ACCEPT_POLL.
         if let Some(h) = lock(&self.accept).take() {
             let _ = h.join();
         }
@@ -650,8 +648,18 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
             return;
         }
         match accepted {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(ACCEPT_POLL);
+                continue;
+            }
             Ok((stream, peer)) => {
                 errors = 0;
+                // A socket accepted from a non-blocking listener can inherit that mode (Windows does): the
+                // connection reads with timeouts, so it must block.
+                if let Err(e) = stream.set_nonblocking(false) {
+                    log::warn!("{}: could not configure a connection: {e}", shared.name);
+                    continue;
+                }
                 let Some(slot) = shared.admit(peer.ip(), &stream) else {
                     // Over the unauthenticated limits: close at once (no thread, no answer).
                     let _ = stream.shutdown(std::net::Shutdown::Both);

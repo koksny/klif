@@ -1,0 +1,30 @@
+name: Problem or idea
+description: Something in your daily work with KLIF that could be better. Open this before you write a pull request.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem, not the solution. A change is taken when it would make daily work with local models better for the maintainer as well ([CONTRIBUTING.md](https://github.com/koksny/klif/blob/main/CONTRIBUTING.md)); what only your setup needs usually belongs in your own `klif.toml` or your fork. Other GPU vendors and operating systems are welcome as pull requests ([docs/platforms.md](https://github.com/koksny/klif/blob/main/docs/platforms.md)).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where KLIF gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you work around it today
+  - type: input
+    id: setup
+    attributes:
+      label: Your setup
+      description: OS, GPU, the servers you run with KLIF.
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Pull request
+      options:
+        - label: I would write the pull request and check it three times as CONTRIBUTING.md asks.

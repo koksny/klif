@@ -10,13 +10,15 @@ A pull request is reviewed when it meets both bars.
 
 **1. It is useful here.** It fixes a real bug, or it adds something that would make daily work with local models
 better for the maintainer as well. Features only you need belong in your fork; the MIT license is there for that.
-If you are not sure, open an issue first and describe the problem, not the solution.
+If you are not sure, open an issue first ("Problem or idea") and describe the problem, not the solution. A bug
+report asks for the version, the OS, the GPU and `klif-cli --json diag`.
 
 **2. It is good, and it was checked three times.** The work is at the level of a frontier coding model at its best
 (Opus 5.5 class or better), and the PR shows three independent checks:
 
 1. **Builds and checks.** `cargo check --workspace --all-targets`, `cargo check` in `app\src-tauri` and
-   `npm run check` in `app\ui` pass, and the PR says so.
+   `npm run check` in `app\ui` pass, and the PR says so. GitHub Actions runs the same checks on Windows, macOS and
+   Linux for every pull request (`.github/workflows/check.yml`); a red one is fixed before review.
 2. **Independent review.** A session or a model that did not write the change reviewed the diff against this file
    and against [AGENTS.md](AGENTS.md), and everything it found is fixed. Say who or what reviewed it.
 3. **Run for real.** The change ran on real hardware (or, for UI work, on the mock engine in every affected skin),
@@ -97,8 +99,9 @@ See the repo map in [AGENTS.md](AGENTS.md). Two contracts to keep in step: the v
 - [ ] Describes the hardware and OS you tested on, driver and backend versions, and what you did not test.
 - [ ] Windows behaviour is unchanged (the Windows and AMD build stays the reference); platform code is behind
       `cfg` or a trait ([docs/platforms.md](docs/platforms.md) lists the seams).
-- [ ] It still builds on Linux (`cargo check --workspace --all-targets` and `cargo check` in `app/src-tauri` on a Linux
-      machine or in WSL2; [docs/platforms.md](docs/platforms.md#linux-specifics) has the packages).
+- [ ] It still builds on Windows, macOS and Linux: the Check workflow is green on all three (locally on Linux:
+      `cargo check --workspace --all-targets` and `cargo check` in `app/src-tauri` on a Linux machine or in WSL2;
+      [docs/platforms.md](docs/platforms.md#linux-specifics) has the packages).
       Checking `klif-core` and `klif-cli` there also needs the OpenSSL development files and `pkg-config`
       (`ureq`'s `native-tls`, see [docs/platforms.md](docs/platforms.md)).
 - [ ] Evidence that it works: `klif-cli --json status` and `klif-cli bench` output from the real hardware.

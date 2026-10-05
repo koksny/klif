@@ -135,8 +135,9 @@ use; KLIF never changes firewall settings itself. The same goes for klif-webui (
 ### Local Network
 
 macOS asks before an app reaches other devices on the local network (System Settings > Privacy & Security > Local
-Network). Without that permission, connecting to a node fails with **"No route to host"**, although the other machine
-answers and its firewall lets the Mac in. Allow KLIF there. When no KLIF window runs, `klif-cli` runs its own engine
+Network); `KLIF.app` says why in that prompt (`NSLocalNetworkUsageDescription`). Without that permission, connecting to
+a node fails with **"No route to host"**, although the other machine answers and its firewall lets the Mac in. Allow
+KLIF there. When no KLIF window runs, `klif-cli` runs its own engine
 inside the terminal, so the terminal app (Terminal, iTerm, the one your agent uses) needs the permission instead.
 
 ## Linux specifics
