@@ -75,6 +75,7 @@ out_skill="$out_dir/skills/klif/SKILL.md"
 # The version in a toml [section].
 toml_version() {
     awk -v sec="[$2]" '
+        { sub(/\r$/, "") }
         $0 == sec { inside = 1; next }
         /^\[/ { inside = 0 }
         inside && /^[[:space:]]*version[[:space:]]*=/ { gsub(/.*=[[:space:]]*"|".*/, ""); print; exit }
