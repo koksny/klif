@@ -1923,10 +1923,13 @@ name = "klif"
 version = "0.3.1"
 dependencies = [
  "anyhow",
+ "core-foundation-sys",
  "klif-common",
  "klif-core",
  "klif-telemetry",
  "log",
+ "objc2-app-kit",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",
@@ -1986,6 +1989,8 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
+ "libc",
+ "log",
  "serde",
  "serde_json",
  "windows",
@@ -1996,7 +2001,9 @@ name = "klif-telemetry"
 version = "0.3.1"
 dependencies = [
  "anyhow",
+ "core-foundation-sys",
  "klif-common",
+ "libc",
  "log",
  "regex",
  "serde",

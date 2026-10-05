@@ -688,6 +688,14 @@ pub static ERROR_CODES: &[(&str, u8, &str)] = &[
 
 pub const SYSTEM_ARGUMENT: &str = "an id (s1, render-box/s1), a label ignoring case and spaces (system1, \"System 1\"), or the 0.2 names low|medium|high|krea (local s1/s2/s3/cgi)";
 
+/// Where klif.toml is looked up, as `--help` says it on this platform.
+#[cfg(windows)]
+const CONFIG_LOOKUP: &str = ".local\\klif.toml above the exe or the current folder, else %APPDATA%\\KLIF\\klif.toml";
+#[cfg(target_os = "macos")]
+const CONFIG_LOOKUP: &str = ".local/klif.toml above the exe or the current folder, else ~/Library/Application Support/KLIF/klif.toml";
+#[cfg(not(any(windows, target_os = "macos")))]
+const CONFIG_LOOKUP: &str = ".local/klif.toml above the exe or the current folder, else $XDG_CONFIG_HOME/klif/klif.toml";
+
 /// What follows the command list in `--help`.
 const USAGE_TAIL: &str = "\
 <system>: an id (s1, render-box/s1), a label ignoring case and spaces (system1, \"System 1\"),
@@ -695,7 +703,7 @@ const USAGE_TAIL: &str = "\
 presets set keys: command  args=[\"json\",\"array\"]  args+=TOKEN  args-=TOKEN  env.NAME=VALUE  env.NAME-
           env_remove+=NAME  env_remove-=NAME  cwd  port  host  endpoint  health  model  mmproj  ctx  gpu  kind
           adapter  name  managed  api_key  model_name  quant  backend  device  notes   (empty value = unset)
-config:   KLIF_CONFIG=<klif.toml>, else .local\\klif.toml above the exe or the current folder, else %APPDATA%\\KLIF\\klif.toml.
+config:   KLIF_CONFIG=<klif.toml>, else {CONFIG_LOOKUP}.
 logs:     KLIF_LOG=info|debug (stderr; trace = KLIF's own records only, dependencies capped at debug).
 agents:   klif-cli --json help (every command), klif-cli schema (JSON Schema of every document), klif-cli watch (events
           instead of sleep-and-poll loops). Commands that change something need --yes.
@@ -721,7 +729,7 @@ pub fn usage_text() -> String {
         }
     }
     s.push('\n');
-    s.push_str(USAGE_TAIL);
+    s.push_str(&USAGE_TAIL.replace("{CONFIG_LOOKUP}", CONFIG_LOOKUP));
     s
 }
 

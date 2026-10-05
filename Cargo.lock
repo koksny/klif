@@ -479,6 +479,8 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "klif-common",
+ "libc",
+ "log",
  "serde",
  "serde_json",
  "windows",
@@ -489,7 +491,9 @@ name = "klif-telemetry"
 version = "0.3.1"
 dependencies = [
  "anyhow",
+ "core-foundation-sys",
  "klif-common",
+ "libc",
  "log",
  "regex",
  "serde",

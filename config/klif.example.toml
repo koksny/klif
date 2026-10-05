@@ -1,10 +1,11 @@
 # KLIF configuration template (0.3).
 #
-# Copy this file to %APPDATA%\KLIF\klif.toml and edit it, or point the KLIF_CONFIG environment variable at your
-# copy. A developer checkout can also use .local\klif.toml (gitignored). Never commit a filled-in copy.
+# Copy this file to %APPDATA%\KLIF\klif.toml (macOS: ~/Library/Application Support/KLIF/klif.toml) and edit it, or
+# point the KLIF_CONFIG environment variable at your copy. A developer checkout can also use .local\klif.toml
+# (gitignored). Never commit a filled-in copy.
 #
-# Every path, address and model name below is fictional (D:\llama.cpp, D:\models, 192.0.2.x). Replace them with
-# yours. Until you do, the Systems show as "invalid" with the reason (program or model file missing); nothing
+# Every path, address and model name below is fictional (D:\llama.cpp, D:\models, 192.0.2.x; on a Mac write
+# /opt/llama.cpp/llama-server, /Users/<you>/models and the like: KLIF does not expand "~"). Replace them with yours. Until you do, the Systems show as "invalid" with the reason (program or model file missing); nothing
 # is started by KLIF on its own.
 #
 # How the file is organised:
@@ -32,6 +33,7 @@ image_host = "127.0.0.1"
 # "VEN:DEV" is the first one and "VEN:DEV#1" the second (DXGI order). The ids KLIF sees are listed by:
 #   klif-cli --json diag        (engine.gpus[].id)
 # inference = "1002:7550"      # example: an RDNA4 16 GiB card
+# inference = "106B:8132"      # macOS: Apple's vendor id and the SoC id from the device tree (here t8132, an M4)
 # ui = "1002:731F"             # optional: the card the window should render on (one that drives displays)
 # inference_name = "RX 9070 XT"
 
@@ -54,7 +56,7 @@ verbose_llama_logs = true
 [paths]
 # Where "Recommended" models are downloaded to. Unset = downloads are refused.
 models_dir = 'D:\models'
-# logs_dir = 'D:\klif-logs'    # default: <data folder>\logs
+# logs_dir = 'D:\klif-logs'    # default: <data folder>\logs (macOS, default folder: ~/Library/Logs/KLIF)
 
 [security]
 # The API key KLIF puts into llama.cpp and vLLM servers it starts (and into its own requests to them):
@@ -142,6 +144,7 @@ preset = "chat-box"
 name = "Fast 8B"
 adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | openai | audiocpp | generic
 command = 'D:\llama.cpp\llama-server.exe'   # absolute path, or a program name on PATH; .exe/.com only
+# command = '/opt/llama.cpp/llama-server'    # macOS: an executable file (Metal is built in)
 args = [
   "-m", "{model}",
   "-c", "{ctx}",

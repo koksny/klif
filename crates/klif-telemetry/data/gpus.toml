@@ -13,7 +13,14 @@
 #   memory_type  GDDR6, GDDR6X, GDDR7, HBM3 ...
 #   integrated   true for a GPU on the CPU's memory. Absent = KLIF decides from the name and the memory size.
 #   aliases      other names Windows may report for the same SKU.
+#   gpu_cores    Apple only: the GPU core count of the entry (one chip ships with several).
 #   source       the page the numbers come from.
+#
+# Apple silicon (macOS): vendor_id 0x106B, device_ids = the SoC id from the device tree ("t8103" -> 0x8103), so an
+# M1 is "106B:8103" in [gpu] and [hardware]. Only figures Apple published are listed. Every other Apple GPU is
+# computed from the machine itself: gpu-core-count (IORegistry) x 128 FP32 lanes x 2 (FMA) x the top state of the
+# GPU's DVFS table (device tree `arm-io/pmgr` voltage-states9), shown as an estimate. Check against the entry
+# below: 8 x 128 x 2 x 1278 MHz = 2.62 TFLOPS.
 #
 # Lookup order: the normalized name first, then vendor + device id + revision, then vendor + device id when exactly
 # one entry carries it.
@@ -5653,3 +5660,17 @@ tflops_fp32 = 14.69
 vram_gb = 16
 memory_type = "GDDR6"
 source = "https://www.intel.com/content/www/us/en/products/sku/240447/intel-arc-a750e-graphics/specifications.html"
+
+# -------------------------------------------------------------------------------------------------------- Apple
+
+[[gpu]]
+name = "Apple M1"
+vendor_id = 0x106B
+device_ids = [0x8103]
+gpu_cores = 8
+shaders = 1024
+boost_mhz = 1278
+tflops_fp32 = 2.6
+memory_type = "unified LPDDR4X"
+integrated = true
+source = "https://www.apple.com/newsroom/2020/11/apple-unleashes-m1/"

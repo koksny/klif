@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.2 (unreleased)
+
+### macOS
+
+KLIF runs on macOS 13 or later on Apple silicon: the window app (`KLIF.app`) and `klif-cli`, launching and stopping
+a llama.cpp server with Metal. Windows and AMD stay the reference build; everything below sits behind
+`cfg(target_os = "macos")` (or `cfg(unix)`) or the platform traits.
+
+- **Locations.** `~/Library/Application Support/KLIF` (klif.toml, state, secrets), its `data` subfolder (records,
+  bench, node cache), logs in `~/Library/Logs/KLIF`. The lookup order is unchanged (`KLIF_CONFIG`, `.local/klif.toml`
+  above the program or the working folder, then the default).
+- **Commands.** `command` is an absolute path or a PATH name of a file with the execute bit, run with `execve` (never
+  through a shell); a missing bit, a folder and an `.app` bundle are explained. A bare name is also looked up in
+  the Homebrew folders (an app started from Finder gets launchd's short PATH). `{env:X}` shows as `$X`.
+- **Process host.** Each server leads its own process group; stop sends SIGTERM to the group, then SIGKILL after 5 s.
+  A session is adopted after a restart only when the root's start time matches the record (`proc_pidinfo`); a group
+  whose root has exited only when a member still writes to the session's log. Port owners come from `proc_pidfdinfo`.
+  Servers keep running when KLIF quits.
+- **Hardware.** The GPU from Metal and the IORegistry: id `106B:<SoC>` (an M4 is `106B:8132`), Metal's recommended
+  working set as the unified pool, cores x 128 lanes x 2 x the top DVFS clock as an estimated FP32 peak (the M1's
+  published 2.6 TFLOPS is in the table). The CPU from `sysctl` with a sourced per-chip clock table (estimate).
+  Live: GPU "In use system memory", each server's physical footprint, CPU load.
+- **Window app.** Clipboard through NSPasteboard (a secret stays on this Mac and is marked concealed and transient),
+  native Yes / No alerts, a template icon in the menu bar (a click opens the menu), `icon.icns`,
+  `tauri.macos.conf.json`; the window stays frameless with KLIF's own controls. Ether falls back to the system face;
+  Cmd+1..9 switch skins.
+- **Release.** `scripts/build-release.sh`: the version check, a clean UI build, `--locked` builds with remapped paths,
+  `KLIF.app` and `klif-cli`, `SKILL.md`, a zip and its SHA-256; ad-hoc signed by default, `--sign` (Developer ID,
+  hardened runtime) and `--notarize` (notarytool keychain profile, stapled).
+- **Docs.** `docs/platforms.md` has the macOS status, the seams per platform, Gatekeeper, signing and notarization,
+  and the firewall.
+- **Tested** on an M4 (8-core GPU, 16 GB) with llama.cpp b11399 (Metal) and Qwen3.5 4B Q4_K_M: 28.1 tok/s decode,
+  265 tok/s prefill, 1.6 s load (`klif-cli bench`); launch, stop and adoption after the app was killed; a signed and
+  notarized build accepted by Gatekeeper.
+
+### Fixed (all platforms)
+
+- **A request with a float could fail its MAC.** The receiver checked the MAC against the params as it parsed them,
+  and serde_json's default float parsing does not always give back the number that was sent (about one value in
+  ten). `klif-cli bench` lost its result that way ("not handed to the records", silently) and, when it had launched
+  the System, could not stop it ("the connection was closed"). serde_json now parses floats exactly
+  (`float_roundtrip`); nothing changes on the wire.
+- **Secret files on unix** (`control.json`, `node-token.txt`, `api-key.txt`) are written readable by their owner
+  only (0600). Windows is unchanged (the profile's ACL protects them).
+
 ## 0.3.1 (unreleased, branch `0.3.1`)
 
 KLIF now knows the machine it runs on: what it can compute, which models fit it, and the best each model file has

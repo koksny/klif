@@ -26,6 +26,8 @@ pub struct GpuEntry {
     pub vram_gb: Option<f64>,
     pub memory_type: Option<String>,
     pub integrated: Option<bool>,
+    /// Apple GPUs: the core count of this entry (one chip ships with several).
+    pub gpu_cores: Option<u32>,
     pub source: Option<String>,
 }
 
@@ -51,6 +53,13 @@ pub fn entries() -> &'static [GpuEntry] {
 pub fn normalize_name(name: &str) -> String {
     let lower = name.to_lowercase().replace("(r)", " ").replace("(tm)", " ").replace(['®', '™'], " ");
     lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
+/// The entry of an Apple GPU: its SoC id (`device_ids`) and its core count. None for a chip or a core count the
+/// table does not list (its peak is then computed from the machine's own facts).
+pub fn lookup_apple(device_id: u32, cores: Option<u32>) -> Option<&'static GpuEntry> {
+    let cores = cores?;
+    entries().iter().find(|e| e.vendor_id == crate::APPLE_VENDOR && e.device_ids.contains(&device_id) && e.gpu_cores == Some(cores))
 }
 
 /// The table entry of an adapter: the normalized name first, then vendor + device + revision, then vendor + device

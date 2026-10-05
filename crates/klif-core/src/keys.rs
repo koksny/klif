@@ -54,6 +54,10 @@ pub fn store(cfg: &Config, key: Option<&Secret>) -> Result<()> {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).with_context(|| format!("The folder {} could not be created", dir.display()))?;
             }
+            // Unix: readable by its owner only (Windows: as before, the profile's ACL protects it).
+            #[cfg(unix)]
+            crate::wire::write_secret_atomic(&path, k.expose().as_bytes()).with_context(|| format!("{} could not be written", path.display()))?;
+            #[cfg(not(unix))]
             write_atomic(&path, k.expose().as_bytes()).with_context(|| format!("{} could not be written", path.display()))?;
         }
         None => match std::fs::remove_file(&path) {

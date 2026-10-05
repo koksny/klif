@@ -20,7 +20,9 @@ rust-version = "1.90"
 # windows 0.62 is pinned to match tauri / wry / webview2-com so COM types unify.
 windows = "0.62"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: parse floats exactly. Request MACs cover the canonical JSON of the params as the receiver parses
+# them, so a float that does not survive the round trip (about one in ten without it) fails the MAC.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # preserve_order: [systems.*] keep their file order (= tab order).
 toml = { version = "0.9", features = ["preserve_order"] }
 # Comment-preserving klif.toml writes (klif_catalog::store).
@@ -29,6 +31,10 @@ anyhow = "1"
 thiserror = "2"
 regex = "1"
 log = "0.4"
+# macOS system calls (libproc, sysctl, mach) for the process host and telemetry.
+libc = "0.2"
+# macOS IORegistry reads (CoreFoundation types); the version security-framework already brings.
+core-foundation-sys = "0.8"
 # Plain HTTP here (telemetry probes). klif-core / klif-cli add the `native-tls` feature for HTTPS (Hugging Face
 # downloads through the OS trust store, SChannel on Windows); ureq 3 still defaults to its rustls provider, so code
 # that needs TLS must select TlsProvider::NativeTls in its agent config.

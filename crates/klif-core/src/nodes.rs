@@ -934,7 +934,7 @@ pub mod node_token {
         let path = cfg.state_path(FILE);
         let hex = crate::wire::random_hex(32)?;
         let mut text = format!("{hex}\n");
-        let written = crate::wire::write_atomic(&path, text.as_bytes()).with_context(|| format!("{} could not be written", path.display()));
+        let written = crate::wire::write_secret_atomic(&path, text.as_bytes()).with_context(|| format!("{} could not be written", path.display()));
         // SAFETY: zero bytes are valid UTF-8; the strings are not used afterwards.
         unsafe {
             text.as_bytes_mut().iter_mut().for_each(|b| *b = 0);

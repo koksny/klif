@@ -317,13 +317,29 @@ fn write_new(path: &Path, text: &str) -> io::Result<()> {
 /// Write a file atomically: a temp file next to it, then rename (retried briefly: Defender / indexers may hold
 /// the target for a moment).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_mode(path, bytes, None)
+}
+
+/// `write_atomic` for a secret (control.json, node-token.txt, api-key.txt): on unix only its owner may read it
+/// (0600); on Windows the same as `write_atomic` (the user profile's ACL protects it).
+pub fn write_secret_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_mode(path, bytes, Some(0o600))
+}
+
+fn write_atomic_mode(path: &Path, bytes: &[u8], _mode: Option<u32>) -> io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
     let tmp = path.with_file_name(format!("{name}.{}.tmp", std::process::id()));
     {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if let Some(mode) = _mode {
+            std::os::unix::fs::OpenOptionsExt::mode(&mut opts, mode);
+        }
+        let mut f = opts.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }

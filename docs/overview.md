@@ -57,9 +57,10 @@ KLIF leaves them running, and the next start adopts them again. Stop is explicit
 ## Files and folders
 
 KLIF reads `klif.toml` from the first of: the `KLIF_CONFIG` file; `.local\klif.toml` found by walking up from the
-executable's folder; the same walking up from the working folder; `%APPDATA%\KLIF\klif.toml`. The folder of that
-file is the **state folder**. The **data folder** is the state folder, except for the default `%APPDATA%\KLIF`,
-whose data lives in `%LOCALAPPDATA%\KLIF`.
+executable's folder; the same walking up from the working folder; `%APPDATA%\KLIF\klif.toml` (macOS:
+`~/Library/Application Support/KLIF/klif.toml`). The folder of that file is the **state folder**. The **data
+folder** is the state folder, except for the default `%APPDATA%\KLIF`, whose data lives in `%LOCALAPPDATA%\KLIF`
+(macOS: the default folder's `data` subfolder, with the logs in `~/Library/Logs/KLIF`).
 
 | In the state folder | What |
 | --- | --- |

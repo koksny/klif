@@ -111,6 +111,8 @@ The animations come from the browser mock engine with recorded timings, the same
 
 - Windows 10 or 11, 64-bit, with the Microsoft Edge WebView2 runtime (part of Windows 11 and of most up-to-date
   Windows 10 installs).
+- Or macOS 13 or later on Apple silicon (M1 or newer): tested on an M4 with a Metal build of llama.cpp. KLIF reads
+  the GPU through Metal and the IORegistry; nothing needs administrator rights. [docs/platforms.md](docs/platforms.md)
 - An AMD GPU is the first-class target: the tested setups run HIP (ROCm) and Vulkan builds of llama.cpp and
   stable-diffusion.cpp. GPU memory is read through DXGI and Windows performance counters, which are not
   AMD-specific, but nothing else is tested. [docs/platforms.md](docs/platforms.md)
@@ -129,10 +131,19 @@ The animations come from the browser mock engine with recorded timings, the same
    .\scripts\Build-Release.ps1
    ```
 
-   which puts `klif.exe` and `klif-cli.exe` into `dist\KLIF\` and prints their SHA-256.
+   which puts `klif.exe` and `klif-cli.exe` into `dist\KLIF\` and prints their SHA-256. On a Mac (Xcode Command
+   Line Tools, Rust, Node.js):
+
+   ```bash
+   ./scripts/build-release.sh
+   ```
+
+   puts `KLIF.app` and `klif-cli` into `dist/KLIF/`, zips the folder and prints the SHA-256 of each. An unsigned
+   build from someone else is stopped by Gatekeeper the first time: [docs/platforms.md](docs/platforms.md#gatekeeper).
 
 2. **Configure.** Start `klif.exe` with no configuration and use **Add a System**, or copy
-   [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` and replace the fictional
+   [config/klif.example.toml](config/klif.example.toml) to `%APPDATA%\KLIF\klif.toml` (macOS:
+   `~/Library/Application Support/KLIF/klif.toml`) and replace the fictional
    paths (`D:\llama.cpp`, `D:\models`, `192.0.2.x`) with yours. `klif-cli` reads the same file; `KLIF_CONFIG` points
    it at another one.
 

@@ -2,7 +2,9 @@
 //! Systems (after a confirmation), Quit. Quitting KLIF never stops a model server.
 //! The Skin submenu starts with the built-in skins and is replaced by the UI's own list (`klif_skins`), which
 //! also holds local-only skins.
-//! Left click shows KLIF. The tooltip says so while the core waits for another process to release the engine.
+//! Left click shows KLIF (macOS: a click opens the menu, as menu bar items do; the icon is a template image that
+//! follows the menu bar's look). The tooltip says so while the core waits for another process to release the
+//! engine.
 
 use klif_common::vm::Action;
 use tauri::image::Image;
@@ -105,12 +107,17 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let stop_item = MenuItem::with_id(app, "stop-all", "Stop all Systems", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit KLIF", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &panel_item, &skins, &sep, &stop_item, &quit])?;
+    #[cfg(target_os = "macos")]
+    let icon = Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
+    #[cfg(not(target_os = "macos"))]
     let icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+    const MAC: bool = cfg!(target_os = "macos");
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
+        .icon_as_template(MAC)
         .tooltip("KLIF")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(MAC)
         .on_menu_event(|app, e| {
             let id = e.id.as_ref();
             match id {
@@ -145,7 +152,9 @@ pub fn build(app: &AppHandle<Wry>) -> tauri::Result<()> {
         })
         .on_tray_icon_event(|tray, e| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                shell::show_main(tray.app_handle());
+                if !MAC {
+                    shell::show_main(tray.app_handle());
+                }
             }
         })
         .build(app)?;

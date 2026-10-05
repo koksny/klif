@@ -5,12 +5,13 @@
 //!   1. env `KLIF_CONFIG` (path to a toml file; it may not exist yet)
 //!   2. `.local/klif.toml`, searched upward from the executable's directory
 //!   3. `.local/klif.toml`, searched upward from the current directory
-//!   4. `%APPDATA%\KLIF\klif.toml` (elsewhere `$XDG_CONFIG_HOME/klif/klif.toml`); the folder is created, the
-//!      file is not required.
+//!   4. `%APPDATA%\KLIF\klif.toml` (macOS `~/Library/Application Support/KLIF/klif.toml`, Linux
+//!      `$XDG_CONFIG_HOME/klif/klif.toml`); the folder is created, the file is not required.
 //!
 //! `state_dir` = the folder of that klif.toml (state.json, engine.lock, control.json, api-key.txt, node-token.txt).
 //! `data_dir` = `state_dir`, except for the default `%APPDATA%\KLIF`, whose data goes to `%LOCALAPPDATA%\KLIF`
-//! (logs, bench, webview-data, downloads).
+//! (logs, bench, webview-data, downloads); on macOS the default's data goes to its `data` subfolder and its logs
+//! to `~/Library/Logs/KLIF`.
 //!
 //! [`load`] never fails: an unreadable file gives `Config::empty_at(path)` plus an error [`Issue`] (field
 //! [`FILE_FIELD`]). Every section is read on its own (a bad `[net]` falls back to its defaults with an issue), and
@@ -503,7 +504,8 @@ pub struct PresetCfg {
     /// Default: image for sd.cpp, llm for llama.cpp / vllm / openai; REQUIRED for generic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<SystemKind>,
-    /// Absolute path, or a name on PATH (.exe/.com only). Empty for an external preset.
+    /// Absolute path, or a name on PATH (.exe/.com only on Windows; an executable file elsewhere). Empty for an
+    /// external preset.
     pub command: String,
     pub args: Vec<String>,
     /// Default: the folder of the resolved command.
@@ -875,7 +877,7 @@ pub enum LocationOrigin {
     ExeDir,
     /// `.local/klif.toml` above the current directory.
     Cwd,
-    /// `%APPDATA%\KLIF\klif.toml` (or the XDG equivalent).
+    /// `%APPDATA%\KLIF\klif.toml` (or the macOS / XDG equivalent).
     Default,
 }
 
@@ -886,36 +888,61 @@ pub struct Location {
     pub exists: bool,
 }
 
-/// `%APPDATA%\KLIF` on Windows; `$XDG_CONFIG_HOME/klif` (or `~/.config/klif`) elsewhere.
+/// `%APPDATA%\KLIF` on Windows; `~/Library/Application Support/KLIF` on macOS; `$XDG_CONFIG_HOME/klif` (or
+/// `~/.config/klif`) elsewhere.
 pub fn default_state_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("APPDATA").filter(|v| !v.is_empty()).map(|a| PathBuf::from(a).join("KLIF"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        home_dir().map(|h| h.join("Library/Application Support/KLIF"))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         xdg_dir("XDG_CONFIG_HOME", ".config").map(|d| d.join("klif"))
     }
 }
 
-/// `%LOCALAPPDATA%\KLIF` on Windows; `$XDG_DATA_HOME/klif` (or `~/.local/share/klif`) elsewhere.
+/// `%LOCALAPPDATA%\KLIF` on Windows; `~/Library/Application Support/KLIF/data` on macOS (one folder for the app,
+/// with klif.toml and the secrets kept apart from what KLIF writes in bulk); `$XDG_DATA_HOME/klif` (or
+/// `~/.local/share/klif`) elsewhere.
 pub fn default_data_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|a| PathBuf::from(a).join("KLIF"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        default_state_dir().map(|d| d.join("data"))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         xdg_dir("XDG_DATA_HOME", ".local/share").map(|d| d.join("klif"))
     }
 }
 
+/// The logs folder when `[paths] logs_dir` is unset: `<data_dir>/logs`, except that the default macOS data folder
+/// logs to `~/Library/Logs/KLIF`, where Console.app lists them.
+fn default_logs_dir(data_dir: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    if let (Some(def), Some(home)) = (default_data_dir(), home_dir()) {
+        if same_dir(data_dir, &def) {
+            return home.join("Library/Logs/KLIF");
+        }
+    }
+    data_dir.join("logs")
+}
+
 #[cfg(not(windows))]
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn xdg_dir(var: &str, home_rel: &str) -> Option<PathBuf> {
-    std::env::var_os(var)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| PathBuf::from(h).join(home_rel)))
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| home_dir().map(|h| h.join(home_rel)))
 }
 
 fn find_up(start: &Path) -> Option<PathBuf> {
@@ -1252,12 +1279,13 @@ impl Config {
         self.data_dir.join(name)
     }
 
-    /// Session logs: `[paths] logs_dir` (relative = under state_dir), else `<data_dir>\logs`.
+    /// Session logs: `[paths] logs_dir` (relative = under state_dir), else `<data_dir>\logs` (macOS default:
+    /// `~/Library/Logs/KLIF`).
     pub fn logs_dir(&self) -> PathBuf {
         match self.paths.logs_dir.as_deref().filter(|p| !p.as_os_str().is_empty()) {
             Some(p) if p.is_relative() => self.state_dir.join(p),
             Some(p) => p.to_path_buf(),
-            None => self.data_dir.join("logs"),
+            None => default_logs_dir(&self.data_dir),
         }
     }
 

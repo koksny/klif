@@ -1,6 +1,6 @@
 //! Hand a file, folder or web address to the system's default handler, and the two native message boxes the tray
-//! needs. Windows uses ShellExecuteW / MessageBoxW; other systems fall back to their own opener (untested: the
-//! tested build is Windows).
+//! needs. Windows uses ShellExecuteW / MessageBoxW; macOS `open` and CFUserNotification alerts; other systems
+//! fall back to `xdg-open` (untested).
 
 use std::path::Path;
 
@@ -17,10 +17,20 @@ pub fn open(target: &str) -> Result<(), isize> {
     if code > 32 { Ok(()) } else { Err(code) }
 }
 
-#[cfg(not(windows))]
+/// macOS: `open` hands the target to Launch Services and returns at once; its exit code says whether an
+/// application took it.
+#[cfg(target_os = "macos")]
 pub fn open(target: &str) -> Result<(), isize> {
-    let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    std::process::Command::new(program).arg(target).spawn().map(|_| ()).map_err(|_| -1)
+    match std::process::Command::new("/usr/bin/open").arg(target).output() {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(o.status.code().unwrap_or(-1) as isize),
+        Err(_) => Err(-1),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn open(target: &str) -> Result<(), isize> {
+    std::process::Command::new("xdg-open").arg(target).spawn().map(|_| ()).map_err(|_| -1)
 }
 
 /// Open a web address in the default browser.
@@ -39,7 +49,7 @@ pub fn open_file(path: &Path) -> Result<(), String> {
     if has_handler(path) && open(&path.display().to_string()).is_ok() {
         return Ok(());
     }
-    log::info!("no handler for {}; trying notepad.exe", path.display());
+    log::info!("no handler for {}; trying {}", path.display(), if cfg!(windows) { "notepad.exe" } else { "the text editor" });
     notepad(path).map_err(|e| format!("Could not open {}: {e}", path.display()))
 }
 
@@ -69,7 +79,14 @@ fn notepad(path: &Path) -> std::io::Result<()> {
     std::process::Command::new(root.join("System32").join("notepad.exe")).arg(path).spawn().map(|_| ())
 }
 
-#[cfg(not(windows))]
+/// macOS: the default text editor (`open -t`), for a ".toml" no application claims.
+#[cfg(target_os = "macos")]
+fn notepad(path: &Path) -> std::io::Result<()> {
+    let s = std::process::Command::new("/usr/bin/open").arg("-t").arg(path).status()?;
+    if s.success() { Ok(()) } else { Err(std::io::Error::other("no text editor took the file")) }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn notepad(_path: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other("no text editor is registered"))
 }
@@ -83,7 +100,12 @@ pub fn confirm(title: &str, text: &str) -> bool {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND) == IDYES }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn confirm(title: &str, text: &str) -> bool {
+    crate::macos::alert::confirm(title, text)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn confirm(_title: &str, _text: &str) -> bool {
     true
 }
@@ -98,7 +120,13 @@ pub fn message(title: &str, text: &str) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn message(title: &str, text: &str) {
+    log::warn!("{title}: {text}");
+    crate::macos::alert::message(title, text);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn message(title: &str, text: &str) {
     log::warn!("{title}: {text}");
 }
