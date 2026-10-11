@@ -13,6 +13,7 @@
   //   console     the last log line
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { fmtClock, fmtInt, fmtSeconds } from '../../lib/model/format';
+  import { hasPixels, stageText } from '../../lib/model/music';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, isPendingLaunch, launchCtl, selectedSystem, shortLabel as tierShort } from '../../lib/model/systems';
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
@@ -60,6 +61,14 @@
 
   // ---- the two small cards under the hero ----------------------------------------------------------------------
   const cards = $derived.by<[string, string][]>(() => {
+    if (kind === 'music') {
+      const on = !!img && img.activity === 'generating';
+      const j = img?.recent[img.recent.length - 1];
+      return [
+        ['song', on ? `${fmtSeconds(img!.elapsedS)} · ${stageText(img!)}` : j ? `last ${fmtSeconds(j.seconds)}` : img ? 'no song yet' : '—'],
+        ['backend', shapeText(model, kind)],
+      ];
+    }
     if (kind === 'image') {
       const on = !!img && img.activity === 'generating';
       const j = img?.recent[img.recent.length - 1];
@@ -84,6 +93,15 @@
   // ---- detail strip: four fixed facts per kind, the same labels in every phase -----------------------------------
   const prefillActive = $derived(!!llm?.prefill && llm.activity === 'prefill');
   const strip = $derived.by<[string, string][]>(() => {
+    if (kind === 'music') {
+      const j = img?.recent[img.recent.length - 1];
+      return [
+        ['last song', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+        ['songs', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+        ['model', model?.name ?? '—'],
+        ['reports', gen?.modelId ?? '—'],
+      ];
+    }
     if (kind === 'image') {
       const j = img?.recent[img.recent.length - 1];
       return [
@@ -115,6 +133,8 @@
   const reqN = $derived(faulted && llm ? 7 : 8);
   const requests = $derived(llm ? llm.requests.slice(-reqN) : []);
   const reqSlots = $derived(Array.from({ length: reqN }, (_, i) => requests[i - (reqN - requests.length)] ?? null));
+  /** Image and music Systems list finished jobs; the rest list requests. */
+  const listsJobs = $derived(kind === 'image' || kind === 'music');
   const jobN = $derived(faulted && img ? 11 : 12);
   const jobs = $derived(img ? img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
@@ -122,16 +142,16 @@
   const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating') || (gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return 'not running';
-    if (loading) return kind === 'image' ? 'no jobs yet' : 'no requests yet';
-    if (kind !== 'llm' && kind !== 'image') return faulted ? 'failed' : 'no per-request log for this kind';
-    const n = kind === 'image' ? jobs.length : requests.length;
-    const what = kind === 'image' ? 'jobs' : 'requests';
+    if (loading) return listsJobs ? 'no jobs yet' : 'no requests yet';
+    if (kind !== 'llm' && !listsJobs) return faulted ? 'failed' : 'no per-request log for this kind';
+    const n = listsJobs ? jobs.length : requests.length;
+    const what = listsJobs ? 'jobs' : 'requests';
     if (faulted) {
       if (!llm && !img) return `no ${what}: failed during startup`;
-      return `${n ? `last ${n}` : `no finished ${what}`}, then ${diedInWork ? `the ${kind === 'image' ? 'job' : 'request'} that died` : 'the fault'}`;
+      return `${n ? `last ${n}` : `no finished ${what}`}, then ${diedInWork ? `the ${listsJobs ? 'job' : 'request'} that died` : 'the fault'}`;
     }
     if (n === 0) return `no finished ${what} yet`;
-    return kind === 'image' ? `bar height = time · last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : `last ${n} · prefill cyan, decode mint`;
+    return listsJobs ? `bar height = time · last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : `last ${n} · prefill cyan, decode mint`;
   });
   const reqTitle = (r: RequestRecord) =>
     `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
@@ -252,12 +272,12 @@
   </section>
 
   <section class="tline glass">
-    <div class="cap">{kind === 'image' ? 'Recent jobs' : 'Requests'}<span class="dim">{tlCaption}</span></div>
-    {#if kind === 'image'}
+    <div class="cap">{kind === 'music' ? 'Recent songs' : kind === 'image' ? 'Recent jobs' : 'Requests'}<span class="dim">{tlCaption}</span></div>
+    {#if listsJobs}
       <div class="jobs">
         {#each jobSlots as j, i (i)}
           {#if j}
-            <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)} · {j.width}×{j.height}{j.edit ? ' · edit' : ''}"></span>
+            <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)}{hasPixels(kind) ? ` · ${j.width}×${j.height}` : ''}{j.edit ? ' · edit' : ''}"></span>
           {:else}<span class="job empty"></span>{/if}
         {/each}
         {#if faulted && img}<span class="job failed" title={diedInWork ? 'The server died during this job' : 'The server died between jobs'}></span>{/if}

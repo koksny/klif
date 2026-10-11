@@ -8,7 +8,8 @@
     steps,
     variant = 'full',
     blank = false,
-  }: { step: number; steps: number; variant?: 'full' | 'mini'; blank?: boolean } = $props();
+    unit = 'step',
+  }: { step: number; steps: number; variant?: 'full' | 'mini'; blank?: boolean; unit?: string } = $props();
 
   const n = $derived(Math.max(1, String(Math.max(0, Math.round(steps))).length));
   const digits = (v: number) => {
@@ -19,7 +20,7 @@
   const b = $derived(digits(steps));
 </script>
 
-<div class="odo {variant}" role="img" aria-label={blank ? 'no job' : `step ${step} of ${steps}`}>
+<div class="odo {variant}" role="img" aria-label={blank ? 'no job' : `${unit} ${step} of ${steps}`}>
   {#each a as d, i (i)}
     <div class="win"><DrumDigit digit={d.d} up={true} dim={blank || d.lead} /></div>
   {/each}

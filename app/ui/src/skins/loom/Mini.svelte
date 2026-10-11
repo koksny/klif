@@ -12,6 +12,7 @@
   // A fault covers the hero and the rows. Archivo Expanded caps for labels and the figure, JetBrains Mono for data.
   import type { Actions, ViewModel } from '../../lib/model/types';
   import { fmtCtx, fmtGiB, fmtInt, fmtPct, fmtTps } from '../../lib/model/format';
+  import { isMusicJob, stageText, stageWord } from '../../lib/model/music';
   import { EXTERNAL_TITLE, KIND_LABEL, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem, systemLabel } from '../../lib/model/systems';
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
@@ -76,12 +77,14 @@
 
   // The visual's corner captions: the shape (top left) and what the light ends in (bottom right).
   const shapeCap = $derived.by(() => {
+    if (shape.audio) return shape.known ? `${shape.layers} layers` : 'layers not reported';
     if (shape.kind === 'dit') return shape.known ? `${shape.layers} blocks · dit` : 'dit';
     if (!shape.known) return 'shape unknown';
     if (shape.kind === 'moe') return `${shape.layers} layers · ${shape.active}${shape.shared ? `+${shape.shared}` : ''} / ${shape.experts}`;
     return `${shape.layers} layers · dense`;
   });
   const sideCap = $derived.by(() => {
+    if (shape.audio) return img?.activity === 'generating' && isMusicJob(img) ? `latents · ${stageText(img)}` : 'latents';
     if (shape.kind === 'dit') return img?.activity === 'generating' && img.steps > 0 ? `latents · step ${img.step} / ${img.steps}` : 'latents';
     return llm && !faulted ? `kv cache · ${fmtPct(ctxFrac)}` : 'kv cache';
   });
@@ -100,7 +103,7 @@
         ...base,
         label: 'STANDBY',
         fig: '—',
-        unit: kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests',
+        unit: kind === 'image' ? 'steps' : kind === 'music' ? 'stages' : kind === 'llm' ? 'tok/s' : 'requests',
         dim: true,
         line: idleWhy.warn || slot?.status === 'not-set' ? (slot?.reason ?? idleWhy.text).toLowerCase() : lastText,
         lineTone: idleWhy.warn ? 'amb' : '',
@@ -128,6 +131,9 @@
       return { ...base, label: 'PREFILL', fig: String(p.tokens > 0 ? Math.floor((p.doneTokens / p.tokens) * 100) : 0), unit: '%', line: `${fmtInt(p.doneTokens)} / ${fmtInt(p.tokens)} tok` };
     }
     if (llm) return { ...base, label: 'DECODE', fig: fmtTps(tps.current), unit: 'tok/s', dim: llm.activity !== 'decode', line: `${fmtInt(llm.generatedTokens)} tok generated${llm.activity === 'idle' ? ' · idle' : ''}` };
+    // A song in flight reads like an image job (the stage is the step), not like requests.
+    if (img && kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+      return { ...base, label: `COMPOSE · ${stageWord(img).toUpperCase()}`, fig: img.steps > 0 ? String(img.step) : '–', unit: img.steps > 0 ? `/ ${img.steps}` : '', line: `elapsed ${fmtDur(img.elapsedS)}` };
     if (gen) {
       const inFlight = gen.requestsInFlight ?? 0;
       return {
@@ -140,6 +146,7 @@
       };
     }
     if (img) {
+      if (kind === 'music') return { ...base, label: 'COMPOSE', fig: '—', unit: '', dim: true, line: 'waiting for the next song' };
       if (img.activity === 'generating' && img.steps > 0)
         return { ...base, label: `DIFFUSION${img.edit ? ' · EDIT' : ''}`, fig: String(img.step), unit: `/ ${img.steps}`, line: `${img.sPerIt.toFixed(2)} s/it · ${img.width}x${img.height}` };
       return { ...base, label: 'DIFFUSION', fig: '—', unit: '', dim: true, line: 'waiting for the next job' };
@@ -150,6 +157,13 @@
   // ---- rows: two fixed facts per kind ------------------------------------------------------------------------
   type Row = { k: string; v: string; sub: string; red?: boolean };
   const rows = $derived.by<Row[]>(() => {
+    if (kind === 'music') {
+      const j = img && img.recent.length ? img.recent[img.recent.length - 1] : null;
+      return [
+        { k: 'LAST SONG', v: j ? `${j.seconds.toFixed(1)} s` : '—', sub: '' },
+        { k: 'SONGS', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
     if (kind === 'image') {
       const j = img && img.recent.length ? img.recent[img.recent.length - 1] : null;
       return [

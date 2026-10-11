@@ -19,6 +19,8 @@
     cacheFrac: number | null;
     /** Progress 0..1 of a non-token job (image sampling) that fills the tiles, or null. */
     jobFill?: number | null;
+    /** A job runs without a fraction to show: the tiles light in order at a slow steady rate. */
+    sweep?: boolean;
     /** Full only: what one tile means right now, one string per callout line. */
     caption?: string[];
     /** GPU dormant (vram.dormant): GiB of the session's allocations paged out to system RAM, else null. */
@@ -27,7 +29,7 @@
     pxScale?: number;
     label?: string;
   }
-  let { variant, llm, live, usedGiB, totalGiB, cacheFrac, jobFill = null, caption = [], pagedOutGiB = null, pxScale = 1, label = '' }: Props = $props();
+  let { variant, llm, live, usedGiB, totalGiB, cacheFrac, jobFill = null, sweep = false, caption = [], pagedOutGiB = null, pxScale = 1, label = '' }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let cssW = $state(0);
@@ -139,7 +141,7 @@
   // Telemetry snapshot -> token stream.
   $effect(() => {
     const now = performance.now();
-    stream.update(llm, now, live, jobFill);
+    stream.update(llm, now, live, jobFill, sweep);
     if (!mounted) return;
     untrack(() => {
       if (unsub && framesFlowing()) return; // the frame loop picks the new snapshot up next frame

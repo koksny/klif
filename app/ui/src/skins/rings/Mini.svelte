@@ -58,6 +58,13 @@
       ['since', fmtAgo(fault.sinceS)],
       ['exit', fault.exitCode === undefined ? 'not reported' : `${fault.exitCodeHex ?? fault.exitCode}`],
     ];
+    if (kind === 'music') {
+      const j = img && img.recent.length ? img.recent[img.recent.length - 1] : null;
+      return [
+        ['last song', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+        ['songs', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+      ];
+    }
     if (kind === 'image') {
       const j = img && img.recent.length ? img.recent[img.recent.length - 1] : null;
       return [

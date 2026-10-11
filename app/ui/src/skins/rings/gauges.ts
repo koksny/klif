@@ -5,6 +5,7 @@
 // This module only turns a snapshot into targets and words; Specimen eases them on the frame clock.
 import type { System, SystemKind, ViewModel } from '../../lib/model/types';
 import { fmtTps } from '../../lib/model/format';
+import { stageWord } from '../../lib/model/music';
 import type { Sleep } from './sleep.svelte';
 import { fitOf } from './text';
 
@@ -89,7 +90,11 @@ export function targetsOf(vm: ViewModel, o: { kind: SystemKind; sel: System | un
   // middle: context (LLM) / step (CGI)
   let mid = 0;
   let midL: Legend;
-  if (o.kind === 'image') {
+  if (o.kind === 'music') {
+    const on = !!img && img.activity === 'generating';
+    mid = on && img!.steps > 0 ? img!.step / img!.steps : 0;
+    midL = on ? { pre: stageWord(img!).toUpperCase(), val: img!.steps > 0 ? `${img!.step} / ${img!.steps}` : '', post: '' } : { pre: 'STAGE', val: '—', post: '' };
+  } else if (o.kind === 'image') {
     const on = !!img && img.activity === 'generating' && img.steps > 0;
     mid = on ? img!.step / img!.steps : 0;
     midL = { pre: 'STEP', val: on ? `${img!.step} / ${img!.steps}` : '—', post: '' };

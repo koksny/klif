@@ -74,7 +74,8 @@
     gv = approach(gv, t.vram, 3, dt);
     gA = approach(gA, t.ghostA, 3, dt);
     gB = approach(gB, t.ghostB, 3, dt);
-    gm = approach(gm, t.mid, 3, dt);
+    // A song without a stage count (the model loading) sweeps the middle ring instead of leaving it at 0.
+    gm = approach(gm, drive.indeterminate > 0.5 ? drive.stepFrac : t.mid, 3, dt);
     gi = approach(gi, t.inner, 4, dt);
     warnK = approach(warnK, t.tone === 'warn' ? 1 : 0, 3, dt);
     dangerK = approach(dangerK, t.tone === 'danger' ? 1 : 0, 3, dt);

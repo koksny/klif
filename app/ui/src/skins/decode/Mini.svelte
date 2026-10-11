@@ -15,6 +15,7 @@
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
+  import { isMusicJob, stageWord } from '../../lib/model/music';
   import Field from './Field.svelte';
   import Lock from './Lock.svelte';
   import { useSleep } from './sleep.svelte';
@@ -71,7 +72,7 @@
         : ls
           ? `last ${tierWord(systemLabel(vm, ls.system) || ls.model.name)}${ls.ended === 'fault' ? ' · fault' : ''} · ${fmtAgo(ls.endedAgoS)}`
           : 'nothing running';
-      return { ...base, label: 'STANDBY', fig: '—', unit: kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests', dim: true, line, lineTone: idleWhy.warn ? 'amber' : '' };
+      return { ...base, label: 'STANDBY', fig: '—', unit: kind === 'image' ? 'steps' : kind === 'music' ? 'stages' : kind === 'llm' ? 'tok/s' : 'requests', dim: true, line, lineTone: idleWhy.warn ? 'amber' : '' };
     }
     if (dz) {
       if (waking) return { ...base, label: 'GPU WAKING', tone: 'amber', fig: String(Math.round(dz.restoredFrac * 100)), unit: '%', line: `${fmtGiB(dz.pagedOutGiB)} GiB still in system ram` };
@@ -97,6 +98,9 @@
       }
       return { ...base, label: 'DECODE', fig: fmtTps(llm.decodeTps), unit: 'tok/s', dim: llm.activity !== 'decode', line: `${fmtInt(llm.generatedTokens)} tok generated${llm.activity === 'idle' ? ' · idle' : ''}` };
     }
+    // A song in flight reads like an image job (the stage is the step), not like requests.
+    if (img && kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+      return { ...base, label: `COMPOSE · ${stageWord(img).toUpperCase()}`, fig: img.steps > 0 ? String(img.step) : '–', unit: img.steps > 0 ? `/ ${img.steps}` : '', line: `elapsed ${fmtDur(img.elapsedS)}` };
     if (gen) {
       const inFlight = gen.requestsInFlight ?? 0;
       return {
@@ -109,6 +113,7 @@
       };
     }
     if (img) {
+      if (kind === 'music') return { ...base, label: 'COMPOSE', fig: '—', unit: '', dim: true, line: 'waiting for the next song' };
       if (img.activity === 'generating' && img.steps > 0) return { ...base, label: `DENOISE${img.edit ? ' · EDIT' : ''}`, fig: String(img.step), unit: `/ ${img.steps}`, line: `${img.sPerIt.toFixed(2)} s/it · ${img.width}x${img.height}` };
       return { ...base, label: 'DENOISE', fig: '—', unit: `/ ${img.steps}`, dim: true, line: 'waiting for the next job' };
     }
@@ -118,6 +123,12 @@
   // ---- rows: two fixed facts per kind ---------------------------------------------------------------------------
   type Row = { k: string; v: string; sub: string; red?: boolean };
   const rows = $derived.by<Row[]>(() => {
+    if (kind === 'music') {
+      return [
+        { k: 'LAST SONG', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: '' },
+        { k: 'SONGS', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
     if (kind === 'image') {
       return [
         { k: 'LAST IMAGE', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: lastJob ? `${lastJob.width}x${lastJob.height}${lastJob.edit ? ' · edit' : ''}` : '' },

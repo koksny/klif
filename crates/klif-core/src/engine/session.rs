@@ -806,7 +806,8 @@ impl Inner {
 
 /// Exactly one live part by kind while live: llm for kind llm, image for kind image, generic otherwise (and for
 /// a kind whose server gives no dedicated signals). A video System whose server reports jobs (sd.cpp) also keeps
-/// `image` (steps, the job in flight, recent jobs with their frames) next to `generic`.
+/// `image` (steps, the job in flight, recent jobs with their frames) next to `generic`, and so does a music System
+/// (audio.cpp: the song in flight, its stage as `phase`, recent songs).
 pub(crate) fn live_parts(
     kind: SystemKind,
     live: bool,
@@ -821,6 +822,8 @@ pub(crate) fn live_parts(
         SystemKind::Llm if llm.is_some() => (llm, None, None),
         SystemKind::Image if image.is_some() => (None, image, None),
         SystemKind::Video if image.is_some() => (None, image, Some(generic.unwrap_or_default())),
+        // A music server that follows its jobs (audio.cpp): the song in flight as an image job, plus the requests.
+        SystemKind::Music if image.is_some() => (None, image, Some(generic.unwrap_or_default())),
         _ => (None, None, Some(generic.unwrap_or_default())),
     }
 }

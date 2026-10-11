@@ -1458,6 +1458,11 @@ pub struct ImageLive {
     /// Frames of the video job in flight (or the last one), for sd.cpp video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames: Option<u32>,
+    /// A music job (audio.cpp): the stage in flight, `load` | `score` | `codes` | `render` | `decode` (YuE2), or
+    /// `work` for a family whose log names no stages. `step` / `steps` then count stages (`step` = the stage in flight,
+    /// 1-based), not sampling steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

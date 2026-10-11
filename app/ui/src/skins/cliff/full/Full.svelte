@@ -15,6 +15,7 @@
   import type { SceneMode } from '../paint';
   import type { GpuView } from '../power';
   import { idleState } from '../../../lib/model/systems';
+  import { usesImageLayout } from '../../../lib/model/music';
   import { blockView, lastSessionLine, releasedGiB, selectedSystem, sessionKind } from '../util';
   import Bottom from './Bottom.svelte';
   import FaultPanel from './FaultPanel.svelte';
@@ -41,6 +42,8 @@
   const gen = $derived(s?.generic ?? null);
   /** The status block follows the session, or (idle) the selected System with its configured values. */
   const model = $derived(s?.model ?? sel?.model ?? null);
+  /** Image and music Systems share the image panel and the recent jobs. */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
   const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
 
   const mode = $derived<SceneMode>(view === 'idle' ? 'fit' : view === 'fault' ? 'fault' : view === 'loading' ? 'building' : 'live');
@@ -98,8 +101,8 @@
       <FaultPanel session={s} label={sel?.label ?? s.model.name} history={vm.vram.history} totalGiB={vm.vram.totalGiB} />
     {:else if view === 'loading' && s}
       <LoadingPanel session={s} usedGiB={vm.vram.usedGiB} totalGiB={vm.vram.totalGiB} />
-    {:else if kind === 'image'}
-      <ImagePanel image={img} {model} {word} {wordAmber} stale={imgStale} />
+    {:else if imagey}
+      <ImagePanel image={img} {model} {kind} {word} {wordAmber} stale={imgStale} />
     {:else if kind === 'llm'}
       <LlmPanel {llm} {model} {ctxTotal} {word} {wordAmber} {gpu} />
     {:else}
@@ -140,8 +143,8 @@
   </div>
 
   <div class="pad">
-    {#if kind === 'image'}
-      <RecentJobs recent={img?.recent ?? []} total={img?.imagesThisSession ?? 0} {view} {hadWork} {lastText} {lastFault} />
+    {#if imagey}
+      <RecentJobs recent={img?.recent ?? []} total={img?.imagesThisSession ?? 0} {kind} {view} {hadWork} {lastText} {lastFault} />
     {:else if kind === 'llm'}
       <Timeline requests={llm?.requests ?? []} {view} {hadWork} {died} {lastText} {lastFault} />
     {:else}

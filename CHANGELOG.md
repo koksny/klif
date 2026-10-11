@@ -3,6 +3,26 @@
 0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
 were built from source; their notes follow, newest first.
 
+## 0.3.4 (2026-10-11)
+
+Music: YuE2 in the pool, and music Systems that animate while a song is made.
+
+- **YuE2 in the pool.** Two music models on audio.cpp: **YuE2 3B** (songs with vocals; main q8_0, VAE f16) and
+  **YuE2 3B Instrumental** (Mothersuperior's instrumental AR LoRA plus the realaudio NAR adapter, for soundtracks and
+  game music; Q4_0, Q8_0 or BF16). Every rung uses the F16 VAE: the F32 VAE's decode tile does not fit Vulkan's
+  buffer limit. Both CC BY-NC 4.0.
+- **audio.cpp options may name a file, and a rung may have its own.** A pool entry's `audiocpp` option can be
+  `{file:<key>}`; the server JSON that `models adopt` writes gets that file's install path (a LoRA from another repo).
+  A rung's `audiocpp` applies over the model's, so rungs can load different component files.
+- **Fix: `klif-cli models download` no longer hangs** after the last file of a model whose first file finished more
+  than 30 s earlier (the engine forgets a finished file after 30 s; the command now keeps each file's last state).
+- **Music Systems animate while a song is made.** With `--log`, KLIF follows an audio.cpp job from its POST to
+  `session.wall_ms` (or `http.error`): the System is busy for the whole song instead of a 2 s pulse, and a music System
+  carries the song as an image job (`image.phase`: YuE2's stages score, codes, render, decode; finished songs as recent
+  jobs), so every skin shows it with the image animations and music wording.
+- **Music bench for YuE2.** It has no duration, so the bench sends the tags as `style`, lyrics `[instrumental]`, no
+  score planning, and caps the semantic codes at the 30 s.
+
 ## 0.3.3 (2026-10-06)
 
 KLIF on Linux.

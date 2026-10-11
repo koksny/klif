@@ -3,6 +3,7 @@
 // decode = tok/s; CGI = step / steps + s/it + size; GPU asleep = dimmed + paged-out GiB; fault = ERR + its title.
 import type { System, SystemKind, ViewModel } from '../../lib/model/types';
 import { fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+import { isMusicJob, stageWord } from '../../lib/model/music';
 import { idleState, KIND_LABEL, shortLabel as tierShort } from '../../lib/model/systems';
 import type { Sleep } from './sleep.svelte';
 import { fmtAgo, fmtDur, fmtEta, lastSessionShort, lastSessionText } from './text';
@@ -28,7 +29,7 @@ export function heroOf(vm: ViewModel, o: { kind: SystemKind; sel: System | undef
   const img = s?.image ?? null;
   const gen = s?.generic ?? null;
   if (!s) {
-    const unit = o.kind === 'image' ? 'steps' : o.kind === 'llm' ? 'tok/s' : 'requests';
+    const unit = o.kind === 'image' ? 'steps' : o.kind === 'music' ? 'stages' : o.kind === 'llm' ? 'tok/s' : 'requests';
     const why = idleState(o.sel);
     if (o.sel && (why.warn || o.sel.status === 'not-set'))
       return { ...base, label: 'Standby', value: '—', unit, sub: `${tierShort(o.sel.label)} · ${(o.sel.reason ?? why.text).toLowerCase()}`, tone: 'dim', subTone: why.warn ? 'warn' : '' };
@@ -98,6 +99,15 @@ export function heroOf(vm: ViewModel, o: { kind: SystemKind; sel: System | undef
     const on = llm.activity === 'decode';
     return { ...base, label: on ? 'Decode' : 'Decode · idle', value: fmtTps(llm.decodeTps), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated${on ? '' : ' · waiting for a request'}`, tone: on ? '' : 'dim' };
   }
+  // A song in flight reads like an image job (the stage is the step), not like requests.
+  if (img && o.kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+    return {
+      ...base,
+      label: `Music · ${stageWord(img)}`,
+      value: img.steps > 0 ? `${img.step}/${img.steps}` : '—',
+      unit: img.steps > 0 ? 'stages' : '',
+      sub: fmtSeconds(img.elapsedS),
+    };
   if (gen) {
     const on = (gen.requestsInFlight ?? 0) > 0;
     const name = KIND_LABEL[o.kind];

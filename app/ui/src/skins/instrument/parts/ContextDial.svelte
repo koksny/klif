@@ -14,6 +14,7 @@
     majors = 4,
     minorPer = 10,
     dim = false,
+    wander = false,
     label = 'Context',
   }: {
     used: number;
@@ -24,12 +25,14 @@
     minorPer?: number;
     /** No live reading (a preset or a stopped session): the needle is drawn unlit. */
     dim?: boolean;
+    /** No reading to show (a song whose model loads): the needle sways about the middle by itself. */
+    wander?: boolean;
     label?: string;
   } = $props();
 
   const uid = $props.id();
   const C = 200;
-  const f = $derived(frac(used, total));
+  const f = $derived(wander ? 0.5 : frac(used, total));
   const sweep = $derived(variant === 'mini' ? { a0: 180, span: 180 } : { a0: 225, span: 270 });
   // The needle is drawn pointing up (12 o'clock = 90 deg); rotate it clockwise to the value.
   const clockDeg = $derived(90 - sweep.a0 + sweep.span * f);
@@ -81,10 +84,10 @@
     <text x={lo[0] + 6} y={lo[1] + 4} class="end">0</text>
     <text x={hi[0] - 6} y={hi[1] + 4} class="end">{hiLabel ?? fmtCtx(total)}</text>
   {:else}
-    <text x={C} y="318" class="pct">{Math.round(f * 100)}%</text>
+    <text x={C} y="318" class="pct">{wander ? "" : `${Math.round(f * 100)}%`}</text>
   {/if}
 </svg>
-<div class="nlayer" style="transform: rotate({clockDeg}deg)" aria-hidden="true">
+<div class="nlayer" class:wander style={wander ? `--base:${clockDeg}deg` : `transform: rotate(${clockDeg}deg)`} aria-hidden="true">
   <svg class="ctx" viewBox="0 0 400 400">
     {#if variant === 'full'}
       <path d="M200,222 L191,208 L196,58 L200,48 L204,58 L209,208 Z" fill="#0b0c0d" stroke="#0b0c0d" stroke-width="5" stroke-linejoin="round" />
@@ -149,5 +152,23 @@
     transition: transform 400ms cubic-bezier(0.3, 0.8, 0.3, 1);
     will-change: transform;
     pointer-events: none;
+  }
+  .nlayer.wander {
+    transition: none;
+    animation: sway 2.8s ease-in-out infinite alternate;
+  }
+  @keyframes sway {
+    from {
+      transform: rotate(calc(var(--base) - 28deg));
+    }
+    to {
+      transform: rotate(calc(var(--base) + 28deg));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nlayer.wander {
+      animation: none;
+      transform: rotate(var(--base));
+    }
   }
 </style>

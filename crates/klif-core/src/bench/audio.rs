@@ -272,6 +272,12 @@ fn music_body(model: &str, family: Option<&str>) -> Value {
     match family {
         Some("ace_step") => request["task_route"] = json!("text2music"),
         Some("heartmula") => request["options"] = json!({ "tags": MUSIC_TAGS, "duration_sec": MUSIC_SECONDS }),
+        // YuE2 has no duration: it ends a song itself, so the semantic codes (25 a second) are capped at the 30 s.
+        // No score planning (cot off): the run times the rendering, the same work for the plain and the LoRA model.
+        Some("yue2") => {
+            request["lyrics"] = json!("[instrumental]");
+            request["options"] = json!({ "style": MUSIC_TAGS, "cot": "off", "semantic_max_tokens": MUSIC_SECONDS * 25 });
+        }
         _ => {}
     }
     json!({ "model": model, "request": request })

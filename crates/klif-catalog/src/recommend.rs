@@ -13,7 +13,7 @@
 //! there (`{model}` / `{mmproj}` come from the files with role model / mmproj). `save_as` installs a file under another
 //! path below its repo's folder (a replacement first shard that must sit where the original would). A model of the
 //! `audiocpp` adapter may carry `audiocpp = { load_options, session_options }`: the family options its server JSON
-//! names (keys `<family>.<option>`, plain-word values; see [`AudioCppOptions`]).
+//! names (keys `<family>.<option>`, plain-word values or one listed file as `{file:<key>}`; see [`AudioCppOptions`]).
 
 use klif_common::config::Config;
 use klif_common::secret::{is_secret_env, is_secret_flag};
@@ -198,8 +198,10 @@ pub(crate) fn expand_file_refs(arg: &str, path: impl Fn(&str) -> String) -> Stri
 /// `audiocpp = { load_options = { ... }, session_options = { ... } }` on a pool model of the `audiocpp` adapter: what
 /// the server JSON KLIF writes on adopt says about the model besides its id, family, path and task (the task follows
 /// the kind: tts -> "tts", music -> "gen"). Keys are `<family>.<option>` (the spelling of audio.cpp's
-/// `--load-option` / `--session-option`, e.g. `ace_step.mem_saver`); values are plain words. Both go verbatim into
-/// the model's `load_options` / `session_options`. No paths (KLIF writes the model path itself), no secrets.
+/// `--load-option` / `--session-option`, e.g. `ace_step.mem_saver`); values are plain words, or a whole
+/// `{file:<key>}` naming one of the rung's files (a LoRA from another repo), which the server JSON gets as that file's
+/// install path. Both go into the model's `load_options` / `session_options`. No other paths (KLIF writes the model
+/// path itself), no secrets.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudioCppOptions {
@@ -296,6 +298,9 @@ pub struct PoolQuant {
     pub offload_vram_gib: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offload_ram_gib: Option<f64>,
+    /// audio.cpp rungs: options of this rung (which component file it loads); they override the model's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audiocpp: Option<AudioCppOptions>,
 }
 
 impl PoolQuant {
@@ -774,8 +779,37 @@ fn check_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The file an audio.cpp option value names: `Some(key or name)` when the whole value is `{file:<it>}`.
+pub fn option_file_ref(v: &str) -> Option<&str> {
+    v.strip_prefix("{file:").and_then(|r| r.strip_suffix('}')).filter(|r| !r.contains(['{', '}']))
+}
+
+impl AudioCppOptions {
+    /// Every option value through `f` (the `{file:..}` resolution of the pool and the server JSON).
+    pub fn map_values(&self, f: impl Fn(&str) -> String) -> AudioCppOptions {
+        let map = |m: &BTreeMap<String, String>| m.iter().map(|(k, v)| (k.clone(), f(v))).collect();
+        AudioCppOptions { load_options: map(&self.load_options), session_options: map(&self.session_options) }
+    }
+
+    /// A model's options with a rung's on top (the rung wins per key); None when neither has any.
+    fn merged(model: Option<&AudioCppOptions>, rung: Option<&AudioCppOptions>) -> Option<AudioCppOptions> {
+        let mut out = model.cloned();
+        if let Some(r) = rung {
+            let o = out.get_or_insert_with(AudioCppOptions::default);
+            o.load_options.extend(r.load_options.clone());
+            o.session_options.extend(r.session_options.clone());
+        }
+        out
+    }
+
+    fn values(&self) -> impl Iterator<Item = &String> {
+        self.load_options.values().chain(self.session_options.values())
+    }
+}
+
 /// The load rules for audio.cpp server options: `<family>.<option>` keys, plain-word values (no path separators,
-/// drive letters or `..`: the model path is KLIF's to write), nothing that names or looks like a secret.
+/// drive letters or `..`: the model path is KLIF's to write) or one listed file as `{file:<key>}`, nothing that
+/// names or looks like a secret.
 fn check_audiocpp(family: &str, o: &AudioCppOptions) -> Result<(), String> {
     if family.is_empty() {
         return Err("`audiocpp` options need the model's `family` (their keys start with it).".into());
@@ -789,6 +823,8 @@ fn check_audiocpp(family: &str, o: &AudioCppOptions) -> Result<(), String> {
             if is_secret_env(k) {
                 return Err(format!("audiocpp {section} key \"{k}\" names a secret."));
             }
+            // `{file:<key>}`: the key or name must itself be a plain value (the rung check makes sure it is listed).
+            let v = option_file_ref(v).unwrap_or(v);
             let plain = !v.is_empty()
                 && v.len() <= 64
                 && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'+' | b'-'))
@@ -842,6 +878,12 @@ fn check_quant(m: &PoolModel, q: &PoolQuant) -> Result<(), String> {
     }
     if !q.quality.is_finite() || q.quality <= 0.0 {
         return Err("quality must be a number above 0.".into());
+    }
+    if let Some(o) = &q.audiocpp {
+        if m.adapter != AdapterId::AudioCpp {
+            return Err("`audiocpp` options belong to models of the audiocpp adapter.".into());
+        }
+        check_audiocpp(&m.family, o)?;
     }
     match (&q.hf_repo, &q.revision) {
         (None, None) => {}
@@ -925,7 +967,17 @@ fn expand(m: &PoolModel, q: &PoolQuant, class: Option<LlmClass>, floors: &Floors
         health: m.health.clone(),
         model_id: m.id.clone(),
         family: m.family.clone(),
-        audiocpp: m.audiocpp.clone(),
+        // The model's options with the rung's on top; `{file:<key>}` becomes `{file:<that file's name>}` for this
+        // rung, as in the args.
+        audiocpp: AudioCppOptions::merged(m.audiocpp.as_ref(), q.audiocpp.as_ref()).map(|o| {
+            o.map_values(|v| match option_file_ref(v) {
+                Some(r) => {
+                    let name = q.files.iter().find(|f| f.key.as_deref() == Some(r)).map(|f| f.name.as_str()).unwrap_or(r);
+                    format!("{{file:{name}}}")
+                }
+                None => v.to_string(),
+            })
+        }),
         measured: q.measured.clone(),
         notes,
     }
@@ -984,6 +1036,9 @@ pub fn check(rec: &Recommendation) -> Result<(), String> {
     }
     if let Some(o) = &rec.audiocpp {
         check_audiocpp(&rec.family, o)?;
+        if let Some(name) = o.values().filter_map(|v| option_file_ref(v)).find(|n| rec.file(n).is_none()) {
+            return Err(format!("audiocpp options refer to {{file:{name}}}, which is not one of its files."));
+        }
     }
     check_args(&rec.args)?;
     for a in &rec.args {

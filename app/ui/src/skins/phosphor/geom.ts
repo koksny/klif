@@ -1,6 +1,7 @@
 // Small geometry and text helpers shared by the Phosphor widgets.
 import type { Availability, GpuMemory, LastSession, ModelRef, System } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { jobNoun } from '../../lib/model/music';
 
 export type Pt = [number, number];
 
@@ -120,8 +121,9 @@ export function lastSessionLine(ls: LastSession, systems: System[]): string {
   if (ls.requests !== undefined) p.push(`${fmtInt(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) p.push(`${fmtInt(ls.generatedTokens)} tok`);
   if (ls.decodeTps !== undefined) p.push(`${fmtTps(ls.decodeTps)} tok/s`);
-  if (ls.images !== undefined) p.push(`${fmtInt(ls.images)} images`);
-  if (ls.secondsPerImage !== undefined) p.push(`${ls.secondsPerImage.toFixed(1)} s/image`);
+  const noun = jobNoun(systems.find((x) => x.id === ls.system)?.kind);
+  if (ls.images !== undefined) p.push(`${fmtInt(ls.images)} ${noun}s`);
+  if (ls.secondsPerImage !== undefined) p.push(`${ls.secondsPerImage.toFixed(1)} s/${noun}`);
   return p.join(' · ');
 }
 

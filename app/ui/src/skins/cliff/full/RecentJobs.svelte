@@ -2,13 +2,15 @@
   // Recent jobs: finished image jobs as bars on one shared time scale (bar width = job seconds, stated
   // inside the bar when it fits). New images and edits differ in tone; the span is in the caption. The
   // frame is there in every phase, the same height as the request timeline.
-  import type { ImageJob } from '../../../lib/model/types';
+  import type { ImageJob, SystemKind } from '../../../lib/model/types';
+  import { hasPixels } from '../../../lib/model/music';
   import { fmtInt } from '../../../lib/model/format';
   import type { BlockView } from '../util';
 
   let {
     recent,
     total = 0,
+    kind = 'image',
     view,
     hadWork = false,
     lastText = '',
@@ -17,6 +19,7 @@
     recent: ImageJob[];
     /** Images this session. */
     total?: number;
+    kind?: SystemKind;
     view: BlockView;
     /** Fault: the server was serving when it died. */
     hadWork?: boolean;
@@ -49,7 +52,7 @@
 <section class="c-track c-panel">
   <div class="c-tmain">
     <div class="c-tcap">
-      <span class="c-lbl">Recent jobs</span><span class="note">{caption}</span>
+      <span class="c-lbl">{kind === 'music' ? 'Recent songs' : 'Recent jobs'}</span><span class="note">{caption}</span>
       {#if view === 'idle' && lastText}<span class="last" class:bad={lastFault}>last session: {lastText}</span>{/if}
     </div>
     <div class="c-tbars" bind:clientWidth={w}>
@@ -59,7 +62,7 @@
           class="job"
           class:edit={j.edit}
           style:flex-basis="calc((100% - var(--tgap) * {last.length - 1 + (marked ? 1 : 0)} - {marked ? 'max(18px, calc(var(--u) * 24))' : '0px'}) * {j.seconds / span})"
-          title="{j.width}×{j.height} · {j.seconds.toFixed(1)} s{j.edit ? ' · edit' : ''}"
+          title="{hasPixels(kind) ? `${j.width}×${j.height} · ` : ''}{j.seconds.toFixed(1)} s{j.edit ? ' · edit' : ''}"
         >
           {#if j.seconds * pps >= txt.length * 7 + 10}<span>{txt}</span>{/if}
         </div>
@@ -69,10 +72,12 @@
       {#if marked}<div class="c-tfail" title="The server died"></div>{/if}
     </div>
   </div>
-  <div class="c-legend">
-    <span class="c-lbl"><i class="nw"></i>New</span>
-    <span class="c-lbl"><i class="ed"></i>Edit</span>
-  </div>
+  {#if hasPixels(kind)}
+    <div class="c-legend">
+      <span class="c-lbl"><i class="nw"></i>New</span>
+      <span class="c-lbl"><i class="ed"></i>Edit</span>
+    </div>
+  {/if}
 </section>
 
 <style>

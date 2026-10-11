@@ -17,6 +17,7 @@
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtInt, fmtSeconds } from '../../lib/model/format';
+  import { hasPixels } from '../../lib/model/music';
   import Battery from './Battery.svelte';
   import Ic from './Ic.svelte';
   import Meter from './Meter.svelte';
@@ -55,6 +56,16 @@
     const llm = o.llm;
     const img = o.img;
     const model = o.model;
+    if (kind === 'music') {
+      const gen = o.gen;
+      const j = img?.recent[img.recent.length - 1];
+      return [
+        ['LAST SONG', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+        ['SONGS', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+        ['MODEL', model?.name ?? '—'],
+        ['REPORTS', gen?.modelId ?? '—'],
+      ];
+    }
     if (kind === 'image') {
       const j = img?.recent[img.recent.length - 1];
       return [
@@ -87,6 +98,8 @@
   const reqN = $derived(faulted && o.llm ? 7 : 8);
   const requests = $derived(o.llm ? o.llm.requests.slice(-reqN) : []);
   const reqSlots = $derived(Array.from({ length: reqN }, (_, i) => requests[i - (reqN - requests.length)] ?? null));
+  /** Image and music Systems list finished jobs; the rest list requests. */
+  const listsJobs = $derived(kind === 'image' || kind === 'music');
   const jobN = $derived(faulted && o.img ? 11 : 12);
   const jobs = $derived(o.img ? o.img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
@@ -94,16 +107,16 @@
   const diedInWork = $derived(faulted && ((!!o.llm && o.llm.activity !== 'idle') || (!!o.img && o.img.activity === 'generating') || (o.gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return ' · NOT RUNNING';
-    if (o.loading) return kind === 'image' ? ' · NO JOBS YET' : ' · NO REQUESTS YET';
-    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · FAILED' : ' · NO PER-REQUEST LOG FOR THIS KIND';
-    const n = kind === 'image' ? jobs.length : requests.length;
-    const what = kind === 'image' ? 'JOBS' : 'REQUESTS';
+    if (o.loading) return listsJobs ? ' · NO JOBS YET' : ' · NO REQUESTS YET';
+    if (kind !== 'llm' && !listsJobs) return faulted ? ' · FAILED' : ' · NO PER-REQUEST LOG FOR THIS KIND';
+    const n = listsJobs ? jobs.length : requests.length;
+    const what = listsJobs ? 'JOBS' : 'REQUESTS';
     if (faulted) {
       if (!o.llm && !o.img) return ` · NO ${what}: FAILED DURING STARTUP`;
-      return ` · ${n ? `LAST ${n}` : `NO FINISHED ${what}`}, THEN ${diedInWork ? `THE ${kind === 'image' ? 'JOB' : 'REQUEST'} THAT DIED` : 'THE FAULT'}`;
+      return ` · ${n ? `LAST ${n}` : `NO FINISHED ${what}`}, THEN ${diedInWork ? `THE ${listsJobs ? 'JOB' : 'REQUEST'} THAT DIED` : 'THE FAULT'}`;
     }
     if (n === 0) return ` · NO FINISHED ${what} YET`;
-    return kind === 'image' ? ` · BAR HEIGHT = TIME · LAST ${n} OF ${fmtInt(o.img?.imagesThisSession ?? n)}` : ` · LAST ${n} · PREFILL CYAN · DECODE INK`;
+    return listsJobs ? ` · BAR HEIGHT = TIME · LAST ${n} OF ${fmtInt(o.img?.imagesThisSession ?? n)}` : ` · LAST ${n} · PREFILL CYAN · DECODE INK`;
   });
   const reqTitle = (r: RequestRecord) =>
     `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
@@ -204,13 +217,13 @@
   </section>
 
   <section class="tline">
-    <div class="cap">{kind === 'image' ? 'RECENT JOBS' : 'REQUESTS'}<span class="dim">{tlCaption}</span></div>
-    {#if kind === 'image'}
+    <div class="cap">{kind === 'music' ? 'RECENT SONGS' : kind === 'image' ? 'RECENT JOBS' : 'REQUESTS'}<span class="dim">{tlCaption}</span></div>
+    {#if listsJobs}
       <div class="jobs">
         {#each jobSlots as j, i (i)}
           <span class="place">
             {#if j}
-              <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)} · {j.width}×{j.height}{j.edit ? ' · edit' : ''}"></span>
+              <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)}{hasPixels(kind) ? ` · ${j.width}×${j.height}` : ''}{j.edit ? ' · edit' : ''}"></span>
               <em>{j.seconds.toFixed(0)}S</em>
             {:else}<span class="job empty"></span><em></em>{/if}
           </span>

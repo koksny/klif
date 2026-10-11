@@ -27,6 +27,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { getTier, onFrame } from '../../lib/render/scheduler';
 import type { ViewModel } from '../../lib/model/types';
+import { isMusicJob } from '../../lib/model/music';
 import { shapeKey, type Shape } from './shape';
 import { fitOf } from './text';
 
@@ -401,6 +402,9 @@ export class LoomScene {
   private spawnAcc = 0;
   private curtainAcc = 0;
   private stepSeen = -1;
+  /** A song with no stage count yet: time since the last synthetic pass, and how many there were. */
+  private synthT = 0;
+  private synthStep = 0;
   private reqSeen = -1;
   private visible = 0;
   private glow = 1;
@@ -475,6 +479,7 @@ export class LoomScene {
       this.reqSeen = last.id;
     }
     const img = vm.session?.image;
+    if (!(img && img.activity === 'generating' && isMusicJob(img) && img.steps <= 0)) this.synthT = 0;
     if (img && img.activity === 'generating') {
       if (img.step !== this.stepSeen) {
         this.stepSeen = img.step;
@@ -835,6 +840,15 @@ export class LoomScene {
     this.phosphor.decay = snap ? 0 : Math.exp(-dt / (this.mode === 'prefill' ? 0.2 : 0.32));
     (this.crt.uniforms.time as { value: number }).value = this.t;
 
+    // A song with no stage count yet (the model loading): a pass about once a second keeps the tower working.
+    const song = s?.image;
+    if (!snap && song && song.activity === 'generating' && isMusicJob(song) && song.steps <= 0) {
+      this.synthT += dt;
+      if (this.synthT >= 1.1) {
+        this.synthT = 0;
+        this.pulses.push({ y: -H / 2 - 0.6, x: 0, z: 0, speed: H / 1.4, ghost: false, accept: true, lastLayer: -1, bright: 1, step: ++this.synthStep });
+      }
+    }
     if (!snap) this.spawn(dt, vm);
     else if (this.mode === 'decode' && this.shape.kind !== 'dit' && !this.fanTop.length) {
       // a still decode frame shows one distribution with its sample
@@ -1265,7 +1279,7 @@ export class LoomScene {
     this.patchGroup.position.set(0, this.lay.patch.y, 0).addScaledVector(right, this.lay.patch.right);
     this.patchGroup.quaternion.copy(this.camera.quaternion);
     const img = vm.session?.image;
-    const sampling = img?.activity === 'generating' && img.steps > 0;
+    const sampling = img?.activity === 'generating' && (img.steps > 0 || isMusicJob(img));
     if (!sampling) {
       // between jobs: one dim noise field, no progress
       if (this.patchStep !== -1) {

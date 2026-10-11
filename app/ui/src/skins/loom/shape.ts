@@ -2,6 +2,7 @@
 // fallback drawing when it has not been reported yet. Labels say which one is on screen.
 import type { ModelArch, ViewModel } from '../../lib/model/types';
 import { fmtInt } from '../../lib/model/format';
+import { usesImageLayout } from '../../lib/model/music';
 
 export type ShapeKind = 'moe' | 'dense' | 'dit';
 
@@ -17,6 +18,8 @@ export interface Shape {
   /** False while the layer count is a stand-in drawing, not a reported figure. */
   known: boolean;
   arch: ModelArch | null;
+  /** A music model drawn with the image tower: its labels do not call it a DiT. */
+  audio?: boolean;
 }
 
 /** An LLM never launched yet: a generic dense stack until llama-server prints its shape. */
@@ -31,6 +34,8 @@ export function shapeOf(vm: ViewModel): Shape {
   const arch = s?.model.arch ?? slot?.model.arch ?? null;
   const layers = arch && arch.layers >= 2 ? Math.min(256, Math.round(arch.layers)) : 0;
   if (kind === 'image') return { kind: 'dit', layers: layers || DIT_LAYERS, experts: 0, active: 0, shared: 0, known: layers > 0, arch };
+  // A song's stages are drawn like an image's steps: the tower with the plane of patches beside it.
+  if (usesImageLayout(kind, !!s, s?.image)) return { kind: 'dit', layers: layers || DIT_LAYERS, experts: 0, active: 0, shared: 0, known: layers > 0, arch, audio: true };
   if (!layers || !arch) return { kind: 'dense', layers: GENERIC_LAYERS, experts: 0, active: 0, shared: 0, known: false, arch: null };
   if (arch.experts > 0) {
     const experts = Math.min(4096, Math.round(arch.experts));
@@ -59,15 +64,17 @@ export function expertsText(s: Shape): string {
 
 /** The middle-layer label in the scene. */
 export function layerLabel(s: Shape): string {
-  if (!s.known) return s.kind === 'dit' ? 'dit blocks · count not reported' : 'shape unknown until first load';
+  if (!s.known) return s.audio ? 'layers · count not reported' : s.kind === 'dit' ? 'dit blocks · count not reported' : 'shape unknown until first load';
   const mid = `layer ${Math.floor(s.layers / 2) + 1} / ${s.layers}`;
   if (s.kind === 'moe') return `${mid} · ${expertsText(s)}`;
+  if (s.audio) return mid;
   return `${mid} · ${s.kind === 'dit' ? 'dit' : 'dense'}`;
 }
 
 /** One line for the mini caption: "48 layers · 10 + 1 of 512". */
 export function shapeLine(s: Shape): string {
-  if (!s.known) return s.kind === 'dit' ? 'dit · blocks not reported' : 'shape unknown until first load';
+  if (!s.known) return s.audio ? 'layers not reported' : s.kind === 'dit' ? 'dit · blocks not reported' : 'shape unknown until first load';
   if (s.kind === 'moe') return `${s.layers} layers · ${s.active}${s.shared ? ` + ${s.shared}` : ''} of ${fmtInt(s.experts)}`;
+  if (s.audio) return `${s.layers} layers`;
   return `${s.layers} layers · ${s.kind}`;
 }

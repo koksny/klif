@@ -17,6 +17,7 @@
   import { strip as scrollStrip } from '../../../lib/shell/SystemTabs/scroll';
   import TabLabel from '../../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../../lib/shell/SystemTabs/tabs';
+  import { stageWord, usesImageLayout } from '../../../lib/model/music';
   import {
     PHASE_LABEL,
     fmtAgo,
@@ -73,7 +74,10 @@
 
   const pf = $derived(llm?.prefill ?? null);
   const prefilling = $derived(view === 'live-llm' && !!llm && llm.activity === 'prefill' && !!pf && pf.tokens > 0);
-  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && img.steps > 0);
+  /** Image and music Systems share the step drum (a song's stage is the step). */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && (img.steps > 0 || music));
   const lastJob = $derived(img?.recent.length ? img.recent[img.recent.length - 1] : null);
   const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxFrac = $derived(llm ? frac(llm.context.usedTokens, llm.context.totalTokens) : 0);
@@ -92,15 +96,15 @@
   });
 
   // ---- hero: label, drum figure + unit, status line ---------------------------------------------------
-  type Fig = { kind: 'drum'; value: number; int: number; blank: boolean } | { kind: 'step'; step: number; steps: number; blank: boolean };
+  type Fig = { kind: 'drum'; value: number; int: number; blank: boolean } | { kind: 'step'; step: number; steps: number; blank: boolean; indet?: boolean };
   type Hero = { label: string; tone: '' | 'amber'; fig: Fig; unit: string; dim: boolean; line: string; lineTone: '' | 'amber' };
   const blankDrum: Fig = { kind: 'drum', value: 0, int: 2, blank: true };
   const pctDrum = (f: number): Fig => ({ kind: 'drum', value: f * 100, int: f >= 0.9995 ? 3 : 2, blank: false });
   const tpsDrum = (v: number): Fig => ({ kind: 'drum', value: v, int: v >= 99.95 ? 3 : 2, blank: false });
   const hero = $derived.by<Hero>(() => {
     const base = { tone: '' as const, dim: false, lineTone: '' as const };
-    const idleLabel = kind === 'image' ? 'DIFFUSION STEP' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase();
-    const idleFig: Fig = kind === 'image' ? { kind: 'step', step: 0, steps: img?.steps ?? 8, blank: true } : blankDrum;
+    const idleLabel = kind === 'image' ? 'DIFFUSION STEP' : music ? 'SONG PROGRESS' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase();
+    const idleFig: Fig = kind === 'image' ? { kind: 'step', step: 0, steps: img?.steps ?? 8, blank: true } : music && imagey ? { kind: 'step', step: 0, steps: 0, blank: true } : blankDrum;
     if (sleep) {
       if (waking) return { ...base, label: 'GPU WAKING', tone: 'amber', fig: pctDrum(sleep.restored), unit: '%', line: `${fmtGiB(sleep.pagedGiB)} GiB still in system RAM`, lineTone: 'amber' };
       return {
@@ -122,6 +126,12 @@
     if (view === 'live-llm' && llm) {
       if (prefilling && pf) return { ...base, label: 'PREFILL PROGRESS', fig: pctDrum(frac(pf.doneTokens, pf.tokens)), unit: '%', line: `${fmtInt(pf.doneTokens)} / ${fmtInt(pf.tokens)} tok` };
       return { ...base, label: 'DECODE SPEED', fig: tpsDrum(llm.decodeTps), unit: 'tok/s', line: `${fmtInt(llm.generatedTokens)} tok generated${llm.activity === 'idle' ? ' · idle' : ''}` };
+    }
+    if (view === 'live-img' && img && music) {
+      // The stage is the step; with no stage count yet (the model loading) the blank drum breathes.
+      const fig: Fig = { kind: 'step', step: img.step, steps: img.steps, blank: !generating || img.steps <= 0, indet: generating && img.steps <= 0 };
+      if (generating) return { ...base, label: `MUSIC · ${stageWord(img).toUpperCase()}`, fig, unit: '', line: `elapsed ${fmtDur(img.elapsedS)}` };
+      return { ...base, label: 'SONG PROGRESS', fig, unit: '', dim: true, line: 'waiting for the next song' };
     }
     if (view === 'live-img' && img) {
       const fig: Fig = { kind: 'step', step: img.step, steps: img.steps, blank: !generating };
@@ -155,6 +165,12 @@
   // ---- rows: two fixed facts per kind, the same labels in every phase -----------------------------------
   type Row = { k: string; v: string; sub: string; hot?: boolean };
   const rows = $derived.by<Row[]>(() => {
+    if (music && imagey) {
+      return [
+        { k: 'LAST SONG', v: lastJob ? fmtJobS(lastJob.seconds) : '—', sub: '' },
+        { k: 'SONGS', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
     if (kind === 'image') {
       return [
         { k: 'LAST IMAGE', v: lastJob ? fmtJobS(lastJob.seconds) : '—', sub: lastJob ? (lastJob.edit ? 'edit' : 'new image') : '' },
@@ -244,7 +260,7 @@
 
 {#snippet figure(f: Fig, dim: boolean)}
   {#if f.kind === 'step'}
-    <div class="sdrum" class:dim style="--cells:{2 * String(f.steps).length}"><StepDrum step={f.step} steps={f.steps} variant="mini" blank={f.blank} /></div>
+    <div class="sdrum" class:dim class:indet={f.indet} style="--cells:{2 * String(f.steps).length}"><StepDrum step={f.step} steps={f.steps} variant="mini" blank={f.blank} /></div>
   {:else}
     <div class="drum" class:dim style="--cells:{f.int + 1}"><Drum value={f.value} intDigits={f.int} variant="mini" blank={f.blank} /></div>
   {/if}
@@ -627,6 +643,23 @@
     white-space: nowrap;
   }
   .fig.dim .drum,
+  /* A song with no stage count yet: the blank drum breathes (a still one would read as idle). */
+  .sdrum.indet {
+    animation: breathe 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes breathe {
+    from {
+      opacity: 0.45;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sdrum.indet {
+      animation: none;
+    }
+  }
   .fig.dim .sdrum,
   .fig.dim .unit {
     opacity: 0.42;

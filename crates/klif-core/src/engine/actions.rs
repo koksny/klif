@@ -1013,8 +1013,8 @@ fn audiocpp_task(kind: SystemKind) -> &'static str {
 }
 
 /// audio.cpp takes its models only from the JSON file `--config` names: write that file for an adopted
-/// recommendation (one model, lazily loaded, its task from the kind, the family options the pool entry names),
-/// unless it exists already (the user's edits win).
+/// recommendation (one model, lazily loaded, its task from the kind, the family options the pool entry names, an
+/// option naming a listed file as its install path), unless it exists already (the user's edits win).
 fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, rec: &Recommendation) -> Result<()> {
     let Some(i) = spec.args.iter().position(|a| a == "--config") else { return Ok(()) };
     let Some(raw) = spec.args.get(i + 1) else { return Ok(()) };
@@ -1031,6 +1031,11 @@ fn write_audiocpp_config(cfg: &Config, spec: &PresetCfg, rec: &Recommendation) -
         "mode": "offline",
     });
     if let Some(o) = &rec.audiocpp {
+        // `{file:<name>}` (a LoRA from another repo): that file's install path.
+        let o = o.map_values(|v| match klif_catalog::recommend::option_file_ref(v) {
+            Some(name) => klif_catalog::recommend::install_path(cfg, rec, name).map_or_else(|| v.to_string(), |p| p.to_string_lossy().into_owned()),
+            None => v.to_string(),
+        });
         if !o.load_options.is_empty() {
             entry["load_options"] = serde_json::json!(o.load_options);
         }

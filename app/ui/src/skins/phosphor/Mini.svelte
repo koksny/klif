@@ -17,6 +17,7 @@
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
+  import { stageWord, usesImageLayout } from '../../lib/model/music';
   import VramCliff from './VramCliff.svelte';
   import FitCliff from './FitCliff.svelte';
   import { clamp, fmtAgo, fmtDur, fmtEta, fmtSPerIt, gpuSleep, loadSpanS } from './geom';
@@ -53,7 +54,10 @@
   const img = $derived(s?.image ?? null);
   const gen = $derived(s?.generic ?? null);
   const liveLlm = $derived(!!s && phase === 'live' && kind === 'llm' && !!llm);
-  const liveImg = $derived(!!s && phase === 'live' && kind === 'image' && !!img);
+  /** Image and music Systems share the image hero and rows (a song's stage is the step). */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+  const liveImg = $derived(!!s && phase === 'live' && imagey && !!img);
   const idle = $derived(!s);
   const loading = $derived(!!s && (phase === 'starting' || phase === 'loading'));
   const faulted = $derived(!!s && phase === 'fault');
@@ -63,7 +67,7 @@
   const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? llm.context.usedTokens / llm.context.totalTokens : 0);
   const preFrac = $derived(prefilling && llm?.prefill ? clamp(llm.prefill.doneTokens / llm.prefill.tokens, 0, 1) : 0);
-  const imgGen = $derived(liveImg && !!img && img.activity === 'generating' && img.steps > 0);
+  const imgGen = $derived(liveImg && !!img && img.activity === 'generating' && (img.steps > 0 || music));
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
 
   /** GPU dormant (vm.vram.dormant): asleep, or waking while its VRAM is restored from system RAM. */
@@ -100,7 +104,7 @@
 
   // ---- hero: label, figure + unit, status line --------------------------------------------------------
   type Tone = '' | 'amber' | 'red';
-  type Hero = { label: string; tone: Tone; fig: string; unit: string; dim: boolean; faded: boolean; line: string; lineTone: Tone };
+  type Hero = { label: string; tone: Tone; fig: string; unit: string; dim: boolean; faded: boolean; line: string; lineTone: Tone; indet?: boolean };
   const last = $derived(vm.lastSession);
   const lastText = $derived.by(() => {
     if (!last) return '';
@@ -108,7 +112,7 @@
     return `last ${label} · ${fmtDur(last.uptimeS)}${last.ended === 'fault' ? ' · fault' : ''} · ${fmtAgo(last.endedAgoS)}`;
   });
   const idleWhy = $derived(idleState(slot));
-  const kindLabel = $derived(kind === 'image' ? 'DIFFUSION STEP' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase());
+  const kindLabel = $derived(kind === 'image' ? 'DIFFUSION STEP' : music ? 'SONG PROGRESS' : kind === 'llm' ? 'DECODE SPEED' : KIND_LABEL[kind].toUpperCase());
   const hero = $derived.by<Hero>(() => {
     const base = { tone: '' as Tone, dim: false, faded: false, lineTone: '' as Tone };
     if (gpu) {
@@ -141,6 +145,19 @@
       };
     }
     if (liveImg && img) {
+      if (music) {
+        // The stage is the step; with no stage count yet (the model loading) the dash breathes.
+        if (imgGen)
+          return {
+            ...base,
+            label: `MUSIC · ${stageWord(img).toUpperCase()}`,
+            fig: img.steps > 0 ? String(img.step) : '—',
+            unit: img.steps > 0 ? `/ ${img.steps}` : '',
+            line: `elapsed ${fmtDur(img.elapsedS)}`,
+            indet: img.steps <= 0,
+          };
+        return { ...base, label: kindLabel, fig: '—', unit: '', faded: true, line: 'waiting for the next song' };
+      }
       if (imgGen)
         return { ...base, label: `DIFFUSION STEP${img.edit ? ' · EDIT' : ''}`, fig: String(img.step), unit: `/ ${img.steps}`, line: `${fmtSPerIt(img.sPerIt)} s/it · ${img.width}x${img.height}` };
       return { ...base, label: 'DIFFUSION STEP', fig: '—', unit: `/ ${img.steps}`, faded: true, line: 'waiting for the next job' };
@@ -172,6 +189,12 @@
   // ---- rows: two fixed facts per kind, the same labels in every phase -------------------------------------
   type Row = { k: string; v: string; sub: string; red?: boolean };
   const rows = $derived.by<Row[]>(() => {
+    if (music && imagey) {
+      return [
+        { k: 'LAST SONG', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: '' },
+        { k: 'SONGS', v: img ? fmtInt(img.imagesThisSession) : '—', sub: img ? 'this session' : '' },
+      ];
+    }
     if (kind === 'image') {
       return [
         { k: 'LAST IMAGE', v: lastJob ? `${lastJob.seconds.toFixed(1)} s` : '—', sub: lastJob?.edit ? 'edit' : '' },
@@ -323,7 +346,7 @@
       <!-- Hero -->
       <div class="hero panel">
         <div class="lbl {hero.tone}">{hero.label}</div>
-        <div class="fig {hero.tone}" class:dim={hero.dim} class:faded={hero.faded}><b>{hero.fig}</b>{#if hero.unit}<span class="unit">{hero.unit}</span>{/if}</div>
+        <div class="fig {hero.tone}" class:dim={hero.dim} class:faded={hero.faded} class:indet={hero.indet}><b>{hero.fig}</b>{#if hero.unit}<span class="unit">{hero.unit}</span>{/if}</div>
         <div class="line {hero.lineTone}">{hero.line}</div>
       </div>
 
@@ -617,6 +640,23 @@
     overflow: hidden;
     line-height: 1;
     color: var(--ph-cyan);
+  }
+  /* A song with no stage count yet: the dash breathes (a still one would read as idle). */
+  .fig.indet b {
+    animation: breathe 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes breathe {
+    from {
+      opacity: 0.35;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fig.indet b {
+      animation: none;
+    }
   }
   .fig b {
     font-family: var(--ph-display);

@@ -2,7 +2,7 @@
 
 `klif-cli.exe` is KLIF without the window: the same engine, from a terminal, a script or a coding agent. It reads
 the same `klif.toml`, edits it through the same comment-preserving code, and shows the same commands the window
-shows. This page is checked against `klif-cli --help` and the code of version 0.3.3.
+shows. This page is checked against `klif-cli --help` and the code of version 0.3.4.
 
 ```
 klif-cli [--json] <command> ...
@@ -155,7 +155,7 @@ agents:   klif-cli --json help (every command), klif-cli schema (JSON Schema of 
           instead of sleep-and-poll loops). Commands that change something need --yes.
 ```
 
-Also: `klif-cli --version` (`klif-cli 0.3.3`; JSON `{"version": "0.3.3"}`) and `klif-cli --help`.
+Also: `klif-cli --version` (`klif-cli 0.3.4`; JSON `{"version": "0.3.4"}`) and `klif-cli --help`.
 
 ### Looking
 
@@ -163,7 +163,7 @@ Also: `klif-cli --version` (`klif-cli 0.3.3`; JSON `{"version": "0.3.3"}`) and `
 KLIF measures and the nodes:
 
 ```
-KLIF 0.3.3 · engine: in-process (this klif-cli holds the engine)
+KLIF 0.3.4 · engine: in-process (this klif-cli holds the engine)
 
    ID        LABEL       KIND   STATUS   PRESET       MODEL                       ENDPOINT                    TOK/S  VRAM
 *  s1        System 1    llm    offline  fast-8b      Fast 8B                     http://127.0.0.1:7030/v1    -      -
@@ -422,7 +422,8 @@ started unless `--keep-running`.
   `/v1/audio/transcriptions`, then `/inference`). Records `sttRtf` = seconds of audio per wall second.
 - **Music:** an `audiocpp` server only (any other adapter answers `unsupported`). Each run asks for the same 30 s
   instrumental (a fixed prompt and seed; lyrics `[Instrumental]` for ACE-Step, tags for HeartMuLa, a prompt only for
-  Stable Audio; steps and guidance stay at the model's defaults) with `POST /v1/tasks/run` and the model id
+  Stable Audio; for YuE2 the tags as `style`, lyrics `[instrumental]`, no score planning and the semantic codes capped
+  at 30 s, since YuE2 has no duration; steps and guidance stay at the model's defaults) with `POST /v1/tasks/run` and the model id
   `/v1/models` lists. The request is synchronous, so a run lasts as long as the song takes to compose (use
   `--runs 1` on a big model); the first run can include loading the weights, which the median over three runs hides.
   The answer's `timing {wall_ms, audio_duration_ms, rtf}` gives the numbers; audio.cpp's `rtf` is wall / audio and

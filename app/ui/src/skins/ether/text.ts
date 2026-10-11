@@ -2,6 +2,7 @@
 import type { Availability, GpuMemory, LastSession, ModelArch, ModelRef, System, SystemKind } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 import { shortLabel as tierShort } from '../../lib/model/systems';
+import { jobNoun } from '../../lib/model/music';
 
 /** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
@@ -79,9 +80,9 @@ export function shapeText(arch: ModelArch | null | undefined): string {
 }
 
 /** The previous session's median speed as a figure + unit (LLM tok/s, image s/image), or null. */
-export function lastSpeed(ls: LastSession): { value: string; unit: string } | null {
+export function lastSpeed(ls: LastSession, systems: System[] = []): { value: string; unit: string } | null {
   if (ls.decodeTps !== undefined) return { value: fmtTps(ls.decodeTps), unit: 'tok/s' };
-  if (ls.secondsPerImage !== undefined) return { value: ls.secondsPerImage.toFixed(1), unit: 's/image' };
+  if (ls.secondsPerImage !== undefined) return { value: ls.secondsPerImage.toFixed(1), unit: `s/${jobNoun(systems.find((x) => x.id === ls.system)?.kind)}` };
   return null;
 }
 
@@ -90,7 +91,7 @@ export function lastSessionText(ls: LastSession, systems: System[], compact = fa
   const label = tierShort(systems.find((x) => x.id === ls.system)?.label ?? ls.model.name);
   const end = ls.ended === 'fault' ? `fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
   if (compact) return [`last ${label}`, end].join(' · ');
-  const count = ls.requests !== undefined ? `${fmtInt(ls.requests)} requests` : ls.images !== undefined ? `${fmtInt(ls.images)} images` : '';
+  const count = ls.requests !== undefined ? `${fmtInt(ls.requests)} requests` : ls.images !== undefined ? `${fmtInt(ls.images)} ${jobNoun(systems.find((x) => x.id === ls.system)?.kind, true)}` : '';
   return [`last ${label}`, `ran ${fmtDur(ls.uptimeS)}`, count, end].filter(Boolean).join(' · ');
 }
 

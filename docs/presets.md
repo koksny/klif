@@ -60,7 +60,7 @@ An unknown key is a warning and is ignored. A preset that does not parse (or who
 | `sd.cpp` | image (or `kind = "video"`) | 1234 | TCP; video: HTTP `/sdcpp/v1/capabilities` | none | Log (load steps, sampling steps, device, image and video jobs), TCP |
 | `vllm` | llm | 8000 | HTTP `/health` | `VLLM_API_KEY` | `/health`, `/metrics`, `/v1/models` |
 | `openai` | llm | 8080 | `/health`, then `/v1/models`, then TCP | none | Probes only |
-| `audiocpp` | tts (music: `kind = "music"`) | 8080 | HTTP `/health` | none | `/health`, `/v1/models` every 3 s (which model is loaded), the listening / failed lines, with `--log` one line per request |
+| `audiocpp` | tts (music: `kind = "music"`) | 8080 | HTTP `/health` | none | `/health`, `/v1/models` every 3 s (which model is loaded), the listening / failed lines; with `--log` each request from its POST to `session.wall_ms` (busy the whole time) and YuE2's stages |
 | `generic` | required | required (or a `health` check) | TCP, or `health` | none | Process, health, per-process VRAM, log activity, and `/metrics` if it answers Prometheus text |
 
 TTS, STT and video servers KLIF has no adapter for (a whisper.cpp server, koboldcpp, a Kokoro server, ComfyUI, ...)
@@ -73,14 +73,19 @@ activity, so a chatty server looks busy.
   `--log` if you want the request count and activity: the server then prints one line per request to its output,
   which KLIF reads (`--log-file` writes a file KLIF does not read). `--idle-unload-ms` frees VRAM after quiet time;
   the live view shows whether the model is loaded. TTS records come from `klif-cli bench`.
-- **audio.cpp music** (ACE-Step 1.5 and XL, HeartMuLa, Stable Audio 3, ...): the same server and adapter with `kind =
+- **audio.cpp music** (ACE-Step 1.5 and XL, HeartMuLa, Stable Audio 3, YuE2, ...): the same server and adapter with `kind =
   "music"`. In the `--config` JSON the model's `task` is `"gen"` (speech models say `"tts"`), and a family may need
   options of its own, for example `"load_options": { "ace_step.dit_model_path": "acestep-v15-xl-turbo" }` and
   `"session_options": { "ace_step.mem_saver": "true" }` (`klif-cli models adopt` writes these for a pool model, from
-  the pool entry's `audiocpp` field). A music request is synchronous: the HTTP call stays open until the whole song
-  is done, which takes minutes on a big model, and there is no progress and no cancel. Raise the server's
+  the pool entry's `audiocpp` field; an option that names a file of the entry, such as YuE2's `yue2.ar_lora`, gets
+  that file's install path). YuE2 (`yue2`) writes whole songs from `lyrics` and a `style` request option and ends
+  them itself (no duration); empty lyrics or `[instrumental]` give an instrumental, and the pool's YuE2 3B
+  Instrumental adds LoRAs trained on instrumental music. A music request is synchronous: the HTTP call stays open until the whole song
+  is done, which takes minutes on a big model, and the API reports no progress and has no cancel. Raise the server's
   `--busy-timeout-ms` (the default is 5 minutes; the pool entries pass `900000`) so a second request can wait that
-  long. The first request loads the weights unless the model is already resident. The live view shows the request
+  long. The first request loads the weights unless the model is already resident. With `--log` the live view follows
+  each song from its request to its end (`session.wall_ms`), so the System is busy the whole time and animates like an
+  image job; YuE2 also shows its stage (writing the score, composing, rendering, decoding). It also shows the request
   count and the loaded state; the record `musicRtf` (seconds of music per wall second) comes from `klif-cli bench`,
   which asks for a fixed 30 s instrumental (`POST /v1/tasks/run`).
 - **whisper.cpp** (`whisper-server.exe`, speech to text): `adapter = "generic"`, `kind = "stt"`, `health =
@@ -290,7 +295,8 @@ first shard replaces the original one this way). The argument template names oth
   for an image model that needs it. The System keeps only the param selections the new preset declares (see
   Params). For an `audiocpp` model KLIF also writes the server JSON that the `--config` argument names, one file per
   rung: a single lazily loaded model with its `task` (`tts`; `gen` for music) and the family options of the pool
-  entry's `audiocpp` field (`load_options`, `session_options`). An existing file is never overwritten: your edits win.
+  entry's `audiocpp` field (`load_options`, `session_options`; an option written `{file:<key>}` in the pool gets that
+  file's install path, for a LoRA that comes from another repo). An existing file is never overwritten: your edits win.
 
 ## Suggestions
 

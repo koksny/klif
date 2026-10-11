@@ -11,6 +11,7 @@
   import type { GenericLive, GpuMemory, ImageLive, LlmLive, LoadProgress, SystemKind } from '../../lib/model/types';
   import { KIND_LABEL } from '../../lib/model/systems';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+  import { stageText, stageWord } from '../../lib/model/music';
   import Scope from './Scope.svelte';
   import { clamp, fmtSPerIt, type GpuSleep } from './geom';
 
@@ -47,8 +48,11 @@
   /** A prefill that has not started because the GPU is still being restored. */
   const pfWaits = $derived(!!gpu && !!pf && pf.doneTokens === 0);
 
-  const gen = $derived(!!img && img.activity === 'generating' && img.steps > 0);
-  const imgFrac = $derived(gen && img ? clamp(img.step / img.steps, 0, 1) : 0);
+  const music = $derived(kind === 'music');
+  const gen = $derived(!!img && img.activity === 'generating' && (img.steps > 0 || music));
+  /** A song with no stage count yet (the model loading): the head scans to and fro instead of advancing. */
+  const indet = $derived(gen && !!img && img.steps <= 0);
+  const imgFrac = $derived(gen && img && img.steps > 0 ? clamp(img.step / img.steps, 0, 1) : 0);
 
   const working = $derived((generic?.requestsInFlight ?? 0) > 0);
 
@@ -91,30 +95,36 @@
     </div>
   </section>
 {:else if mode === 'image' && img}
-  <section class="panel grat hero" aria-label="Image generation">
+  <section class="panel grat hero" aria-label={music ? 'Song generation' : 'Image generation'}>
     <div class="hl">
       <div class="hhead">
-        <span class="lbl">{gen && img.edit ? 'Editing image' : gen ? 'Generating image' : 'Image server'}</span>
-        <span class="act" class:on={gen}>{gen ? 'sampling' : 'idle'}</span>
+        <span class="lbl">{music ? 'Song generation' : gen && img.edit ? 'Editing image' : gen ? 'Generating image' : 'Image server'}</span>
+        <span class="act" class:on={gen}>{gen ? (music ? stageWord(img) : 'sampling') : 'idle'}</span>
       </div>
       <div class="fig" class:faded={!gen}>
-        <span class="unit pre">step</span><span class="num">{gen ? img.step : '—'}</span><span class="unit">/ {img.steps}</span>
+        {#if music}
+          <span class="unit pre">stage</span><span class="num">{gen && img.steps > 0 ? img.step : '—'}</span>{#if img.steps > 0}<span class="unit">/ {img.steps}</span>{/if}
+        {:else}
+          <span class="unit pre">step</span><span class="num">{gen ? img.step : '—'}</span><span class="unit">/ {img.steps}</span>
+        {/if}
       </div>
     </div>
     <div class="hr bars">
       <div class="stat">
-        {#if gen}
+        {#if gen && music}
+          <span>elapsed <b>{fmtSeconds(img.elapsedS)}</b></span>{#if img.steps > 0}<span class="mut sm end">{stageText(img)}</span>{/if}
+        {:else if gen}
           <span><b>{fmtSPerIt(img.sPerIt)}</b> s/it</span><span>elapsed <b>{fmtSeconds(img.elapsedS)}</b></span><span class="mut sm end">{img.width}x{img.height}{img.edit ? ' · edit' : ''}</span>
         {:else}
-          <span class="mut">waiting for the next job</span>
+          <span class="mut">{music ? 'waiting for the next song' : 'waiting for the next job'}</span>
         {/if}
       </div>
       <div class="trow">
-        <span class="track" role="img" aria-label="Sampling step {img.step} of {img.steps}">
+        <span class="track" class:indet role="img" aria-label={music ? (indet ? 'Song in progress' : `Stage ${img.step} of ${img.steps}`) : `Sampling step ${img.step} of ${img.steps}`}>
           <span class="fill" style="transform:scaleX({imgFrac.toFixed(4)})"></span>
-          {#if gen}<span class="hw" style="transform:translateX({(imgFrac * 100).toFixed(2)}%)"><span class="head"></span></span>{/if}
+          {#if gen}<span class="hw" style={indet ? undefined : `transform:translateX(${(imgFrac * 100).toFixed(2)}%)`}><span class="head"></span></span>{/if}
         </span>
-        <span class="pct" class:dim={!gen}>{gen ? `${Math.round(imgFrac * 100)}%` : '—'}</span>
+        <span class="pct" class:dim={!gen}>{gen ? (indet ? '…' : `${Math.round(imgFrac * 100)}%`) : '—'}</span>
       </div>
     </div>
   </section>
@@ -167,9 +177,9 @@
   <!-- nothing to measure: the kind's own hero, dimmed, with a word over it -->
   <section class="panel grat hero wait" aria-label={word}>
     <div class="hl">
-      <div class="hhead"><span class="lbl dimlbl">{kind === 'image' ? 'Image generation' : kind === 'llm' ? 'Decode speed' : KIND_LABEL[kind]}</span></div>
+      <div class="hhead"><span class="lbl dimlbl">{kind === 'image' ? 'Image generation' : kind === 'music' ? 'Song generation' : kind === 'llm' ? 'Decode speed' : KIND_LABEL[kind]}</span></div>
       <div class="fig dim">
-        {#if kind === 'image'}<span class="unit pre">step</span><span class="num">—</span>{:else if kind === 'llm'}<span class="num">—</span><span class="unit">tok/s</span>{:else}<span class="num">—</span><span class="unit">requests</span>{/if}
+        {#if kind === 'image' || kind === 'music'}<span class="unit pre">{kind === 'music' ? 'stage' : 'step'}</span><span class="num">—</span>{:else if kind === 'llm'}<span class="num">—</span><span class="unit">tok/s</span>{:else}<span class="num">—</span><span class="unit">requests</span>{/if}
       </div>
     </div>
     <div class="hr wr">
@@ -396,6 +406,25 @@
     position: absolute;
     inset: 0;
     transition: transform 0.45s ease-out;
+  }
+  /* No stage count yet: the head scans the track to and fro (a still head would read as idle). */
+  .track.indet .hw {
+    transition: none;
+    animation: scan 2.2s ease-in-out infinite alternate;
+  }
+  @keyframes scan {
+    from {
+      transform: translateX(4%);
+    }
+    to {
+      transform: translateX(96%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .track.indet .hw {
+      animation: none;
+      transform: translateX(50%);
+    }
   }
   .head {
     position: absolute;

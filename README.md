@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.3-5AB6EB" alt="Version 0.3.3">
+  <img src="https://img.shields.io/badge/version-0.3.4-5AB6EB" alt="Version 0.3.4">
   <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/macOS-13%2B%20Apple%20silicon-5AB6EB" alt="macOS 13 or later on Apple silicon">

@@ -1,6 +1,7 @@
 import type { Availability, LastSession, ModelRef, System, SystemKind, ViewModel, VramLayer } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps, tierShort } from '../../lib/model/format';
 import { selectedSystem } from '../../lib/model/systems';
+import { jobNoun, usesImageLayout } from '../../lib/model/music';
 
 /** What the main area shows. 'stopping' renders the live view of its kind. */
 export type ViewState = 'idle' | 'loading' | 'fault' | 'llm' | 'image' | 'generic';
@@ -20,7 +21,7 @@ export function blockView(vm: ViewModel): BlockView {
   if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
   if (s.phase === 'stopping') return 'stopping';
   const kind = sessionKind(vm);
-  return (kind === 'image' ? s.image : kind === 'llm' ? s.llm : s.generic) ? 'live' : 'waiting';
+  return (usesImageLayout(kind, true, s.image) ? s.image : kind === 'llm' ? s.llm : s.generic) ? 'live' : 'waiting';
 }
 
 export { selectedSystem };
@@ -36,7 +37,7 @@ export function viewState(vm: ViewModel): ViewState {
   if (s.phase === 'fault') return 'fault';
   if (s.phase === 'starting' || s.phase === 'loading') return 'loading';
   const kind = sessionKind(vm);
-  if (kind === 'image') return s.image ? 'image' : 'loading';
+  if (usesImageLayout(kind, true, s.image)) return s.image ? 'image' : 'loading';
   if (kind === 'llm') return s.llm ? 'llm' : 'loading';
   return s.generic ? 'generic' : 'loading';
 }
@@ -159,8 +160,9 @@ export function lastSessionLine(last: LastSession, systems: System[]): string {
   if (last.requests !== undefined) f.push(`${fmtInt(last.requests)} requests`);
   if (last.generatedTokens !== undefined) f.push(`${fmtInt(last.generatedTokens)} tok`);
   if (last.decodeTps !== undefined) f.push(`${fmtTps(last.decodeTps)} tok/s`);
-  if (last.images !== undefined) f.push(`${fmtInt(last.images)} images`);
-  if (last.secondsPerImage !== undefined) f.push(`${last.secondsPerImage.toFixed(1)} s / image`);
+  const noun = jobNoun(systems.find((x) => x.id === last.system)?.kind);
+  if (last.images !== undefined) f.push(`${fmtInt(last.images)} ${noun}s`);
+  if (last.secondsPerImage !== undefined) f.push(`${last.secondsPerImage.toFixed(1)} s / ${noun}`);
   f.push(`${last.ended === 'fault' ? 'ended in a fault' : 'stopped'} ${fmtAgo(last.endedAgoS)}`);
   return f.join(' · ');
 }

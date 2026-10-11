@@ -15,6 +15,7 @@
   import type { Actions, ViewModel } from '../../lib/model/types';
   import { idleState, selectedSystem } from '../../lib/model/systems';
   import { fmtGiB, fmtInt, fmtPct, fmtSeconds } from '../../lib/model/format';
+  import { usesImageLayout } from '../../lib/model/music';
   import Header from './Header.svelte';
   import Tabs from './Tabs.svelte';
   import Hero from './Hero.svelte';
@@ -39,6 +40,10 @@
   const img = $derived(s?.image ?? null);
   const gen = $derived(s?.generic ?? null);
 
+  /** Image and music Systems share the step bar, the image rows and the recent jobs (a song's stage is the step). */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+
   type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'live-gen' | 'stopping' | 'fault' | 'other';
   const view = $derived<View>(
     !s
@@ -51,9 +56,9 @@
             ? 'stopping'
             : kind === 'llm' && llm
               ? 'live-llm'
-              : kind === 'image' && img
+              : imagey && img
                 ? 'live-img'
-                : kind !== 'llm' && kind !== 'image' && gen
+                : kind !== 'llm' && !imagey && gen
                   ? 'live-gen'
                   : 'other',
   );
@@ -85,8 +90,8 @@
   });
 
   // Image rows.
-  const imgGen = $derived(view === 'live-img' && !!img && img.activity === 'generating' && img.steps > 0);
-  const imgFrac = $derived(imgGen && img ? clamp(img.step / img.steps, 0, 1) : 0);
+  const imgGen = $derived(view === 'live-img' && !!img && img.activity === 'generating' && (img.steps > 0 || music));
+  const imgFrac = $derived(imgGen && img && img.steps > 0 ? clamp(img.step / img.steps, 0, 1) : 0);
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
 
   // Loading: the six startup steps fill the detail rows (three per row), the dial is the overall fraction.
@@ -106,7 +111,7 @@
   // The dial at the left of the rows: context fill (LLM), sampling progress (image), startup (loading).
   const dial = $derived.by(() => {
     if (view === 'loading') return { frac: loadFrac, rate: 0.32, cap: 'LOAD', amber: true };
-    if (kind === 'image') return { frac: imgFrac, rate: imgGen ? 0.25 : 0, cap: 'STEP', amber: false };
+    if (imagey) return { frac: imgFrac, rate: imgGen ? 0.25 : 0, cap: music ? 'STAGE' : 'STEP', amber: false };
     if (kind !== 'llm') return { frac: 0, rate: genBusy ? 0.25 : 0, cap: 'REQ', amber: false };
     return { frac: view === 'live-llm' || view === 'stopping' ? ctxFrac : 0, rate: sweep, cap: 'CTX', amber: false };
   });
@@ -117,7 +122,7 @@
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
 
   // Timeline / recent jobs: the selected System's kind. Empty frames while idle.
-  const jobsView = $derived(kind === 'image');
+  const jobsView = $derived(imagey);
   const requests = $derived(llm ? llm.requests.slice(view === 'fault' ? -6 : -8) : []);
   const jobs = $derived(img ? img.recent.slice(view === 'fault' ? -10 : -12) : []);
   const tlCaption = $derived.by(() => {
@@ -189,6 +194,19 @@
         </div>
         {#if view === 'loading'}
           <div class="cells"><Steps {steps} {weightsFrac} layout="grid" /></div>
+        {:else if music && imagey}
+          <div class="cells grid">
+            <div class="k">Last song</div>
+            <div class="v">
+              {#if lastJob}<b>{fmtSeconds(lastJob.seconds)}</b>{:else}<span class="mut">{img ? 'none yet' : '—'}</span>{/if}
+            </div>
+            <div class="k">Songs</div>
+            <div class="v">{#if img}<b>{fmtInt(img.imagesThisSession)}</b> this session{:else}<span class="mut">—</span>{/if}</div>
+            <div class="k">Model</div>
+            <div class="v">{#if focusModel?.name}<b>{focusModel.name}</b>{focusModel.quant ? ` · ${focusModel.quant}` : ''}{:else}<span class="mut">—</span>{/if}</div>
+            <div class="k">Reports</div>
+            <div class="v">{gen?.modelId ?? '—'}</div>
+          </div>
         {:else if kind === 'image'}
           <div class="cells grid">
             <div class="k">Last image</div>
@@ -286,7 +304,7 @@
   </section>
 
   <!-- request timeline / recent jobs: the same box in every phase -->
-  <section class="panel tlp" aria-label={jobsView ? 'Recent jobs' : 'Request timeline'}>
+  <section class="panel tlp" aria-label={music && jobsView ? 'Recent songs' : jobsView ? 'Recent jobs' : 'Request timeline'}>
     <div class="thead">
       <span class="lbl">{jobsView ? 'Recent jobs' : 'Request timeline'}</span>
       <span class="cap">{jobsView ? jobsCaption : tlCaption}</span>
@@ -298,7 +316,7 @@
         >
       {/if}
       <span class="legend">
-        {#if jobsView}<i class="sw c"></i>plain<i class="sw a"></i>edit{:else if kind === 'llm'}<i class="sw a"></i>prefill<i class="sw c"></i>decode{/if}
+        {#if jobsView && !music}<i class="sw c"></i>plain<i class="sw a"></i>edit{:else if kind === 'llm'}<i class="sw a"></i>prefill<i class="sw c"></i>decode{/if}
         {#if view === 'fault' && faultHadWork}<i class="sw f"></i>fault{/if}
       </span>
     </div>
@@ -308,6 +326,7 @@
           {jobs}
           current={view === 'live-img' && img && img.activity === 'generating' ? { elapsedS: img.elapsedS, edit: img.edit } : null}
           fault={view === 'fault' && !!img}
+          pixels={!music}
         />
       {:else}
         <Timeline {requests} fault={view === 'fault' && !!llm} />

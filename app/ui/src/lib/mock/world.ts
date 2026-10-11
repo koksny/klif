@@ -116,10 +116,10 @@ export function multiWorld(nodeState: NodeState = 'online'): World {
   };
 }
 
-/** Every kind: the multi world plus a transcription and a video System (generic displays). */
+/** Every kind: the multi world plus a transcription, a video and a music System. */
 export function kindsWorld(): World {
   const w = multiWorld();
-  w.systems.splice(5, 0, { id: 'stt', label: 'System STT', kind: 'stt', preset: 'whisper-stt' }, { id: 'video', label: 'System Video', kind: 'video', preset: 'comfy-video' });
+  w.systems.splice(5, 0, { id: 'stt', label: 'System STT', kind: 'stt', preset: 'whisper-stt' }, { id: 'video', label: 'System Video', kind: 'video', preset: 'comfy-video' }, { id: 'music', label: 'Music', kind: 'music', preset: 'yue2-music' });
   w.selected = 'tts';
   return w;
 }

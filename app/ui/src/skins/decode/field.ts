@@ -14,6 +14,7 @@
 // The right margin (full window only) is VRAM as rows of a memory dump. Drawn with WebGL2 instanced glyph
 // quads. The owner drives it: tick() from the shared frame scheduler, setVm() at the telemetry rate.
 import type { ViewModel, VramLayer } from '../../lib/model/types';
+import { isMusicJob, sessionKindOf, stageText, stageWord } from '../../lib/model/music';
 
 type Mode = 'idle' | 'decode' | 'prefill' | 'load' | 'denoise' | 'sleep' | 'wake' | 'fault' | 'stop';
 type RGB = [number, number, number];
@@ -385,13 +386,15 @@ export class DecodeField {
       this.lastReqId = r.id;
     }
     const img = s?.image;
+    const music = sessionKindOf(vm) === 'music';
     const jobs = img?.imagesThisSession ?? -1;
     if (jobs !== this.jobsSeen) {
       if (this.jobsSeen >= 0 && jobs > this.jobsSeen) {
         this.sweepAt = this.t;
         this.picture++;
         const j = img?.recent[img.recent.length - 1];
-        if (j) this.banner([`image ${jobs} done · ${j.seconds.toFixed(1)} s · ${j.width}x${j.height}`, `image ${jobs} · ${j.seconds.toFixed(1)} s`], ICE, 2.8);
+        if (j && music) this.banner([`song ${jobs} done · ${j.seconds.toFixed(1)} s`, `song ${jobs} · ${j.seconds.toFixed(1)} s`], ICE, 2.8);
+        else if (j) this.banner([`image ${jobs} done · ${j.seconds.toFixed(1)} s · ${j.width}x${j.height}`, `image ${jobs} · ${j.seconds.toFixed(1)} s`], ICE, 2.8);
       }
       this.jobsSeen = jobs;
     }
@@ -442,10 +445,12 @@ export class DecodeField {
       this.lockKind[i] = this.mode === 'decode' ? 2 : 1;
     }
 
-    // Krea: the picture emerges; loading: the terminal prints in
+    // Krea: the picture emerges; loading: the terminal prints in. A song with no stage count yet (the model loading)
+    // lets it come and go slowly instead of standing still.
     const img = s?.image;
     this.denoise =
       this.mode === 'denoise' && img && img.steps > 0 ? approach(this.denoise, img.step / img.steps, 4, dt)
+      : this.mode === 'denoise' && img && isMusicJob(img) ? approach(this.denoise, 0.5 + 0.35 * Math.sin(this.t * 0.5), 2, dt)
       : this.mode === 'denoise' ? this.denoise : approach(this.denoise, 0, 1.5, dt);
     this.bootFrac = this.mode === 'load' ? approach(this.bootFrac, 0.15 + 0.85 * (s?.loading?.fraction ?? 0), 3, dt) : approach(this.bootFrac, 1, 2, dt);
 
@@ -562,7 +567,8 @@ export class DecodeField {
       const ex = arch.experts > 0 ? `${arch.experts} experts · ${arch.expertsUsed} per token` : 'dense';
       opts.push([`${arch.layers} layers · ${ex}`, `${arch.layers} layers`]);
     }
-    if (s?.image) opts.push([`${s.image.width}x${s.image.height} · ${s.image.sPerIt.toFixed(2)} s/it`, `${s.image.sPerIt.toFixed(2)} s/it`]);
+    if (s?.image && s.image.width > 0) opts.push([`${s.image.width}x${s.image.height} · ${s.image.sPerIt.toFixed(2)} s/it`, `${s.image.sPerIt.toFixed(2)} s/it`]);
+    else if (s?.image && s.image.activity === 'generating') opts.push([stageText(s.image), stageWord(s.image)]);
     opts.push([`vram ${vm.vram.usedGiB.toFixed(2)} / ${vm.vram.totalGiB.toFixed(2)} gib`, `vram ${vm.vram.usedGiB.toFixed(1)} gib`]);
     if (!s) opts.push(['standby · pick a tier and launch', 'standby']);
     this.banner(pick(opts, hash(Math.floor(this.t), 7)), ARC, 2.6);

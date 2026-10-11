@@ -1309,6 +1309,7 @@ impl ApiServer {
                 recent: Vec::new(),
                 images_this_session: total.unwrap_or(0),
                 frames: None,
+                phase: None,
             });
         }
         sig.error_tail = self.error_tail.iter().cloned().collect();
@@ -1530,7 +1531,8 @@ impl BackendAdapter for AudioCpp {
         self.s.steps_view(health)
     }
     fn busy_since(&self, now: f64) -> Option<f64> {
-        self.s.busy_since(now)
+        // A job the log follows (POST .. session.wall_ms) is busy the whole time, not only for the pulse.
+        self.p.job.as_ref().map(|j| j.started).or_else(|| self.s.busy_since(now))
     }
     fn fill(&self, now: f64, sig: &mut SessionSignals) {
         self.s.fill(now, sig);
@@ -1541,6 +1543,32 @@ impl BackendAdapter for AudioCpp {
             g.requests_total = self.p.requests.or(g.requests_total);
             g.model_id = m.and_then(|m| m.loaded_id.clone().or_else(|| m.id.clone()));
             g.model_loaded = if unloaded { Some(false) } else { m.and_then(|m| m.loaded) };
+            if self.p.job.is_some() {
+                g.requests_in_flight = Some(1);
+            }
+        }
+        if self.s.ctx.kind == SystemKind::Music {
+            // A song is a job like an image: its stages stand in for sampling steps, the finished songs for images.
+            let job = self.p.job.as_ref();
+            sig.image = Some(klif_common::vm::ImageLive {
+                activity: if job.is_some() { klif_common::vm::ImageActivity::Generating } else { klif_common::vm::ImageActivity::Idle },
+                step: job.map_or(0, |j| j.step),
+                steps: job.map_or(0, |j| j.steps),
+                s_per_it: 0.0,
+                elapsed_s: job.map_or(0.0, |j| round_to((now - j.started).max(0.0), 1)),
+                width: 0,
+                height: 0,
+                edit: false,
+                recent: self
+                    .p
+                    .done
+                    .iter()
+                    .map(|d| klif_common::vm::ImageJob { at: d.at, seconds: d.seconds, ..Default::default() })
+                    .collect(),
+                images_this_session: self.p.jobs_done,
+                frames: None,
+                phase: job.map(|j| j.phase.to_string()),
+            });
         }
     }
 }

@@ -16,6 +16,7 @@
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+  import { hasPixels, isMusicJob, stageText, stageWord } from '../../lib/model/music';
   import Stage from './Stage.svelte';
   import Lock from './Lock.svelte';
   import Chip from './Chip.svelte';
@@ -73,7 +74,7 @@
     if (!s) {
       const blocked = idleWhy.warn || selSlot?.status === 'not-set';
       const sub = !blocked ? (vm.lastSession ? lastSessionText(vm.lastSession, vm.systems) : 'nothing running') : `${selSlot?.label.toLowerCase() ?? ''}: ${(selSlot?.reason ?? idleWhy.text).toLowerCase()}`;
-      return { ...base, label: 'STANDBY', value: '—', unit: kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests', sub, tone: 'dim', subTone: idleWhy.warn ? 'amb' : '' };
+      return { ...base, label: 'STANDBY', value: '—', unit: kind === 'image' ? 'steps' : kind === 'music' ? 'stages' : kind === 'llm' ? 'tok/s' : 'requests', sub, tone: 'dim', subTone: idleWhy.warn ? 'amb' : '' };
     }
     if (faulted) return { ...base, label: 'FAULT', note: s.fault ? fmtAgo(s.fault.sinceS) : '', value: 'ERR', unit: '', sub: s.fault?.title ?? 'the server stopped', tone: 'red' };
     if (phase === 'stopping') return { ...base, label: 'STOPPING', value: '—', unit: '', sub: `releasing ${fmtGiB(vm.vram.usedGiB)} GiB`, tone: 'dim' };
@@ -118,6 +119,16 @@
       const dil = prefersReducedMotion.current ? '' : tps.current > SHOWN_TPS ? ` · time ×1/${Math.round(tps.current / SHOWN_TPS)}` : ' · real time';
       return { ...base, label: 'DECODE', note: decoding ? `one token per pass${dil}` : 'idle', value: fmtTps(tps.current), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated`, tone: decoding ? '' : 'dim' };
     }
+    // A song in flight reads like an image job (the stage is the step), not like requests.
+    if (img && kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+      return {
+        ...base,
+        label: 'COMPOSE',
+        note: stageWord(img),
+        value: img.steps > 0 ? `${img.step}/${img.steps}` : '–',
+        unit: img.steps > 0 ? 'stages' : '',
+        sub: `elapsed ${fmtSeconds(img.elapsedS)}`,
+      };
     if (gen) {
       const on = (gen.requestsInFlight ?? 0) > 0;
       return {
@@ -131,6 +142,7 @@
       };
     }
     if (img) {
+      if (kind === 'music') return { ...base, label: 'COMPOSE', value: '—', unit: 'stages', sub: 'waiting for the next song', tone: 'dim' };
       if (img.activity === 'generating' && img.steps > 0)
         return { ...base, label: 'DIFFUSION', note: 'one pass per step, real time', value: `${img.step}/${img.steps}`, unit: 'steps', sub: `${img.sPerIt.toFixed(2)} s/it · ${img.width}x${img.height}${img.edit ? ' · edit' : ''}` };
       return { ...base, label: 'DIFFUSION', value: '—', unit: 'steps', sub: 'waiting for the next job', tone: 'dim' };
@@ -143,6 +155,15 @@
   const failedStep = $derived(fault?.steps?.find((x) => x.state === 'failed') ?? null);
   const exitText = $derived(fault ? (fault.exitCode === undefined ? 'not reported' : fault.exitCodeHex ? `${fault.exitCodeHex} (${fault.exitCode})` : String(fault.exitCode)) : '');
   const rows = $derived.by<[string, string][]>(() => {
+    if (kind === 'music') {
+      const j = img?.recent[img.recent.length - 1];
+      return [
+        ['last song', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+        ['songs', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+        ['model', model?.name ? `${model.name.toLowerCase()}${model.quant ? ` · ${model.quant.toLowerCase()}` : ''}` : '—'],
+        ['reports', gen?.modelId?.toLowerCase() ?? '—'],
+      ];
+    }
     if (kind === 'image') {
       const j = img?.recent[img.recent.length - 1];
       return [
@@ -175,15 +196,17 @@
   const requests = $derived(llm ? llm.requests.slice(-reqN) : []);
   const reqSlots = $derived(Array.from({ length: reqN }, (_, i) => requests[i - (reqN - requests.length)] ?? null));
   const diedInRequest = $derived(faulted && !!llm && llm.activity !== 'idle');
+  /** Image and music Systems list finished jobs; the rest list requests. */
+  const listsJobs = $derived(kind === 'image' || kind === 'music');
   const JOBS = 12;
   const jobs = $derived(img ? img.recent.slice(-JOBS) : []);
   const jobSlots = $derived(Array.from({ length: JOBS }, (_, i) => jobs[i - (JOBS - jobs.length)] ?? null));
   const maxJob = $derived(Math.max(1, ...jobs.map((j) => j.seconds)));
   const tlCaption = $derived.by(() => {
     if (!s) return ' · not running';
-    if (loading) return kind === 'image' ? ' · no jobs yet' : ' · no requests yet';
-    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · failed' : ' · no per-request log for this kind';
-    if (kind === 'image') {
+    if (loading) return listsJobs ? ' · no jobs yet' : ' · no requests yet';
+    if (kind !== 'llm' && !listsJobs) return faulted ? ' · failed' : ' · no per-request log for this kind';
+    if (listsJobs) {
       if (!img) return faulted ? ' · no jobs: failed during startup' : ' · no jobs yet';
       return jobs.length ? ` · bar height = time, last ${jobs.length} of ${fmtInt(img.imagesThisSession)}` : ' · no finished jobs yet';
     }
@@ -202,9 +225,11 @@
     return `vram ${fmtGiB(v.usedGiB)} / ${fmtGiB(v.totalGiB)}${v.spillMiB > 0 ? ` · spill ${fmtGiB(v.spillMiB / 1024)}` : ''}`;
   });
   const topLabel = $derived(
-    kind === 'image' ? `latent patches${img?.activity === 'generating' && img.steps > 0 ? ` · step ${img.step} / ${img.steps}` : ''}` : kind !== 'llm' ? `${KIND_LABEL[kind].toLowerCase()} · output` : `logits${arch?.vocab ? ` · ${fmtInt(arch.vocab)} vocab` : ''} · top-20 · sampled token`,
+    kind === 'music'
+      ? `latent patches${img?.activity === 'generating' && isMusicJob(img) ? ` · ${stageText(img)}` : ''}`
+      : kind === 'image' ? `latent patches${img?.activity === 'generating' && img.steps > 0 ? ` · step ${img.step} / ${img.steps}` : ''}` : kind !== 'llm' ? `${KIND_LABEL[kind].toLowerCase()} · output` : `logits${arch?.vocab ? ` · ${fmtInt(arch.vocab)} vocab` : ''} · top-20 · sampled token`,
   );
-  const bottomLabel = $derived(kind === 'image' ? 'patch embedding · block 1' : kind !== 'llm' ? 'input · layer 1' : `embedding${arch?.embd ? ` · ${fmtInt(arch.embd)} wide` : ''} · layer 1`);
+  const bottomLabel = $derived(kind === 'image' || kind === 'music' ? 'patch embedding · block 1' : kind !== 'llm' ? 'input · layer 1' : `embedding${arch?.embd ? ` · ${fmtInt(arch.embd)} wide` : ''} · layer 1`);
 
   const statusTone = $derived(faulted ? 'red' : dz || loading ? 'amb' : s ? 'live' : 'off');
   const statusText = $derived(dz ? (waking ? 'GPU WAKING' : 'GPU ASLEEP') : s ? phase.toUpperCase() : 'IDLE');
@@ -287,11 +312,11 @@
   </section>
 
   <section class="tline">
-    <div class="cap">{kind === 'image' ? 'RECENT JOBS' : 'REQUEST TIMELINE'}<span class="dim">{tlCaption}</span></div>
-    {#if kind === 'image'}
+    <div class="cap">{kind === 'music' ? 'RECENT SONGS' : kind === 'image' ? 'RECENT JOBS' : 'REQUEST TIMELINE'}<span class="dim">{tlCaption}</span></div>
+    {#if listsJobs}
       <div class="jobs">
         {#each jobSlots as j, i (i)}
-          {#if j}<span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title={`${fmtSeconds(j.seconds)} · ${j.width}x${j.height}${j.edit ? ' · edit' : ''}`}></span>{:else}<span class="job empty"></span>{/if}
+          {#if j}<span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title={`${fmtSeconds(j.seconds)}${hasPixels(kind) ? ` · ${j.width}x${j.height}` : ''}${j.edit ? ' · edit' : ''}`}></span>{:else}<span class="job empty"></span>{/if}
         {/each}
         {#if faulted && img}<span class="job failed" title="The server died"></span>{/if}
       </div>

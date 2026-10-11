@@ -3,6 +3,7 @@
 import type { SystemId, ViewModel } from '../../lib/model/types';
 import { canStop, EXTERNAL_NOTE, EXTERNAL_TITLE, idleState, isPendingLaunch, KIND_LABEL, launchCtl, selectedSystem } from '../../lib/model/systems';
 import { fmtCtx, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+import { isMusicJob, stageWord } from '../../lib/model/music';
 import { held, useSleep } from './state.svelte';
 import { fitOf, fmtAgo, fmtDur, fmtEta, gib1, lastSessionText, phaseWord, shapeText, short, sizeText, stepLine } from './text';
 
@@ -39,6 +40,8 @@ export interface Meter {
   frac: number;
   label: string;
   tone: Tone;
+  /** No fraction to show (a song without a stage count): the caret sweeps back and forth by itself. */
+  indet?: boolean;
 }
 
 export type Seg = '' | 'fill' | 'paged' | 'ghost';
@@ -93,6 +96,8 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
   const prefilling = $derived(online && !!llm?.prefill && llm.activity === 'prefill');
   const ctxFrac = $derived(llm && llm.context.totalTokens > 0 ? Math.min(1, llm.context.usedTokens / llm.context.totalTokens) : 0);
   const generating = $derived(!!img && img.activity === 'generating' && img.steps > 0);
+  /** A song in flight: it rides the image path, the stage is the step (and may be unknown while the model loads). */
+  const songLive = $derived(kind === 'music' && !!img && img.activity === 'generating' && isMusicJob(img));
   const working = $derived((gen?.requestsInFlight ?? 0) > 0);
   const fault = $derived(faulted ? (s?.fault ?? null) : null);
   const exitText = $derived.by(() => {
@@ -116,7 +121,7 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
     // no reading: the camera's dashes, in the shape of the figure that would stand there
     const base: Hero = { label: '', labelTone: '', value: kind === 'image' ? '--/--' : kind === 'llm' ? '--.-' : '--', unit: '', sub: '', subTone: '', tone: '' };
     if (!s) {
-      const unit = kind === 'image' ? 'STEPS' : kind === 'llm' ? 'TOK/S' : 'REQUESTS';
+      const unit = kind === 'image' ? 'STEPS' : kind === 'music' ? 'STAGES' : kind === 'llm' ? 'TOK/S' : 'REQUESTS';
       if (!selReady)
         return { ...base, label: 'STANDBY', unit, sub: `${short(selSlot?.label ?? '')} · ${(selSlot?.reason ?? why.text).toUpperCase()}`, subTone: why.warn ? 'warn' : '', tone: 'dim' };
       return { ...base, label: 'STANDBY', unit, sub: vm.lastSession ? lastSessionText(vm.lastSession, vm.systems) : 'NOTHING RUNNING · PICK A SYSTEM AND LAUNCH', tone: 'dim' };
@@ -158,6 +163,14 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
       const on = llm.activity === 'decode';
       return { ...base, label: on ? 'DECODE' : 'DECODE · IDLE', value: fmtTps(tps.current), unit: 'TOK/S', sub: `${fmtInt(llm.generatedTokens)} TOK GENERATED`, tone: on ? '' : 'dim' };
     }
+    if (songLive && img)
+      return {
+        ...base,
+        label: `MUSIC · ${stageWord(img).toUpperCase()}`,
+        value: img.steps > 0 ? `${img.step}/${img.steps}` : '--',
+        unit: img.steps > 0 ? 'STAGES' : '',
+        sub: fmtSeconds(img.elapsedS).toUpperCase(),
+      };
     if (gen)
       return {
         ...base,
@@ -188,6 +201,8 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
       if (generating && img) return [{ k: 'STEP', v: `${img.step}/${img.steps}` }, { v: img.sPerIt.toFixed(2), u: 'S/IT' }, { v: `${img.width}×${img.height}` }, who];
       return [{ k: 'STEP', v: '--/--' }, { v: '--.--', u: 'S/IT' }, { v: sizeText(model?.imageSize) ?? '--' }, who];
     }
+    if (songLive && img)
+      return [{ k: 'STAGE', v: img.steps > 0 ? `${img.step}/${img.steps}` : '--/--' }, { v: stageWord(img).toUpperCase() }, { v: fmtSeconds(img.elapsedS).toUpperCase() }, who];
     if (kind !== 'llm') {
       return [{ k: 'REQ', v: gen?.requestsTotal !== undefined ? fmtInt(gen.requestsTotal) : '--' }, { k: 'FLIGHT', v: gen ? fmtInt(gen.requestsInFlight ?? 0) : '--' }, { v: (model?.backend || model?.engine || '--').toUpperCase() }, who];
     }
@@ -208,6 +223,7 @@ export function useOsd(get: () => ViewModel, launch: (system: SystemId, stopOthe
   const meter = $derived.by<Meter>(() => {
     if (loading) return { frac: s?.loading?.fraction ?? 0, label: 'LOAD', tone: '' };
     if (kind === 'image') return { frac: generating && img ? img.step / img.steps : 0, label: 'STEP', tone: faulted ? 'red' : generating ? '' : 'dim' };
+    if (songLive && img) return { frac: img.steps > 0 ? img.step / img.steps : 0.5, label: 'STAGE', tone: faulted ? 'red' : '', indet: img.steps <= 0 };
     if (kind !== 'llm') return { frac: working ? 1 : 0, label: 'REQ', tone: faulted ? 'red' : working ? '' : 'dim' };
     if (!llm) return { frac: 0, label: 'CTX', tone: faulted ? 'red' : 'dim' };
     return { frac: ctxFrac, label: 'CTX', tone: faulted ? 'red' : dz ? 'dim' : ctxFrac >= 0.95 ? 'red' : ctxFrac >= 0.9 ? 'warn' : '' };

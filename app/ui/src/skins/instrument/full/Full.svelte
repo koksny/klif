@@ -15,7 +15,8 @@
   import { onMount, tick } from 'svelte';
   import type { Actions, SystemId, ViewModel } from '../../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
-  import { fmtClock, fmtCtx, fmtInt } from '../../../lib/model/format';
+  import { fmtClock, fmtCtx, fmtInt, fmtSeconds } from '../../../lib/model/format';
+  import { stageWord, usesImageLayout } from '../../../lib/model/music';
   import {
     PHASE_LABEL,
     kindOf,
@@ -96,24 +97,29 @@
   const model = $derived(s?.model ?? ptrSlot?.model);
   const ctxTotal = $derived(llm?.context.totalTokens || model?.ctxTokens || 0);
   const ctxUsed = $derived(llm?.context.usedTokens ?? 0);
-  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating');
+  /** Image and music Systems share the generation dial and the recent jobs. */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && (img.steps > 0 || music));
+  /** A song with no stage count yet (the model loading): the needle sways instead of pointing. */
+  const wander = $derived(generating && music && !!img && img.steps <= 0);
   // The dial and its readout are one centred group; the dial takes what the panel leaves, up to 330 u.
   let cw = $state(0);
   let ch = $state(0);
   let rh = $state(0);
 
   // Timeline / recent jobs: one place, one height; the caption says what the frame holds.
-  const jobsView = $derived(kind === 'image');
+  const jobsView = $derived(imagey);
   const faultHadWork = $derived(view === 'fault' && (!!llm || !!img || !!gen));
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
   const last = $derived(view === 'idle' ? lastSessionText(vm) : null);
   const tlCaption = $derived.by(() => {
     if (view === 'idle') return 'not running';
     if (view === 'loading') return jobsView ? 'no jobs yet' : 'no requests yet';
-    if (kind !== 'llm' && kind !== 'image') return view === 'fault' ? 'failed' : 'no per-request log for this kind';
+    if (kind !== 'llm' && !imagey) return view === 'fault' ? 'failed' : 'no per-request log for this kind';
     if (jobsView) {
       if (!img) return view === 'fault' ? 'no jobs: failed during startup' : 'no jobs yet';
-      return `seconds per image · ${fmtInt(img.imagesThisSession)} this session${view === 'fault' ? ', then the fault' : ''}`;
+      return `seconds per ${music ? 'song' : 'image'} · ${fmtInt(img.imagesThisSession)} this session${view === 'fault' ? ', then the fault' : ''}`;
     }
     if (!llm) return view === 'fault' ? 'no requests: failed during startup' : 'no requests yet';
     const head = `session: ${fmtInt(llm.totals.requests)} requests · ${fmtInt(llm.totals.generatedTokens)} tok generated`;
@@ -235,10 +241,10 @@
       {/if}
     </section>
     <section class="panel ctx" bind:clientWidth={cw} bind:clientHeight={ch}>
-      <span class="lbl corner">{kind === 'image' ? 'GENERATION' : kind === 'llm' ? 'CONTEXT' : KIND_LABEL[kind].toUpperCase()}</span>
+      <span class="lbl corner">{imagey ? 'GENERATION' : kind === 'llm' ? 'CONTEXT' : KIND_LABEL[kind].toUpperCase()}</span>
       <div class="cgroup" style="--d: max(calc(60 * var(--u)), min(calc(330 * var(--u)), calc({cw}px - 48 * var(--u)), calc({ch}px - {rh}px - 72 * var(--u))))">
         <div class="cdial">
-          {#if kind === 'image'}
+          {#if imagey}
             {@const st = img?.steps ?? 0}
             <ContextDial
               used={generating ? (img?.step ?? 0) : 0}
@@ -247,6 +253,7 @@
               majors={st && st <= 24 ? st : 4}
               minorPer={st && st <= 12 ? 4 : st && st <= 24 ? 2 : 10}
               dim={!generating}
+              {wander}
               label="Generation"
             />
           {:else if kind !== 'llm'}
@@ -257,10 +264,16 @@
           {/if}
         </div>
         <div class="cread" bind:clientHeight={rh}>
-          {#if kind === 'image'}
-            {#if generating && img}
+          {#if imagey}
+            {#if generating && img && music}
+              <span class="cv"><b>{img.steps > 0 ? `stage ${img.step}` : stageWord(img)}</b>{#if img.steps > 0} / {img.steps}{/if}</span>
+              <span class="cs">{img.steps > 0 ? stageWord(img) : 'elapsed'} · {fmtSeconds(img.elapsedS)}</span>
+            {:else if generating && img}
               <span class="cv"><b>step {img.step}</b> / {img.steps}</span>
               <span class="cs">{img.width} × {img.height} · {img.edit ? 'edit job' : 'new image'}</span>
+            {:else if img && music}
+              <span class="cv dimv">no song running</span>
+              <span class="cs">{model?.name ?? ''}</span>
             {:else if img}
               <span class="cv dimv">no job running</span>
               <span class="cs">{img.steps} sampling steps per image</span>
@@ -311,7 +324,7 @@
       </div>
       <div class="tbody">
         {#if jobsView}
-          <RecentJobs jobs={img?.recent ?? []} none={img && view !== 'fault' ? 'no images yet' : ''} />
+          <RecentJobs jobs={img?.recent ?? []} none={img && view !== 'fault' ? (music ? 'no songs yet' : 'no images yet') : ''} pixels={!music} />
         {:else}
           <Timeline
             requests={llm?.requests ?? []}
@@ -322,7 +335,7 @@
       </div>
     </div>
     <div class="legend">
-      {#if jobsView}
+      {#if jobsView && !music}
         <span><i class="sw dc"></i>new</span>
         <span><i class="sw pf"></i>edit</span>
       {:else if kind === 'llm'}

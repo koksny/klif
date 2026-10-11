@@ -5,7 +5,7 @@
   // so it is drawn as a dashed red marker, not a bar).
   import type { ImageJob } from '../../lib/model/types';
 
-  let { jobs, fault = false, slots = 12 }: { jobs: ImageJob[]; fault?: boolean; slots?: number } = $props();
+  let { jobs, fault = false, slots = 12, pixels = true }: { jobs: ImageJob[]; fault?: boolean; slots?: number; pixels?: boolean } = $props();
 
   const shown = $derived(jobs.slice(-(fault ? slots - 1 : slots)));
   const maxS = $derived(Math.max(0.1, ...shown.map((j) => j.seconds)));
@@ -41,7 +41,7 @@
             class="b"
             class:edit={c.j.edit}
             style="height:{(c.j.seconds / maxS) * 100}%"
-            title="{c.j.width}×{c.j.height}{c.j.edit ? ' edit' : ''} · {c.j.seconds.toFixed(1)} s"
+            title="{pixels ? `${c.j.width}×${c.j.height}${c.j.edit ? ' edit' : ''} · ` : ''}{c.j.seconds.toFixed(1)} s"
           ></span>
         </span>
       {:else if c.kind === 'fault'}

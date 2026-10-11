@@ -500,6 +500,7 @@ impl SdParser {
                 recent: self.recent.iter().cloned().collect(),
                 images_this_session: self.images,
                 frames: j.frames,
+                phase: None,
             },
             None => ImageLive {
                 activity: ImageActivity::Idle,
@@ -513,6 +514,7 @@ impl SdParser {
                 recent: self.recent.iter().cloned().collect(),
                 images_this_session: self.images,
                 frames: self.last_frames,
+                phase: None,
             },
         }
     }

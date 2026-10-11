@@ -70,6 +70,7 @@ import { GenericSim } from './genericSim';
 import { GpuPower, type PowerCfg } from './gpupower';
 import { browserHost } from './host';
 import { ImageSim } from './imageSim';
+import { MusicSim } from './musicSim';
 import { LlmSim } from './llmSim';
 import { bootDurations, familyOf, imageConfig, llmConfig, ramFootprintGiB } from './profiles';
 import { clamp, createRng, hashSeed, type Rng } from './rng';
@@ -169,7 +170,7 @@ interface SessionRt {
   lineIdx: number;
   opts: LaunchOpts;
   llm: LlmSim | null;
-  image: ImageSim | null;
+  image: ImageSim | MusicSim | null;
   generic: GenericSim | null;
   fault: Fault | null;
   faultAt: number;
@@ -1416,6 +1417,12 @@ export class MockEngine {
       }
     } else if (s.sys.kind === 'image') {
       s.image = new ImageSim(imageConfig(s.opts.crashOnJob), rng, console_, () => this.epoch0 + this.t);
+    } else if (s.sys.kind === 'music') {
+      // A song job reports through the image path and counts as the request, like the real core.
+      const music = new MusicSim(rng, console_, () => this.epoch0 + this.t);
+      s.image = music;
+      s.generic = new GenericSim('music', rng, null, s.model.name);
+      s.generic.follow(music);
     } else {
       s.generic = new GenericSim(s.sys.kind, rng, console_, s.model.name);
     }
@@ -1423,12 +1430,13 @@ export class MockEngine {
 
   private stepLive(s: SessionRt, h: number) {
     s.llm?.step(h);
-    s.generic?.step(h);
     s.power?.step(h, this.t, !!s.llm && s.llm.activity !== 'idle');
     if (s.image) {
       s.image.step(h);
       if (s.image.crashed) this.fail(s, 'rocm-crash');
     }
+    // After the image simulator: a music server's requests mirror its song.
+    s.generic?.step(h);
   }
 
   private fail(s: SessionRt, kind: FaultKind) {

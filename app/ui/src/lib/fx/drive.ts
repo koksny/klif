@@ -26,6 +26,9 @@ export class Drive {
   stepFrac = 0;
   steps = 0;
   step = 0;
+  /** 1 while a music job runs without a stage count (model loading, a family that names no stages): gen is up,
+   *  the steps are synthetic (a pulse about once a second, a slow sweep) so the visuals keep moving. */
+  indeterminate = 0;
   /** Token pulse, 1 on each shown token, decays fast. Shown tokens are capped at 10/s. */
   pulse = 0;
   /** Step pulse, 1 on each Krea step, decays slower. */
@@ -40,6 +43,8 @@ export class Drive {
 
   private tokPhase = 0;
   private lastStep = -1;
+  private synthT = 0;
+  private sweepT = 0;
 
   update(vm: ViewModel, dt: number) {
     const s = vm.session;
@@ -55,8 +60,10 @@ export class Drive {
     const preTo = llm?.activity === 'prefill' && llm.prefill ? 0.4 + 0.6 * (llm.prefill.tokens > 0 ? llm.prefill.doneTokens / llm.prefill.tokens : 0) : 0;
     this.pre = approach(this.pre, preTo, 4, dt);
 
+    // A music job reports through the image path (stages for steps); its request in flight is not token decoding.
+    const music = img?.activity === 'generating' && img.phase !== undefined;
     // Kinds without telemetry of their own (speech, transcription, video): a request in flight drives the tokens.
-    const genBusy = (s?.generic?.requestsInFlight ?? 0) > 0 && !dormant;
+    const genBusy = (s?.generic?.requestsInFlight ?? 0) > 0 && !dormant && !music;
     const decoding = (llm?.activity === 'decode' && !dormant) || genBusy;
     const tpsNow = llm ? llm.decodeTps : 6;
     this.dec = approach(this.dec, decoding ? 1 : 0, 3, dt);
@@ -68,18 +75,38 @@ export class Drive {
     this.sleep = approach(this.sleep, dormant ? 1 : 0, dormant ? 1.4 : 3, dt);
     this.fault = approach(this.fault, phase === 'fault' ? 1 : 0, 2.5, dt);
 
-    const sampling = img?.activity === 'generating' && img.steps > 0;
+    const sampling = img?.activity === 'generating' && (img.steps > 0 || music);
+    const indet = sampling && img!.steps <= 0;
+    this.indeterminate = approach(this.indeterminate, indet ? 1 : 0, 3, dt);
     this.gen = approach(this.gen, sampling ? 1 : 0, 3, dt);
-    this.steps = sampling ? img!.steps : 0;
-    this.step = sampling ? img!.step : 0;
-    this.stepFrac = sampling ? img!.step / img!.steps : 0;
-    if (sampling && img!.step !== this.lastStep) {
-      if (this.lastStep >= 0) {
+    if (indet) {
+      // No stage count yet: eight synthetic steps, one a second, and a fraction that sweeps there and back.
+      this.synthT += dt;
+      this.sweepT += dt;
+      if (this.synthT >= 1) {
+        this.synthT -= 1;
         this.stepPulse = 1;
         this.stepsSeen++;
       }
-      this.lastStep = img!.step;
-    } else if (!sampling) this.lastStep = -1;
+      this.steps = 8;
+      this.step = Math.floor(this.synthT * 8) % 8;
+      const ph = (this.sweepT / 16) % 1;
+      this.stepFrac = 0.15 + 0.7 * (ph < 0.5 ? ph * 2 : 2 - ph * 2);
+      this.lastStep = -1;
+    } else {
+      this.synthT = 0;
+      this.sweepT = 0;
+      this.steps = sampling ? img!.steps : 0;
+      this.step = sampling ? img!.step : 0;
+      this.stepFrac = sampling ? img!.step / img!.steps : 0;
+      if (sampling && img!.step !== this.lastStep) {
+        if (this.lastStep >= 0) {
+          this.stepPulse = 1;
+          this.stepsSeen++;
+        }
+        this.lastStep = img!.step;
+      } else if (!sampling) this.lastStep = -1;
+    }
     this.stepPulse *= Math.exp(-dt * 3);
     this.breath = approach(this.breath, this.stepPulse, 8, dt);
     this.wave += dt * (1.2 + Math.min(this.tps, 120) / 60);

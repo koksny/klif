@@ -17,6 +17,7 @@
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+  import { hasPixels, isMusicJob, jobNoun, stageWord } from '../../lib/model/music';
   import Field from './Field.svelte';
   import Lock from './Lock.svelte';
   import WinCtl from './WinCtl.svelte';
@@ -80,10 +81,10 @@
   const hero = $derived.by<Hero>(() => {
     if (!s) {
       const ls = vm.lastSession;
-      const unit = kind === 'image' ? 'steps' : kind === 'llm' ? 'tok/s' : 'requests';
+      const unit = kind === 'image' ? 'steps' : kind === 'music' ? 'stages' : kind === 'llm' ? 'tok/s' : 'requests';
       if (idleWhy.warn || sel?.status === 'not-set') return { label: 'STANDBY', dir: '', value: '—', unit, sub: `${tierWord(sel?.label ?? '')} · ${sel?.reason ?? idleWhy.text}`.toLowerCase(), tone: 'dim', subTone: idleWhy.warn ? 'amber' : undefined };
       if (!ls) return { label: 'STANDBY', dir: 'pick a System and launch', value: '—', unit, sub: 'nothing running', tone: 'dim' };
-      const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} tok/s` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} s/image` : '';
+      const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} tok/s` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} s/${jobNoun(kind)}` : '';
       const end = ls.ended === 'fault' ? `fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
       return { label: 'STANDBY', dir: 'pick a System and launch', value: '—', unit, sub: `last ${ls.model.name.toLowerCase()}${speed} · ${end}`, tone: 'dim' };
     }
@@ -133,6 +134,16 @@
       const on = llm.activity === 'decode';
       return { label: 'DECODE', dir: on ? 'finding tokens in the noise' : 'idle', value: fmtTps(llm.decodeTps), unit: 'tok/s', sub: `${fmtInt(llm.generatedTokens)} tok generated`, tone: on ? '' : 'dim' };
     }
+    // A song in flight reads like an image job (the stage is the step), not like requests.
+    if (img && kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+      return {
+        label: 'COMPOSE',
+        dir: stageWord(img),
+        value: img.steps > 0 ? `${img.step}/${img.steps}` : '–',
+        unit: img.steps > 0 ? 'stages' : '',
+        sub: `elapsed ${fmtSeconds(img.elapsedS)}`,
+        tone: '',
+      };
     if (gen) {
       const on = (gen.requestsInFlight ?? 0) > 0;
       return {
@@ -162,6 +173,15 @@
 
   // ---- detail rows: four fixed facts per kind, the same labels in every phase ---------------------------------
   const rows = $derived.by<[string, string][]>(() => {
+    if (kind === 'music') {
+      const j = img?.recent[img.recent.length - 1];
+      return [
+        ['last song', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+        ['songs', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+        ['model', model?.name ? `${model.name.toLowerCase()}${model.quant ? ` · ${model.quant.toLowerCase()}` : ''}` : '—'],
+        ['reports', gen?.modelId?.toLowerCase() ?? '—'],
+      ];
+    }
     if (kind === 'image') {
       const j = img?.recent[img.recent.length - 1];
       return [
@@ -193,6 +213,8 @@
   const reqN = $derived(faulted && llm ? 7 : 8);
   const requests = $derived(llm ? llm.requests.slice(-reqN) : []);
   const reqSlots = $derived(Array.from({ length: reqN }, (_, i) => requests[i - (reqN - requests.length)] ?? null));
+  /** Image and music Systems list finished jobs; the rest list requests. */
+  const listsJobs = $derived(kind === 'image' || kind === 'music');
   const jobN = $derived(faulted && img ? 11 : 12);
   const jobs = $derived(img ? img.recent.slice(-jobN) : []);
   const jobSlots = $derived(Array.from({ length: jobN }, (_, i) => jobs[i - (jobN - jobs.length)] ?? null));
@@ -200,16 +222,16 @@
   const diedInWork = $derived(faulted && ((!!llm && llm.activity !== 'idle') || (!!img && img.activity === 'generating') || (gen?.requestsInFlight ?? 0) > 0));
   const tlCaption = $derived.by(() => {
     if (!s) return ' · not running';
-    if (loading) return kind === 'image' ? ' · no jobs yet' : ' · no requests yet';
-    if (kind !== 'llm' && kind !== 'image') return faulted ? ' · failed' : ' · no per-request log for this kind';
-    const n = kind === 'image' ? jobs.length : requests.length;
-    const what = kind === 'image' ? 'jobs' : 'requests';
+    if (loading) return listsJobs ? ' · no jobs yet' : ' · no requests yet';
+    if (kind !== 'llm' && !listsJobs) return faulted ? ' · failed' : ' · no per-request log for this kind';
+    const n = listsJobs ? jobs.length : requests.length;
+    const what = listsJobs ? 'jobs' : 'requests';
     if (faulted) {
       if (!llm && !img) return ` · no ${what}: failed during startup`;
-      return ` · ${n ? `last ${n}` : `no finished ${what}`}, then ${diedInWork ? `the ${kind === 'image' ? 'job' : 'request'} that died` : 'the fault'}`;
+      return ` · ${n ? `last ${n}` : `no finished ${what}`}, then ${diedInWork ? `the ${listsJobs ? 'job' : 'request'} that died` : 'the fault'}`;
     }
     if (n === 0) return ` · no finished ${what} yet`;
-    return kind === 'image' ? ` · bar height = time, last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : ` · last ${n}, prefill dark, decode light`;
+    return listsJobs ? ` · bar height = time, last ${n} of ${fmtInt(img?.imagesThisSession ?? n)}` : ` · last ${n}, prefill dark, decode light`;
   });
   const reqTitle = (r: RequestRecord) =>
     `#${r.id} · prompt ${fmtInt(r.promptTokens)} tok (${fmtInt(r.cachedTokens)} cached) · prefill ${fmtSeconds(r.prefillS)} · ${fmtInt(r.generatedTokens)} tok in ${fmtSeconds(r.decodeS)}`;
@@ -318,12 +340,12 @@
   </section>
 
   <section class="tline">
-    <div class="cap">{kind === 'image' ? 'recent jobs' : 'request timeline'}<span class="dim">{tlCaption}</span></div>
-    {#if kind === 'image'}
+    <div class="cap">{kind === 'music' ? 'recent songs' : kind === 'image' ? 'recent jobs' : 'request timeline'}<span class="dim">{tlCaption}</span></div>
+    {#if listsJobs}
       <div class="jobs">
         {#each jobSlots as j, i (i)}
           {#if j}
-            <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)} · {j.width}x{j.height}{j.edit ? ' · edit' : ''}"><em>{j.seconds.toFixed(0)}s</em></span>
+            <span class="job" class:edit={j.edit} style="--h:{(j.seconds / maxJob) * 100}%" title="{fmtSeconds(j.seconds)}{hasPixels(kind) ? ` · ${j.width}x${j.height}` : ''}{j.edit ? ' · edit' : ''}"><em>{j.seconds.toFixed(0)}s</em></span>
           {:else}<span class="job empty"></span>{/if}
         {/each}
         {#if faulted && img}<span class="job failed" title={diedInWork ? 'The server died during this job' : 'The server died between jobs'}></span>{/if}

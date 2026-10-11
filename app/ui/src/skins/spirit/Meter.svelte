@@ -11,7 +11,7 @@
   const f = $derived(Math.max(0, Math.min(1, m.frac)));
 </script>
 
-<div class="meter {m.tone}" role="meter" aria-label={m.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(f * 100)}>
+<div class="meter {m.tone}" class:indet={m.indet} role="meter" aria-label={m.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(f * 100)}>
   {#if label}<span class="ml">{m.label}</span>{/if}
   <div class="scale" style="--f:{f}">
     <div class="nums">{#each NUMS as n, i (i)}<span style="left:{i * 25}%">{n}</span>{/each}</div>
@@ -96,6 +96,35 @@
     border-bottom: 0.48em solid var(--ink);
     transform: translateX(-50%);
     transition: left 0.9s cubic-bezier(0.25, 0.8, 0.3, 1);
+  }
+  /* No fraction yet: the fill and the caret drift to and fro (a still caret would read as idle). */
+  .meter.indet .fill {
+    animation: drift-w 4.5s ease-in-out infinite alternate;
+  }
+  .meter.indet .caret {
+    animation: drift-l 4.5s ease-in-out infinite alternate;
+  }
+  @keyframes drift-w {
+    from {
+      width: 12%;
+    }
+    to {
+      width: 88%;
+    }
+  }
+  @keyframes drift-l {
+    from {
+      left: 12%;
+    }
+    to {
+      left: 88%;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .meter.indet .fill,
+    .meter.indet .caret {
+      animation: none;
+    }
   }
   .meter.dim .fill {
     background: var(--muted);

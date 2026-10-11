@@ -165,10 +165,13 @@ fn download(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let mut last_change = Instant::now();
     let mut seen: BTreeMap<String, DownloadInfo> = before.clone();
     let mut fresh = false;
+    // Every file's last known state: the engine forgets a finished file 30 s after it ended, long before the last
+    // file of a big model is done, so a file missing from a snapshot keeps the state it had.
+    let mut now: BTreeMap<String, DownloadInfo> = before.clone();
     let finals = loop {
         std::thread::sleep(Duration::from_millis(500));
         let vm = conn.snapshot(None)?;
-        let now: BTreeMap<String, DownloadInfo> = vm.downloads.iter().filter(|d| d.id == id).map(|d| (d.file.clone(), d.clone())).collect();
+        now.extend(vm.downloads.iter().filter(|d| d.id == id).map(|d| (d.file.clone(), d.clone())));
         if now != seen {
             last_change = Instant::now();
             seen = now.clone();

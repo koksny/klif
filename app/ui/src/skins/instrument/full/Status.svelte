@@ -14,6 +14,7 @@
   import type { ViewModel } from '../../../lib/model/types';
   import { idleState, KIND_LABEL } from '../../../lib/model/systems';
   import { fmtClock, fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../../lib/model/format';
+  import { stageText, stageWord, usesImageLayout } from '../../../lib/model/music';
   import { fmtAgo, fmtJobS, fmtKTok, fmtLeft, frac, kindOf, median, pointerSlot, sleepOf, slotById, viewOf } from '../theme';
   import Drum from '../parts/Drum.svelte';
   import StepDrum from '../parts/StepDrum.svelte';
@@ -65,8 +66,13 @@
   const waking = $derived(!!sleep && prefilling);
 
   // ---- image ----------------------------------------------------------------------------------------------
-  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && img.steps > 0);
-  const stepFrac = $derived(generating && img ? frac(img.step, img.steps) : 0);
+  /** Image and music Systems share the step drum and the sampling bar (a song's stage is the step). */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+  const generating = $derived(view === 'live-img' && !!img && img.activity === 'generating' && (img.steps > 0 || music));
+  /** A song with no stage count yet (the model loading): the bar chases instead of filling. */
+  const indet = $derived(generating && !!img && img.steps <= 0);
+  const stepFrac = $derived(generating && img && img.steps > 0 ? frac(img.step, img.steps) : 0);
   const lastJob = $derived(img?.recent.length ? img.recent[img.recent.length - 1] : null);
   const med = $derived(img?.recent.length ? median(img.recent.slice(-12).map((j) => j.seconds)) : 0);
 
@@ -100,16 +106,16 @@
 <!-- A hero with nothing to measure (idle, stopping, no data yet): the kind's own plate, dimmed, with a word. -->
 {#snippet waitHero()}
   <section class="panel hero dim">
-    {#if kind === 'image'}
-      <span class="lbl hl">STEP</span>
+    {#if imagey}
+      <span class="lbl hl">{music ? 'STAGE' : 'STEP'}</span>
       <div class="fig">
-        <div class="sdrum" style="--cells:2"><StepDrum step={0} steps={img?.steps ?? 8} blank /></div>
+        <div class="sdrum" style="--cells:2"><StepDrum step={0} steps={music ? 0 : (img?.steps ?? 8)} blank unit={music ? 'stage' : 'step'} /></div>
       </div>
       <span class="vsep"></span>
       <div class="hr prog">
         <div class="pstats"><span class="word" class:amb={wordAmber}>{word}</span></div>
-        <div class="pbar"><LedBar fraction={0} segments={32} label="Sampling progress" dark /></div>
-        <span class="pcap">{img ? `${img.steps} sampling steps` : model?.imageSize ? `default size ${model.imageSize}` : ''}</span>
+        <div class="pbar"><LedBar fraction={0} segments={32} label={music ? 'Song progress' : 'Sampling progress'} dark /></div>
+        <span class="pcap">{music ? (model?.name ?? '') : img ? `${img.steps} sampling steps` : model?.imageSize ? `default size ${model.imageSize}` : ''}</span>
       </div>
     {:else if kind !== 'llm'}
       <span class="lbl hl">{KIND_LABEL[kind].toUpperCase()}</span>
@@ -204,20 +210,24 @@
       {/if}
     {:else if view === 'live-img' && img}
       <section class="panel hero" class:quiet>
-        <span class="lbl hl">{img.edit && generating ? 'STEP · EDIT' : 'STEP'}</span>
+        <span class="lbl hl">{music ? 'STAGE' : img.edit && generating ? 'STEP · EDIT' : 'STEP'}</span>
         <div class="fig">
-          <div class="sdrum" style="--cells:{2 * String(img.steps).length}"><StepDrum step={img.step} steps={img.steps} blank={!generating} /></div>
+          <div class="sdrum" class:indet style="--cells:{2 * String(img.steps).length}"><StepDrum step={img.step} steps={img.steps} blank={!generating || indet} unit={music ? 'stage' : 'step'} /></div>
         </div>
         <span class="vsep"></span>
         <div class="hr prog">
           <div class="pstats">
-            <span><b>{generating && img.sPerIt > 0 ? img.sPerIt.toFixed(2) : '—'}</b> s/it</span>
+            {#if music}
+              <span class="cur">{generating ? stageWord(img) : 'waiting for the next song'}</span>
+            {:else}
+              <span><b>{generating && img.sPerIt > 0 ? img.sPerIt.toFixed(2) : '—'}</b> s/it</span>
+            {/if}
             <span>elapsed <b>{generating ? fmtSeconds(img.elapsedS) : '—'}</b></span>
-            <span class="right"><b>{generating ? `${Math.round(stepFrac * 100)}%` : '—'}</b> {generating ? 'generating' : quiet ? 'GPU asleep' : 'idle'}</span>
+            <span class="right"><b>{generating && !indet ? `${Math.round(stepFrac * 100)}%` : '—'}</b> {generating ? 'generating' : quiet ? 'GPU asleep' : 'idle'}</span>
             <Led on={generating} size="calc(11 * var(--u))" title="generating now" />
           </div>
-          <div class="pbar"><LedBar fraction={stepFrac} segments={img.steps > 0 && img.steps <= 16 ? img.steps * 4 : 32} label="Sampling progress" dark={quiet} /></div>
-          <span class="pcap">{generating ? `${img.width} × ${img.height} · ${img.edit ? 'edit job' : 'new image'} · ${img.steps} sampling steps` : `waiting for the next job · ${img.steps} sampling steps`}</span>
+          <div class="pbar"><LedBar fraction={stepFrac} segments={img.steps > 0 && img.steps <= 16 ? img.steps * 4 : 32} label={music ? 'Song progress' : 'Sampling progress'} dark={quiet} indeterminate={indet} /></div>
+          <span class="pcap">{music ? (generating ? (img.steps > 0 ? stageText(img) : `${stageWord(img)} · stages not known yet`) : (model?.name ?? '')) : generating ? `${img.width} × ${img.height} · ${img.edit ? 'edit job' : 'new image'} · ${img.steps} sampling steps` : `waiting for the next job · ${img.steps} sampling steps`}</span>
         </div>
       </section>
     {:else if view === 'live-gen' && gen}
@@ -274,23 +284,30 @@
           </div>
         {/each}
       </section>
-    {:else if kind === 'image'}
+    {:else if imagey}
       <section class="panel rows img" class:dim={!img} class:quiet>
         <div class="row">
-          <span class="lbl k">LAST IMAGE</span>
+          <span class="lbl k">{music ? 'LAST SONG' : 'LAST IMAGE'}</span>
           <span class="v">
-            {#if lastJob}<span class="t"><b>{fmtJobS(lastJob.seconds)}</b> · {lastJob.width}×{lastJob.height}{lastJob.edit ? ' · edit' : ''}</span>{:else}<span class="t">{img ? 'none yet' : '—'}</span>{/if}
+            {#if lastJob}<span class="t"><b>{fmtJobS(lastJob.seconds)}</b>{music ? '' : ` · ${lastJob.width}×${lastJob.height}${lastJob.edit ? ' · edit' : ''}`}</span>{:else}<span class="t">{img ? 'none yet' : '—'}</span>{/if}
           </span>
-          <span class="lbl k">IMAGES</span>
+          <span class="lbl k">{music ? 'SONGS' : 'IMAGES'}</span>
           <span class="v">
             {#if img}<span class="t"><b>{fmtInt(img.imagesThisSession)}</b> this session{img.recent.length ? ` · median ${fmtJobS(med)} (last ${Math.min(12, img.recent.length)})` : ''}</span>{:else}<span class="t">—</span>{/if}
           </span>
         </div>
         <div class="row">
-          <span class="lbl k">SIZE</span>
-          <span class="v"><span class="t cfg">{model?.imageSize ?? '—'}</span></span>
-          <span class="lbl k">MODE</span>
-          <span class="v"><span class="t cfg">{model?.mode ?? '—'}</span></span>
+          {#if music}
+            <span class="lbl k">MODEL</span>
+            <span class="v"><span class="t cfg">{model?.name ?? '—'}{model?.quant ? ` · ${model.quant}` : ''}</span></span>
+            <span class="lbl k">BACKEND</span>
+            <span class="v"><span class="t cfg">{model?.backend || model?.engine || '—'}</span></span>
+          {:else}
+            <span class="lbl k">SIZE</span>
+            <span class="v"><span class="t cfg">{model?.imageSize ?? '—'}</span></span>
+            <span class="lbl k">MODE</span>
+            <span class="v"><span class="t cfg">{model?.mode ?? '—'}</span></span>
+          {/if}
         </div>
       </section>
     {:else if kind !== 'llm'}
@@ -522,6 +539,23 @@
   }
   /* nothing to measure: the plate dimmed */
   .hero.dim .drum,
+  /* A song with no stage count yet: the blank drum breathes (a still one would read as idle). */
+  .sdrum.indet {
+    animation: breathe 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes breathe {
+    from {
+      opacity: 0.45;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sdrum.indet {
+      animation: none;
+    }
+  }
   .hero.dim .sdrum,
   .hero.dim .unit {
     opacity: 0.45;

@@ -3,14 +3,14 @@
   import { Tween, prefersReducedMotion } from 'svelte/motion';
   import { cubicOut } from 'svelte/easing';
 
-  let { value, warn = false, tall = false }: { value: number; warn?: boolean; tall?: boolean } = $props();
+  let { value, warn = false, tall = false, indeterminate = false }: { value: number; warn?: boolean; tall?: boolean; indeterminate?: boolean } = $props();
   const t = Tween.of(() => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)), {
     duration: prefersReducedMotion.current ? 0 : 400,
     easing: cubicOut,
   });
 </script>
 
-<span class="meter" class:warn class:tall><span class="fill" style="transform: scaleX({t.current})"></span></span>
+<span class="meter" class:warn class:tall class:indet={indeterminate}><span class="fill" style={indeterminate ? undefined : `transform: scaleX(${t.current})`}></span></span>
 
 <style>
   .meter {
@@ -31,6 +31,25 @@
     inset: 1px;
     background: #5ab6eb;
     transform-origin: 0 50%;
+  }
+  /* No fraction yet (a song whose model loads): a short fill drifts along the gauge. */
+  .indet .fill {
+    transform: scaleX(0.3);
+    animation: drift 1.8s ease-in-out infinite alternate;
+  }
+  @keyframes drift {
+    from {
+      transform: translateX(0) scaleX(0.3);
+    }
+    to {
+      transform: translateX(70%) scaleX(0.3);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .indet .fill {
+      animation: none;
+      transform: translateX(35%) scaleX(0.3);
+    }
   }
   .warn .fill {
     background: #ff5a36;

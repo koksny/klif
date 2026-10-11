@@ -1,6 +1,7 @@
 // Silicon text helpers: display strings derived from ViewModel fields (never invented values).
 import type { Availability, GpuMemory, LastSession, ModelRef, System, SystemKind } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
+import { jobNoun } from '../../lib/model/music';
 
 /** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
@@ -74,8 +75,9 @@ export function lastSessionParts(ls: LastSession, systems: System[]): { label: s
   if (ls.requests !== undefined) facts.push(`${fmtInt(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) facts.push(`${fmtInt(ls.generatedTokens)} tok`);
   if (ls.decodeTps !== undefined) facts.push(`${fmtTps(ls.decodeTps)} tok/s`);
-  if (ls.images !== undefined) facts.push(`${fmtInt(ls.images)} images`);
-  if (ls.secondsPerImage !== undefined) facts.push(`${ls.secondsPerImage.toFixed(1)} s/image`);
+  const noun = jobNoun(systems.find((x) => x.id === ls.system)?.kind);
+  if (ls.images !== undefined) facts.push(`${fmtInt(ls.images)} ${noun}s`);
+  if (ls.secondsPerImage !== undefined) facts.push(`${ls.secondsPerImage.toFixed(1)} s/${noun}`);
   return { label, facts };
 }
 

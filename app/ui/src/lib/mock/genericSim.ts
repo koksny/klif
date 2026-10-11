@@ -31,6 +31,7 @@ export class GenericSim {
   private busyLeft = 0;
   private readonly c: Cadence;
   private nextId = 1;
+  private follows: { busy: boolean; requestsTotal: number; sinceLastS: number } | null = null;
 
   constructor(
     private readonly kind: SystemKind,
@@ -43,7 +44,18 @@ export class GenericSim {
     this.left = firstInS ?? rng.range(1.2, 4);
   }
 
+  /** Mirror another simulator's requests (a music server: its song is the request) instead of running a cadence. */
+  follow(src: { busy: boolean; requestsTotal: number; sinceLastS: number }) {
+    this.follows = src;
+  }
+
   step(dt: number) {
+    if (this.follows) {
+      this.busy = this.follows.busy;
+      this.requestsTotal = this.follows.requestsTotal;
+      this.sinceLastS = this.follows.sinceLastS;
+      return;
+    }
     let rest = dt;
     let guard = 0;
     while (rest > 1e-6 && guard++ < 32) {

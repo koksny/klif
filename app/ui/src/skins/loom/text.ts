@@ -2,6 +2,7 @@
 import type { Availability, GpuMemory, LastSession, ModelRef, System } from '../../lib/model/types';
 import { fmtCtx, fmtInt, fmtTps } from '../../lib/model/format';
 import { shortLabel as tierShort } from '../../lib/model/systems';
+import { jobNoun } from '../../lib/model/music';
 
 /** Why a System cannot launch, in plain words. */
 export function availabilityText(a: Availability): string {
@@ -66,8 +67,9 @@ export function lastSessionText(ls: LastSession, systems: System[]): string {
   const facts = [fmtDur(ls.uptimeS)];
   if (ls.requests !== undefined) facts.push(`${fmtInt(ls.requests)} requests`);
   if (ls.decodeTps !== undefined) facts.push(`${fmtTps(ls.decodeTps)} tok/s`);
-  if (ls.images !== undefined) facts.push(`${fmtInt(ls.images)} images`);
-  if (ls.secondsPerImage !== undefined) facts.push(`${ls.secondsPerImage.toFixed(1)} s/image`);
+  const noun = jobNoun(systems.find((x) => x.id === ls.system)?.kind);
+  if (ls.images !== undefined) facts.push(`${fmtInt(ls.images)} ${noun}s`);
+  if (ls.secondsPerImage !== undefined) facts.push(`${ls.secondsPerImage.toFixed(1)} s/${noun}`);
   const end = ls.ended === 'fault' ? `fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
   return `last ${label.toLowerCase()} · ${facts.join(' · ')} · ${end}`;
 }

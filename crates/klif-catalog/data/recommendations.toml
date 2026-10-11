@@ -18,7 +18,9 @@
 # - args are a template: {ctx} and the -ctk / -ctv / -fitt values come from the suggestion when it is adopted;
 # - a model of the audiocpp adapter has no model flag: audio.cpp reads a server JSON that KLIF writes on adopt
 #   (`--config`, one file per rung). `audiocpp = { load_options = {..}, session_options = {..} }` carries the family
-#   options that JSON names for the model; keys are "<family>.<option>", values plain words (no paths, no secrets);
+#   options that JSON names for the model; keys are "<family>.<option>", values plain words (no paths, no secrets) or
+#   a whole "{file:<key>}" naming a listed file (a LoRA from another repo), which the JSON gets as its install path;
+#   a rung may carry its own `audiocpp` (which component file it loads), applied over the model's per key;
 #   the JSON's task follows the kind (tts -> "tts", music -> "gen");
 # - `measured` only when the local file's sha256 equals the hub file;
 # - no network / model-fetch flags in `args` (-hf --hf-repo -hff --hf-file -hft --hf-token -mu --model-url
@@ -57,7 +59,7 @@ image = ["krea-2-turbo", "qwen-image-2.1", "flux2-klein-9b", "flux2-klein-4b", "
 tts = ["voxcpm2", "qwen3-tts-1.7b-base", "chatterbox", "kokoro-82m"]
 stt = ["whisper-large-v3-turbo"]
 video = ["minimax-h3-fl2va"]   # its license grants no rights in the EU, UK, South Korea or the USA (see notes)
-music = ["ace-step-1.5-xl-turbo", "ace-step-1.5-turbo", "heartmula-3b", "stable-audio-3-small-music"]
+music = ["ace-step-1.5-xl-turbo", "ace-step-1.5-turbo", "heartmula-3b", "stable-audio-3-small-music", "yue2-3b-instrumental", "yue2-3b"]
 
 # Memory each tier may use (GiB). The VRAM pool is every counted GPU (integrated ones only without a discrete GPU);
 # gpu_margin_gib is left free on each counted GPU.
@@ -2191,5 +2193,107 @@ bits = 8.5
 min_vram_gib = 3.6
 files = [
   { name = "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf", role = "model", sha256 = "89bb22db5fa68ab8f1d90af0a9f88121977c945bdb99a57c96b1e88fa34bf1c8", size = 1683570752 },
+]
+
+[[model]]
+id = "yue2-3b"
+kind = "music"
+name = "YuE2 3B"
+adapter = "audiocpp"
+license = "cc-by-nc-4.0"
+family = "yue2"
+params_total_b = 3.6
+hf_repo = "audio-cpp/Yue2-3B-GGUF"
+revision = "cca74d8980c00f30ab8d52248a367c01ad633ec2"
+port = 7080
+args = ["--config", "{models_dir}\\audio-cpp--Yue2-3B-GGUF\\yue2-3b.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+notes = "YuE2-3B by M-A-P (a 3.6B AR + NAR Mixture-of-Transformers) with its Oobleck VAE on audio.cpp's audiocpp_server (audio.cpp's default package: main q8_0, VAE f16). Full songs with vocals from lyrics plus a style prompt (request option `style`, required; officially English and Chinese), 48 kHz stereo, usually 3 to 5 minutes: the model ends a song itself, there is no duration (cap it with `semantic_max_tokens`, 25 a second). On the way it writes an ABC score you can read, edit and give back (`cot` = full, melody or off); empty lyrics give an instrumental. LICENSE: CC BY-NC 4.0, non-commercial use only. A request answers when the song is done (no progress, no cancel) and can take minutes: --busy-timeout-ms 900000 lets a second request wait that long. The first request loads the weights. KLIF writes the server JSON (task gen) when you adopt it."
+
+# Q8_0 + VAE F16; weights 4.43 GiB. MEASURED with the instrumental model's Q8_0 rung (same weights plus LoRAs) on an RX 9070 XT, audio.cpp 0.9.1 HIP: a 140 s piece peaked at 8.1 GiB; longer pieces keep more in the KV cache, hence 9.0
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 (VAE F16)"
+quality = 8
+bits = 8.5
+min_vram_gib = 9.0
+files = [
+  { name = "yue2-3b-q8_0.gguf", role = "model", sha256 = "52be345b5155bf9ef0b2411e7df8d1d2b8e13b6d977a2f70c35612ec69b1f591", size = 4264195616 },
+  { name = "yue2-vae-f16.gguf", role = "other", sha256 = "d4f4a05d8f291ae820cd1e43609da3fa91b56465810091a2b08c3350b751719d", size = 265218656 },
+  { name = "sidecars/yue2-model-config.json", role = "other", sha256 = "ad3477bbef890bf98ae196c1e4b44779494a6231c4ab66f32708eabadf265329", size = 959 },
+  { name = "sidecars/yue2-generation-config.json", role = "other", sha256 = "203830cebde6e3644eb291925362990d198e66c3b6006cd11f1aaa21904bcc61", size = 466 },
+  { name = "sidecars/yue2-qwen.tiktoken", role = "other", sha256 = "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186", size = 2561218 },
+  { name = "sidecars/yue2-vae-config.json", role = "other", sha256 = "f0191bb9694009956de44e0c361a6f1334760be4c8f848e599bde242a54a0970", size = 1378 },
+]
+
+[[model]]
+id = "yue2-3b-instrumental"
+kind = "music"
+name = "YuE2 3B Instrumental"
+adapter = "audiocpp"
+license = "cc-by-nc-4.0"
+family = "yue2"
+params_total_b = 3.6
+hf_repo = "audio-cpp/Yue2-3B-GGUF"
+revision = "cca74d8980c00f30ab8d52248a367c01ad633ec2"
+port = 7080
+args = ["--config", "{models_dir}\\audio-cpp--Yue2-3B-GGUF\\yue2-3b-instrumental.server.json", "--backend", "vulkan", "--busy-timeout-ms", "900000", "--log", "--host", "{host}", "--port", "{port}"]
+audiocpp = { session_options = { "yue2.ar_lora" = "{file:ar_lora}", "yue2.nar_lora" = "{file:nar_lora}" } }
+notes = "YuE2-3B tuned for instrumental music (soundtracks, game music): Mothersuperior's AR LoRA trained on about 2,700 instrumental tracks with chord-annotated scores, plus the NAR adapter its author rendered with (realaudio joint v4), merged at load. The BF16 main model is the closest match to the original weights; the Q8_0 and Q4_0 rungs merges into dequantized weights and requantizes, and need less memory and time (on an RX 9070 XT with HIP a 140 s piece took about 88 s on BF16 and 71 s on Q8_0 once loaded; rendering the same codes, Q8_0 stayed within 21-30 dB SNR of BF16, Q4_0 did not). Loading merges the LoRAs: about 60 s on HIP, 15 s on Vulkan, once per server session. Put instrument, genre, mood and BPM tags in `style`, and in `lyrics` only the structure: `[instrumental]`, section tags one per line (`[intro]`, `[verse]`, `[chorus]`, `[bridge]`, `[outro]`), or timed ones such as `[intro 0:00-0:15]`, the strongest steer; no production notes. Use `cot` = full (the default): the model writes its score first and ends the piece itself, tending to 3 to 5 minutes. LICENSE: CC BY-NC 4.0 (the model and both adapters), non-commercial use only. Set an adapter's `yue2.ar_lora_scale` / `yue2.nar_lora_scale` to 0 in the server JSON to compare without it. A request answers when the piece is done (no progress, no cancel) and can take minutes. With several AMD GPUs, a HIP build may fail to load its kernels unless only the target GPU is visible (HIP_VISIBLE_DEVICES). KLIF writes the server JSON (task gen, the rung's main model and VAE, both adapters) when you adopt it."
+
+# Q8_0 + VAE F16 + two LoRAs; weights 4.63 GiB. MEASURED on an RX 9070 XT, audio.cpp 0.9.1: a 140 s piece peaked at 8.1 GiB (HIP), a 30 s one at 5.4 GiB (HIP and Vulkan); longer pieces need more, hence 9.0. Speed (klif-cli bench, 30 s): musicRtf 3.7 on HIP, 2.4 on Vulkan once loaded
+[[model.quant]]
+id = "q8-0"
+label = "Q8_0 + instrumental LoRA (VAE F16)"
+quality = 8
+bits = 8.5
+min_vram_gib = 9.0
+audiocpp = { session_options = { "yue2.model_gguf" = "yue2-3b-q8_0.gguf", "yue2.vae_gguf" = "yue2-vae-f16.gguf" } }
+files = [
+  { name = "yue2-3b-q8_0.gguf", role = "model", sha256 = "52be345b5155bf9ef0b2411e7df8d1d2b8e13b6d977a2f70c35612ec69b1f591", size = 4264195616 },
+  { name = "yue2-vae-f16.gguf", role = "other", sha256 = "d4f4a05d8f291ae820cd1e43609da3fa91b56465810091a2b08c3350b751719d", size = 265218656 },
+  { name = "sidecars/yue2-model-config.json", role = "other", sha256 = "ad3477bbef890bf98ae196c1e4b44779494a6231c4ab66f32708eabadf265329", size = 959 },
+  { name = "sidecars/yue2-generation-config.json", role = "other", sha256 = "203830cebde6e3644eb291925362990d198e66c3b6006cd11f1aaa21904bcc61", size = 466 },
+  { name = "sidecars/yue2-qwen.tiktoken", role = "other", sha256 = "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186", size = 2561218 },
+  { name = "sidecars/yue2-vae-config.json", role = "other", sha256 = "f0191bb9694009956de44e0c361a6f1334760be4c8f848e599bde242a54a0970", size = 1378 },
+  { name = "ar_lora_inst_v3abc.bf16.safetensors", role = "other", key = "ar_lora", repo = "Mothersuperior/YuE2-instrumental-cot-full-loras", revision = "947f2f4b28978b2b6c3e316e6a87925c76bf3c4b", sha256 = "e408fd3148b75b1165f7ddbf63db575d83bb6402a0b5f876fcb767dbcb2c5414", size = 139502088 },
+  { name = "nar_lora_joint_v4.bf16.safetensors", role = "other", key = "nar_lora", repo = "Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4", revision = "e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5", sha256 = "e67ca682f1070d2abb45cf9ac90d542fe4ce5286b87aed97f02d9a4acd6b6f36", size = 70301856 },
+]
+
+# Q4_0 + VAE F16 + two LoRAs; weights 3.14 GiB. MEASURED on an RX 9070 XT, audio.cpp 0.9.1 HIP: a 122 s piece peaked at 5.8 GiB, hence 6.5. A rung for comparison, not a default: in our runs Q4_0 wrote much shorter scores and ended pieces 2-3x earlier, and rendering the same codes changed bass, highs and stereo width (yue2.cpp's author: this audio-code model breaks below Q5)
+[[model.quant]]
+id = "q4-0"
+label = "Q4_0 + instrumental LoRA (VAE F16)"
+quality = 4
+bits = 4.5
+min_vram_gib = 6.5
+audiocpp = { session_options = { "yue2.model_gguf" = "yue2-3b-q4_0.gguf", "yue2.vae_gguf" = "yue2-vae-f16.gguf" } }
+files = [
+  { name = "yue2-3b-q4_0.gguf", role = "model", sha256 = "b80215b59a7fe41a4c76b6163c0ae1031672f892b5951d66fefaa2053a815029", size = 2665641504 },
+  { name = "yue2-vae-f16.gguf", role = "other", sha256 = "d4f4a05d8f291ae820cd1e43609da3fa91b56465810091a2b08c3350b751719d", size = 265218656 },
+  { name = "sidecars/yue2-model-config.json", role = "other", sha256 = "ad3477bbef890bf98ae196c1e4b44779494a6231c4ab66f32708eabadf265329", size = 959 },
+  { name = "sidecars/yue2-generation-config.json", role = "other", sha256 = "203830cebde6e3644eb291925362990d198e66c3b6006cd11f1aaa21904bcc61", size = 466 },
+  { name = "sidecars/yue2-qwen.tiktoken", role = "other", sha256 = "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186", size = 2561218 },
+  { name = "sidecars/yue2-vae-config.json", role = "other", sha256 = "f0191bb9694009956de44e0c361a6f1334760be4c8f848e599bde242a54a0970", size = 1378 },
+  { name = "ar_lora_inst_v3abc.bf16.safetensors", role = "other", key = "ar_lora", repo = "Mothersuperior/YuE2-instrumental-cot-full-loras", revision = "947f2f4b28978b2b6c3e316e6a87925c76bf3c4b", sha256 = "e408fd3148b75b1165f7ddbf63db575d83bb6402a0b5f876fcb767dbcb2c5414", size = 139502088 },
+  { name = "nar_lora_joint_v4.bf16.safetensors", role = "other", key = "nar_lora", repo = "Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4", revision = "e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5", sha256 = "e67ca682f1070d2abb45cf9ac90d542fe4ce5286b87aed97f02d9a4acd6b6f36", size = 70301856 },
+]
+
+# BF16 + VAE F16 + two LoRAs; weights 7.40 GiB. MEASURED on an RX 9070 XT, audio.cpp 0.9.1 HIP: a 140 s piece peaked at 11.1 GiB, hence 12.0. The F32 VAE is not offered (in our renders it differed from F16 by 64-67 dB SNR, inaudible): on Vulkan its decode tile (1024 latent frames) needs one buffer above the 4 GiB limit (pieces longer than about 27 s fail); the merged AR weights are cached in RAM, not VRAM
+[[model.quant]]
+id = "bf16"
+label = "BF16 + instrumental LoRA (VAE F16)"
+quality = 16
+bits = 16
+min_vram_gib = 12.0
+audiocpp = { session_options = { "yue2.model_gguf" = "yue2-3b-bf16.gguf", "yue2.vae_gguf" = "yue2-vae-f16.gguf" } }
+files = [
+  { name = "yue2-3b-bf16.gguf", role = "model", sha256 = "4cf3fdffbaaed2d8e30a3122ac7cd27d0c96f8921805f173da9758c685b3c7d6", size = 7261484576 },
+  { name = "yue2-vae-f16.gguf", role = "other", sha256 = "d4f4a05d8f291ae820cd1e43609da3fa91b56465810091a2b08c3350b751719d", size = 265218656 },
+  { name = "sidecars/yue2-model-config.json", role = "other", sha256 = "ad3477bbef890bf98ae196c1e4b44779494a6231c4ab66f32708eabadf265329", size = 959 },
+  { name = "sidecars/yue2-generation-config.json", role = "other", sha256 = "203830cebde6e3644eb291925362990d198e66c3b6006cd11f1aaa21904bcc61", size = 466 },
+  { name = "sidecars/yue2-qwen.tiktoken", role = "other", sha256 = "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186", size = 2561218 },
+  { name = "sidecars/yue2-vae-config.json", role = "other", sha256 = "f0191bb9694009956de44e0c361a6f1334760be4c8f848e599bde242a54a0970", size = 1378 },
+  { name = "ar_lora_inst_v3abc.bf16.safetensors", role = "other", key = "ar_lora", repo = "Mothersuperior/YuE2-instrumental-cot-full-loras", revision = "947f2f4b28978b2b6c3e316e6a87925c76bf3c4b", sha256 = "e408fd3148b75b1165f7ddbf63db575d83bb6402a0b5f876fcb767dbcb2c5414", size = 139502088 },
+  { name = "nar_lora_joint_v4.bf16.safetensors", role = "other", key = "nar_lora", repo = "Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4", revision = "e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5", sha256 = "e67ca682f1070d2abb45cf9ac90d542fe4ce5286b87aed97f02d9a4acd6b6f36", size = 70301856 },
 ]
 

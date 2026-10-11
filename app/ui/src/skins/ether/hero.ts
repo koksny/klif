@@ -10,6 +10,7 @@
 import type { LoadStep, ModelRef, Session, System, SystemKind, ViewModel } from '../../lib/model/types';
 import { idleState, KIND_LABEL } from '../../lib/model/systems';
 import { fmtGiB, fmtInt, fmtSeconds, fmtTps } from '../../lib/model/format';
+import { isMusicJob, stageWord } from '../../lib/model/music';
 import type { Sleep } from './state.svelte';
 import { fmtAgo, fmtDur, fmtEta, lastSessionText, lastSpeed, shapeText } from './text';
 
@@ -56,7 +57,7 @@ export function heroOf(c: Ctx): Hero {
     const ls = vm.lastSession;
     if (!ls) return { ...base, label: 'STANDBY', unit, sub: 'nothing running · pick a System and launch', tone: 'dim' };
     // standby shows the previous session: its median speed as the (dimmed) figure, the rest as the sub-line
-    const sp = lastSpeed(ls);
+    const sp = lastSpeed(ls, vm.systems);
     return { ...base, label: 'STANDBY', value: sp?.value ?? base.value, unit: sp?.unit ?? unit, sub: lastSessionText(ls, vm.systems, c.compact), tone: 'dim' };
   }
   const phase = s.phase;
@@ -110,6 +111,16 @@ export function heroOf(c: Ctx): Hero {
     if (!llm.requests.length && !llm.generatedTokens) return { ...base, label: 'READY', unit: 'tok/s', sub: 'waiting for the first request', tone: 'dim' };
     return { ...base, label: 'READY', value: fmtTps(c.tps), unit: 'tok/s', sub: `last request · ${fmtInt(llm.generatedTokens)} tok`, tone: 'dim' };
   }
+  // A song in flight reads like an image job (the stage is the step), not like requests.
+  if (img && kind === 'music' && img.activity === 'generating' && isMusicJob(img))
+    return {
+      ...base,
+      label: `MUSIC · ${stageWord(img).toUpperCase()}`,
+      value: img.steps > 0 ? `${img.step}/${img.steps}` : '–',
+      unit: img.steps > 0 ? 'stages' : '',
+      sub: fmtSeconds(img.elapsedS),
+      frac: img.steps > 0 ? Math.min(1, img.step / img.steps) : null,
+    };
   const gen = s.generic;
   if (gen) {
     const on = (gen.requestsInFlight ?? 0) > 0;
@@ -148,6 +159,13 @@ export function factsOf(c: Ctx, n: 2 | 3): [string, string][] {
     return [
       ['last image', j ? `${fmtSeconds(j.seconds)} · ${j.width}x${j.height}${j.edit ? ' · edit' : ''}` : img ? 'none yet' : '—'],
       ['images', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
+    ];
+  }
+  if (kind === 'music') {
+    const j = img?.recent[img.recent.length - 1];
+    return [
+      ['last song', j ? fmtSeconds(j.seconds) : img ? 'none yet' : '—'],
+      ['songs', img ? `${fmtInt(img.imagesThisSession)} this session` : '—'],
     ];
   }
   if (kind !== 'llm') {

@@ -11,12 +11,15 @@
     variant = 'full',
     fault = false,
     maxShown = 12,
+    pixels = true,
   }: {
     jobs: ImageJob[];
     current?: { elapsedS: number; edit: boolean } | null;
     variant?: 'full' | 'mini';
     fault?: boolean;
     maxShown?: number;
+    /** False for songs: no size in the pulse titles. */
+    pixels?: boolean;
   } = $props();
 
   let w = $state(0);
@@ -25,7 +28,7 @@
 
   const shown = $derived(jobs.slice(-maxShown));
   const items = $derived([
-    ...shown.map((j) => ({ s: j.seconds, edit: j.edit, done: true, title: `${j.width}x${j.height}${j.edit ? ' edit' : ''} · ${j.seconds.toFixed(1)} s` })),
+    ...shown.map((j) => ({ s: j.seconds, edit: j.edit, done: true, title: `${pixels ? `${j.width}x${j.height}${j.edit ? ' edit' : ''} · ` : ''}${j.seconds.toFixed(1)} s` })),
     ...(current ? [{ s: current.elapsedS, edit: current.edit, done: false, title: `running${current.edit ? ' edit' : ''} · ${current.elapsedS.toFixed(1)} s so far` }] : []),
   ]);
   const cells = $derived(fault ? Math.max(maxShown, items.length + 2) : Math.max(mini ? Math.max(1, items.length) : maxShown, items.length));

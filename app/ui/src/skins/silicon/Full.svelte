@@ -18,6 +18,7 @@
   import TabLabel from '../../lib/shell/SystemTabs/TabLabel.svelte';
   import { tabsFor } from '../../lib/shell/SystemTabs/tabs';
   import { fmtClock, fmtFixed, fmtGiB, fmtInt, fmtPct, fmtSeconds, fmtTps } from '../../lib/model/format';
+  import { stageWord, usesImageLayout } from '../../lib/model/music';
   import DieCanvas from './DieCanvas.svelte';
   import VramColumn from './VramColumn.svelte';
   import Sparkline from './Sparkline.svelte';
@@ -44,8 +45,11 @@
   const img = $derived(s?.image ?? null);
   const gen = $derived(s?.generic ?? null);
   const liveLlm = $derived(!!s && phase === 'live' && kind === 'llm' && !!llm);
-  const liveImg = $derived(!!s && phase === 'live' && kind === 'image' && !!img);
-  const liveGen = $derived(!!s && phase === 'live' && kind !== 'llm' && kind !== 'image' && !!gen);
+  /** Image and music Systems share the image layout (a song's stage is the step). */
+  const imagey = $derived(usesImageLayout(kind, !!s, img));
+  const music = $derived(kind === 'music');
+  const liveImg = $derived(!!s && phase === 'live' && imagey && !!img);
+  const liveGen = $derived(!!s && phase === 'live' && kind !== 'llm' && !imagey && !!gen);
   const genBusy = $derived(liveGen && (gen?.requestsInFlight ?? 0) > 0);
 
   type View = 'idle' | 'loading' | 'live-llm' | 'live-img' | 'live-gen' | 'stopping' | 'fault' | 'other';
@@ -102,13 +106,16 @@
   const preSegs = $derived(Math.round(Math.min(1, Math.max(0, preFrac)) * 64));
 
   // Image jobs light the CU tiles by sampling progress; the die caption says what a tile means.
-  const imgGen = $derived(liveImg && !!img && img.activity === 'generating' && img.steps > 0);
-  const imgFrac = $derived(imgGen && img ? img.step / img.steps : 0);
-  const imgFill = $derived(imgGen ? imgFrac : null);
+  const imgGen = $derived(liveImg && !!img && img.activity === 'generating' && (img.steps > 0 || music));
+  /** A song with no stage count yet (the model loading): the die sweeps instead of filling. */
+  const imgIndet = $derived(imgGen && !!img && img.steps <= 0);
+  const imgFrac = $derived(imgGen && img && img.steps > 0 ? img.step / img.steps : 0);
+  const imgFill = $derived(imgGen && !imgIndet ? imgFrac : null);
   const lastJob = $derived(img && img.recent.length ? img.recent[img.recent.length - 1] : null);
   const dieCaption = $derived.by(() => {
-    if (kind === 'image') {
+    if (imagey) {
       const per = img && img.steps > 0 ? 64 / img.steps : 0;
+      if (music) return Number.isInteger(per) && per > 0 ? [`${per} tiles`, '= 1 stage'] : ['tiles =', 'song', 'activity'];
       return Number.isInteger(per) && per > 0 ? [`${per} tiles`, '= 1 step'] : ['tiles =', 'sampling', 'progress'];
     }
     if (prefillActive) return ['1 tile =', '1/64 of', 'prompt'];
@@ -143,7 +150,7 @@
   const requests = $derived(llm ? llm.requests.slice(-reqN) : []);
   const reqSlots = $derived(Array.from({ length: reqN }, (_, i) => requests[i - (reqN - requests.length)] ?? null));
   // Image slots show recent jobs in every state (empty while idle or loading), never a request timeline.
-  const jobsView = $derived(kind === 'image');
+  const jobsView = $derived(imagey);
   // Was a request in flight when the LLM server died? (activity as last reported)
   const diedInRequest = $derived(view === 'fault' && !!llm && llm.activity !== 'idle');
   const last = $derived(vm.lastSession ? lastSessionParts(vm.lastSession, vm.systems) : null);
@@ -212,11 +219,11 @@
 
 <!-- A hero with nothing to measure (idle, stopping, no data yet): the kind's own panel, dimmed, with a word over it. -->
 {#snippet waitHero(word: string, amber: boolean)}
-  {#if kind === 'image'}
+  {#if imagey}
     <section class="speed panel diff">
       <div class="sp-l">
-        <div class="lbl">DIFFUSION PROGRESS</div>
-        <div class="hero dh dimh"><span class="unit pre">step</span><b>—</b></div>
+        <div class="lbl">{music ? 'SONG PROGRESS' : 'DIFFUSION PROGRESS'}</div>
+        <div class="hero dh dimh"><span class="unit pre">{music ? 'stage' : 'step'}</span><b>—</b></div>
       </div>
       <div class="sp-r dgr">
         <div class="d-stats"><span class="wword" class:amb={amber}>{word}</span></div>
@@ -399,24 +406,35 @@
       {:else if view === 'live-img' && img}
         <section class="speed panel diff">
           <div class="sp-l">
-            <div class="lbl">DIFFUSION PROGRESS{imgGen && img.edit ? ' · EDIT' : ''}</div>
-            <div class="hero dh" class:dimh={!imgGen}>
-              <span class="unit pre">step</span><b>{imgGen ? img.step : '—'}</b><span class="unit">/ {img.steps}</span>
-            </div>
+            <div class="lbl">{music ? 'SONG PROGRESS' : 'DIFFUSION PROGRESS'}{imgGen && img.edit ? ' · EDIT' : ''}</div>
+            {#if music}
+              <div class="hero dh" class:dimh={!imgGen}>
+                <span class="unit pre">stage</span><b>{imgGen && img.steps > 0 ? img.step : '—'}</b>{#if img.steps > 0}<span class="unit">/ {img.steps}</span>{/if}
+              </div>
+            {:else}
+              <div class="hero dh" class:dimh={!imgGen}>
+                <span class="unit pre">step</span><b>{imgGen ? img.step : '—'}</b><span class="unit">/ {img.steps}</span>
+              </div>
+            {/if}
           </div>
           <div class="sp-r dgr">
-            {#if imgGen}
+            {#if imgGen && music}
+              <div class="d-stats">
+                <span class="cur">{stageWord(img)}</span>
+                <span>elapsed <b>{fmtSeconds(img.elapsedS)}</b></span>
+              </div>
+            {:else if imgGen}
               <div class="d-stats">
                 <span><b>{fmtFixed(img.sPerIt, 2)}</b> s/it</span>
                 <span>elapsed <b>{fmtSeconds(img.elapsedS)}</b></span>
                 <span class="muted sm">{img.width}×{img.height}{img.edit ? ' · edit' : ''}</span>
               </div>
             {:else}
-              <div class="d-stats"><span class="muted">waiting for the next job</span></div>
+              <div class="d-stats"><span class="muted">{music ? 'waiting for the next song' : 'waiting for the next job'}</span></div>
             {/if}
             <div class="d-bar">
-              <span class="d-meter"><Meter value={imgFrac} tall /></span>
-              <b class="d-pct">{fmtPct(imgFrac)}</b>
+              <span class="d-meter"><Meter value={imgFrac} tall indeterminate={imgIndet} /></span>
+              <b class="d-pct">{imgIndet ? '…' : fmtPct(imgFrac)}</b>
             </div>
           </div>
         </section>
@@ -475,6 +493,23 @@
               {/each}
             </div>
           {/each}
+        </section>
+      {:else if music && imagey}
+        <section class="rows panel" class:dim={!img}>
+          <div class="row r-img">
+            <div class="k">LAST SONG</div>
+            <div class="v">
+              {#if lastJob}<b>{fmtSeconds(lastJob.seconds)}</b>{:else}<span class="muted">{img ? 'none yet' : '—'}</span>{/if}
+            </div>
+            <div class="k">SONGS</div>
+            <div class="v">{#if img}<b>{fmtInt(img.imagesThisSession)}</b> this session{:else}<span class="muted">—</span>{/if}</div>
+          </div>
+          <div class="row r-img">
+            <div class="k">MODEL</div>
+            <div class="v">{#if focusModel?.name}<b>{focusModel.name}</b>{focusModel.quant ? ` · ${focusModel.quant}` : ''}{:else}<span class="muted">—</span>{/if}</div>
+            <div class="k">REPORTS</div>
+            <div class="v">{gen?.modelId ?? '—'}</div>
+          </div>
         </section>
       {:else if kind === 'image'}
         <section class="rows panel" class:dim={!img}>
@@ -558,6 +593,7 @@
           totalGiB={vm.vram.totalGiB}
           cacheFrac={liveLlm ? cacheFrac : null}
           jobFill={imgFill}
+          sweep={imgIndet}
           caption={dieCaption}
           pagedOutGiB={dz ? dz.pagedOutGiB : null}
           label={dz
@@ -613,11 +649,11 @@
   <section class="tline panel" class:jobs={jobsView}>
     <div class="tl-main">
       <div class="cap2">
-        {jobsView ? 'RECENT JOBS' : 'REQUEST TIMELINE'}<span class="dimcap">{jobsView ? jobsCaption : tlCaption}</span>
+        {music && jobsView ? 'RECENT SONGS' : jobsView ? 'RECENT JOBS' : 'REQUEST TIMELINE'}<span class="dimcap">{jobsView ? jobsCaption : tlCaption}</span>
         {#if view === 'idle' && lastText}<span class="lastcap" class:red={vm.lastSession?.ended === 'fault'} title={vm.lastSession?.model.name}>{lastText}</span>{/if}
       </div>
       {#if jobsView}
-        <div class="jobs-area"><JobsChart jobs={img?.recent ?? []} fault={view === 'fault' && !!img} /></div>
+        <div class="jobs-area"><JobsChart jobs={img?.recent ?? []} fault={view === 'fault' && !!img} pixels={!music} /></div>
       {:else}
         <div class="bars">
           {#each reqSlots as r, i (i)}
@@ -633,7 +669,7 @@
       {/if}
     </div>
     <div class="legend">
-      {#if jobsView}
+      {#if jobsView && !music}
         <span><i class="sw dec"></i>PLAIN</span>
         <span><i class="sw edit"></i>EDIT</span>
       {:else if kind === 'llm'}

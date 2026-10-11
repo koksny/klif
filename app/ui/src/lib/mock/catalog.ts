@@ -26,6 +26,7 @@ export const MODELS_DIR = 'D:\\models';
 export const LLAMA = 'D:\\llama.cpp\\llama-server.exe';
 export const SD_SERVER = 'D:\\stable-diffusion.cpp\\sd-server.exe';
 export const WHISPER = 'D:\\whisper.cpp\\whisper-server.exe';
+export const AUDIO_SERVER = 'D:\\audio.cpp\\audio-server.exe';
 export const COMFY_PY = 'D:\\ComfyUI\\python_embeded\\python.exe';
 export const MOCK_KEY_MASK = '\u2022\u2022\u2022\u2022';
 
@@ -111,6 +112,7 @@ export const FACTS: Record<string, ModelFacts> = {
   },
   [`${MODELS_DIR}\\kokoro-82m.onnx`]: { name: 'Kokoro 82M', quant: 'fp16', weightsGiB: 0.2, buffersGiB: 0.1, family: 'generic' },
   [`${MODELS_DIR}\\ggml-large-v3-turbo-q8_0.bin`]: { name: 'Whisper large-v3 turbo', quant: 'Q8_0', weightsGiB: 0.87, buffersGiB: 0.4, family: 'generic' },
+  [`${MODELS_DIR}\\yue2-instrumental-q8_0.gguf`]: { name: 'YuE2 Instrumental', quant: 'Q8_0', weightsGiB: 7.9, buffersGiB: 1.2, family: 'generic' },
   [`${MODELS_DIR}\\wan-2.2-ti2v-5b-q8_0.gguf`]: { name: 'Wan 2.2 TI2V 5B', quant: 'Q8_0', weightsGiB: 5.4, buffersGiB: 1.6, family: 'generic' },
   [`${MODELS_DIR}\\qwen-3.8-flash-next-ud-q2_k_xl.gguf`]: {
     name: 'Qwen 3.8 Flash-Next',
@@ -317,6 +319,21 @@ export function localPresets(): Record<string, PresetSpec> {
       model_name: 'Whisper large-v3 turbo',
       quant: 'Q8_0',
       backend: 'Vulkan',
+    },
+    'yue2-music': {
+      name: 'YuE2 Instrumental Q8',
+      adapter: 'audiocpp',
+      kind: 'music',
+      command: AUDIO_SERVER,
+      args: ['--model', '{model}', '--host', '{host}', '--port', '{port}'],
+      cwd: 'D:\\audio.cpp',
+      port: 8080,
+      health: '/health',
+      model: `${MODELS_DIR}\\yue2-instrumental-q8_0.gguf`,
+      gpu: GPU_9070.id,
+      model_name: 'YuE2 Instrumental',
+      quant: 'Q8_0',
+      backend: 'HIP',
     },
     'comfy-video': {
       name: 'ComfyUI video (Wan 2.2)',

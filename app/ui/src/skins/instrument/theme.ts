@@ -2,6 +2,7 @@
 import type { GpuMemory, ModelRef, Phase, Session, System, SystemId, SystemKind, ViewModel } from '../../lib/model/types';
 import { selectedSystem, shortLabel as tierShort } from '../../lib/model/systems';
 import { fmtCtx } from '../../lib/model/format';
+import { jobNoun, usesImageLayout } from '../../lib/model/music';
 
 export const PAL = {
   window: '#141517',
@@ -142,8 +143,9 @@ export function viewOf(vm: ViewModel): View {
   if (s.phase === 'stopping') return 'stopping';
   const kind = kindOf(vm);
   if (kind === 'llm' && s.llm) return 'live-llm';
-  if (kind === 'image' && s.image) return 'live-img';
-  if (kind !== 'llm' && kind !== 'image' && s.generic) return 'live-gen';
+  const imagey = usesImageLayout(kind, true, s.image);
+  if (imagey && s.image) return 'live-img';
+  if (kind !== 'llm' && !imagey && s.generic) return 'live-gen';
   return 'other';
 }
 
@@ -166,8 +168,9 @@ export function lastSessionText(vm: ViewModel): { text: string; fault: boolean }
   if (ls.requests !== undefined) facts.push(`${fmtIntLocal(ls.requests)} requests`);
   if (ls.generatedTokens !== undefined) facts.push(`${fmtIntLocal(ls.generatedTokens)} tok`);
   if (ls.decodeTps !== undefined) facts.push(`${ls.decodeTps >= 100 ? Math.round(ls.decodeTps) : ls.decodeTps.toFixed(1)} tok/s`);
-  if (ls.images !== undefined) facts.push(`${fmtIntLocal(ls.images)} images`);
-  if (ls.secondsPerImage !== undefined) facts.push(`${fmtJobS(ls.secondsPerImage)} per image`);
+  const noun = jobNoun(slotById(vm, ls.system)?.kind);
+  if (ls.images !== undefined) facts.push(`${fmtIntLocal(ls.images)} ${noun}s`);
+  if (ls.secondsPerImage !== undefined) facts.push(`${fmtJobS(ls.secondsPerImage)} per ${noun}`);
   const end = ls.ended === 'fault' ? `ended in a fault ${fmtAgo(ls.endedAgoS)}` : `stopped ${fmtAgo(ls.endedAgoS)}`;
   return { text: `last session: ${label} · ${facts.join(' · ')} · ${end}`, fault: ls.ended === 'fault' };
 }

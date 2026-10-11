@@ -6,6 +6,8 @@
 //   the reported decodeTps (never more than EXTRAPOLATE_MS past the last snapshot).
 // - prefill: tiles fill steadily in the same order by prefill progress (doneTokens / tokens).
 // - image jobs: tiles fill the same way by sampling progress (step / steps).
+// - a job with no progress to show (a song while its model loads): tiles light in order at SWEEP_RATE, like a
+//   slow decode.
 // - idle: nothing new lights; tiles fade out.
 //
 // Token k goes to shader engine k % 4 (round robin, like a dispatcher), CU slot floor(k / 4) % 16;
@@ -23,6 +25,8 @@ const FADE_CUTOFF_MS = 3000;
 /** Max time the head may run ahead of the last snapshot at the reported rate. */
 const EXTRAPOLATE_MS = 8000;
 const PREFILL_LEVEL = 0.62;
+/** Tiles per second of a job without a progress fraction. */
+const SWEEP_RATE = 6;
 
 /** Tile id (se * 16 + slot) for token number k. */
 export function tileForToken(k: number): number {
@@ -38,7 +42,9 @@ export class TokenStream {
   /** Steady prefill fill level per tile (0 or PREFILL_LEVEL). */
   readonly steady = new Float32Array(TILE_COUNT);
 
-  private mode: 'idle' | 'steady' | 'decode' = 'idle';
+  private mode: 'idle' | 'steady' | 'decode' | 'sweep' = 'idle';
+  private sweepAt = 0;
+  private sweepHead = 0;
   private head = 0;
   private synced = false;
   private rate = 0;
@@ -48,11 +54,21 @@ export class TokenStream {
   /**
    * Feed a telemetry snapshot. `now` is performance.now().
    * `jobFill` (0..1) is the progress of a non-token job (image sampling steps); tiles then fill in
-   * stream order by that fraction, exactly like prefill.
+   * stream order by that fraction, exactly like prefill. `sweep`: a job runs but has no fraction yet.
    */
-  update(llm: LlmLive | null, now: number, live: boolean, jobFill: number | null = null) {
+  update(llm: LlmLive | null, now: number, live: boolean, jobFill: number | null = null, sweep = false) {
     if (jobFill !== null) {
       this.fill(jobFill);
+      return;
+    }
+    if (sweep) {
+      if (this.mode !== 'sweep') {
+        if (this.mode === 'steady') this.releaseSteady(now);
+        this.mode = 'sweep';
+        this.sweepAt = now;
+        this.sweepHead = 0;
+        this.synced = false;
+      }
       return;
     }
     const activity = live && llm ? llm.activity : 'idle';
@@ -112,6 +128,10 @@ export class TokenStream {
 
   /** Advance the head to `now`. Returns true while anything is still moving or glowing. */
   step(now: number): boolean {
+    if (this.mode === 'sweep') {
+      const to = Math.floor(((now - this.sweepAt) / 1000) * SWEEP_RATE);
+      for (; this.sweepHead < to; this.sweepHead++) this.litAt[tileForToken(this.sweepHead)] = now;
+    }
     if (this.mode === 'decode' && this.rate > 0) {
       const ahead = Math.min(now - this.anchorT, EXTRAPOLATE_MS);
       const target = this.anchorG + (this.rate * ahead) / 1000;
@@ -133,6 +153,7 @@ export class TokenStream {
   }
 
   active(now: number): boolean {
+    if (this.mode === 'sweep') return true;
     if (this.mode === 'decode' && this.rate > 0 && now - this.anchorT < EXTRAPOLATE_MS + FADE_CUTOFF_MS) return true;
     for (let t = 0; t < TILE_COUNT; t++) if (now - this.litAt[t] < FADE_CUTOFF_MS) return true;
     return false;

@@ -6,7 +6,7 @@
   import type { ImageJob } from '../../../lib/model/types';
   import { fmtJobS } from '../theme';
 
-  let { jobs, slots = 12, none = 'no images yet' }: { jobs: ImageJob[]; slots?: number; none?: string } = $props();
+  let { jobs, slots = 12, none = 'no images yet', pixels = true }: { jobs: ImageJob[]; slots?: number; none?: string; pixels?: boolean } = $props();
 
   const last = $derived(jobs.slice(-slots));
   const top = $derived.by(() => {
@@ -33,7 +33,7 @@
         {#if j && top}
           <div class="col" style="height:{(j.seconds / top) * 100}%">
             <span class="v">{fmtJobS(j.seconds)}</span>
-            <span class="bar" class:edit={j.edit} title="{j.width}×{j.height}{j.edit ? ' edit' : ''} · {fmtJobS(j.seconds)}"></span>
+            <span class="bar" class:edit={j.edit} title="{pixels ? `${j.width}×${j.height}${j.edit ? ' edit' : ''} · ` : ''}{fmtJobS(j.seconds)}"></span>
           </div>
         {/if}
       </div>

@@ -54,7 +54,7 @@
     const ls = vm.lastSession;
     if (s || !o.selReady || !ls) return o.hero.sub;
     const tier = systemLabel(vm, ls.system) || undefined;
-    const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} TOK/S` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} S/IMG` : '';
+    const speed = ls.decodeTps !== undefined ? ` · ${fmtTps(ls.decodeTps)} TOK/S` : ls.secondsPerImage !== undefined ? ` · ${ls.secondsPerImage.toFixed(1)} S/${vm.systems.find((x) => x.id === ls.system)?.kind === 'music' ? 'SONG' : 'IMG'}` : '';
     return `LAST ${tier ? short(tier) : ls.model.name.toUpperCase()}${speed} · ${ls.ended === 'fault' ? 'FAULT' : 'STOPPED'} ${fmtAgo(ls.endedAgoS)}`;
   });
 </script>

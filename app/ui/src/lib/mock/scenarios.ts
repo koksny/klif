@@ -180,6 +180,39 @@ export const SCENARIOS: ScenarioDef[] = [
     searchS: 400,
   },
   {
+    name: 'music',
+    label: 'Music: a song in flight',
+    blurb: 'A music System (YuE2) composing its second song: the stage counts as the step, like the image sampler.',
+    world: kindsWorld,
+    setup: (e) => {
+      e.select('music');
+      e.launch('music', { skipBoot: true, uptimeOffsetS: 600 });
+    },
+    startT: 0,
+    startUntil: liveSession('music', (vm) => {
+      const i = vm.session?.image;
+      return !!i && i.activity === 'generating' && i.phase === 'codes' && i.elapsedS > 8 && i.recent.length >= 1;
+    }),
+    searchS: 400,
+  },
+  {
+    name: 'music-load',
+    label: 'Music: the model loads (no stage count)',
+    blurb: 'The first song of a music System: the model loads, the job reports no stages yet, so the displays stay indeterminate.',
+    world: kindsWorld,
+    setup: (e) => {
+      e.select('music');
+      e.launch('music', { skipBoot: true, uptimeOffsetS: 600 });
+    },
+    startT: 0,
+    startUntil: liveSession('music', (vm) => {
+      const i = vm.session?.image;
+      return !!i && i.activity === 'generating' && i.phase === 'load';
+    }),
+    searchS: 30,
+    searchStepS: 0.25,
+  },
+  {
     name: 'empty',
     label: 'Empty: no Systems',
     blurb: 'A fresh install: no Systems in klif.toml, no models directory. The shell shows the onboarding card.',

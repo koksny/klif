@@ -584,6 +584,10 @@ export interface ImageLive {
   imagesThisSession: number;
   /** Frames of the video job in flight (or the last one), for sd.cpp video. */
   frames?: number;
+  /** A music job (audio.cpp): the stage in flight ('load' | 'score' | 'codes' | 'render' | 'decode' for YuE2, 'work'
+   *  for a family whose log names no stages). `step` / `steps` then count stages (`step` = the stage in flight, 1-based),
+   *  not sampling steps. */
+  phase?: string;
 }
 
 /** What KLIF can tell about a server without a dedicated parser (tts / stt / video, generic, openai). */

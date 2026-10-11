@@ -93,7 +93,7 @@ status <system>`), in the API of its `adapter`. A System on another machine has 
 | `sd.cpp` (image) | `POST {baseUrl}/v1/images/generations` `{"prompt": "...", "n": 1, "output_format": "png"}`; size and steps are the server's launch defaults (the preset's params) | `{"data": [{"b64_json": "..."}]}`: decode the base64 into the PNG |
 | `audiocpp` (tts) | `POST {baseUrl}/v1/audio/speech` `{"model", "input": "text", "response_format": "json"}`; the model id from `GET {baseUrl}/v1/models` | JSON with base64 WAV audio (`audio`) and `timing` |
 | `audiocpp` (stt) | `POST {baseUrl}/v1/audio/transcriptions`, multipart: `file` (WAV), `model`, `response_format=json` | `{"text": "..."}` |
-| `audiocpp` (music) | `POST {baseUrl}/v1/tasks/run` `{"model", "request": {"text": "...", "duration_seconds": 30, "lyrics": "[Instrumental]"}}` | JSON with base64 WAV (`audio`) and `timing` |
+| `audiocpp` (music) | `POST {baseUrl}/v1/tasks/run` `{"model", "request": {"text": "...", "duration_seconds": 30, "lyrics": "[Instrumental]"}}`; YuE2 instead: `{"model", "request": {"lyrics": "[instrumental]", "options": {"style": "tags", "cot": "full"}}}` (no duration: it ends the piece itself) | JSON with base64 WAV (`audio`) and `timing` |
 | whisper-server (stt, `generic`) | `POST {baseUrl}/inference` (or the `--inference-path` in its command), multipart `file` | `{"text": "..."}` |
 
 - `apiKey: true` means the server wants `Authorization: Bearer <KLIF's API key>`. Use the key only from where the
