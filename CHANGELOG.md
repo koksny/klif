@@ -5,6 +5,19 @@ were built from source; their notes follow, newest first.
 
 ## Unreleased
 
+- **Strata adapter.** `adapter = "strata"` for [Strata](https://github.com/Niko1221/Strata), the MoE engine that keeps
+  the experts in RAM. KLIF reads its `/metrics` every second: busy while it reads a prompt or generates, the
+  engine's own decode rate, the context in use, MTP acceptance, the engine version, and every finished request
+  with its prompt and decode times, so Strata Systems get live records like llama.cpp ones. `klif-cli bench` waits
+  for its slot and records its version.
+- **Fix: host memory no longer counts as VRAM.** Windows counts memory a server registers for the GPU in its
+  committed total. For a server that does not spill (sd.cpp, Strata, audio.cpp, generic) the shared part is now
+  left out of what it holds, is shown and is charged against the card, and no session counts more than its card
+  plus that memory: Strata showed 62 GiB of VRAM on a 16 GiB card, and a measurement taken while it loaded made
+  it "need 49.7 GiB". A command's measured VRAM need now comes only from the time its server is up, not loading.
+- **Fix: an adopted server is no longer busy for a moment.** A fresh engine (every one-shot `klif-cli` command)
+  reads an adopted server's earlier log in at once; those lines no longer count as activity, so `klif-cli status`
+  does not report an idle OpenAI-compatible or generic server as busy.
 - **Stop on exit.** A new switch in Tune (`[ui] stop_on_exit`, `klif-cli settings stop-on-exit on|off`): quitting
   the window stops this machine's Systems first and waits up to 20 s for them. Off by default, so servers still keep
   running after KLIF quits and the next start takes them over. External Systems and other nodes are never touched.

@@ -7,11 +7,12 @@
 //!
 //! A round: the health check (the preset's `health`, else the adapter's default: llama.cpp / vLLM `/health`,
 //! sd.cpp / generic TCP, OpenAI-compatible `/health` -> `/v1/models` -> TCP), then what the adapter wants while
-//! ready (llama.cpp `/slots`; `/v1/models` once, audio.cpp every few seconds; `/metrics` at its own period; vLLM
-//! `/version` once). The API key (only present for KLIF-launched llama.cpp / vLLM, SPEC 16.12) goes to `/slots`,
-//! `/v1/models` and `/metrics` of the System's own host, never to `/health`, `/version` or a TCP check. A 401 backs
-//! off that endpoint for 30 s (each failed call writes a line in the server's log); 404 / 501 / non-Prometheus text
-//! disables it for the session. Results are applied only while the key still has the same generation.
+//! ready (llama.cpp `/slots`; `/v1/models` once, audio.cpp every few seconds; `/metrics` at its own period, as JSON
+//! for Strata; vLLM `/version` once). The API key (only present for KLIF-launched llama.cpp / vLLM, SPEC 16.12) goes
+//! to `/slots`, `/v1/models` and `/metrics` of the System's own host, never to `/health`, `/version` or a TCP check.
+//! A 401 backs off that endpoint for 30 s (each failed call writes a line in the server's log); 404 / 501 /
+//! non-Prometheus text (non-Strata JSON for Strata) disables it for the session. Results are applied only while the
+//! key still has the same generation.
 
 use crate::backend::{HealthPlan, ProbeResult, ProbeWants};
 use crate::probe::{self, Fail, Get, MetricsResult, Prober, SlotsResult};
@@ -123,6 +124,7 @@ struct Job {
     slots: bool,
     models: bool,
     metrics: bool,
+    metrics_json: bool,
     version: bool,
     chain_step: u8,
 }
@@ -220,7 +222,7 @@ fn scheduler(shared: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, jobs: Sender<Job
                 ks.due = now + BACKOFF_MAX_S;
                 continue;
             }
-            let ProbeWants { slots, models, metrics, version, models_every } = wants;
+            let ProbeWants { slots, models, metrics, metrics_json, version, models_every } = wants;
             ks.models_every = models_every;
             let job = Job {
                 key: key.clone(),
@@ -233,6 +235,7 @@ fn scheduler(shared: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, jobs: Sender<Job
                 slots: slots && !ks.slots_off && now >= ks.slots_until,
                 models: models && now >= ks.models_due,
                 metrics: metrics.is_some() && !ks.metrics_off && now >= ks.metrics_due,
+                metrics_json,
                 version: version && ks.version_tries < 3,
                 chain_step: ks.chain_step,
             };
@@ -387,7 +390,13 @@ fn run_round(p: &Prober, job: Job) -> Done {
             apply(&job.w, job.generation, |t| t.apply_probe(klif_common::now_s(), ProbeResult::Models(m)));
         }
     }
-    if job.metrics && enough(left()) {
+    if job.metrics && job.metrics_json && enough(left()) {
+        let (r, m) = p.strata_metrics_at(host, port, key, req_timeout());
+        if let Some(m) = m {
+            apply(&job.w, job.generation, |t| t.apply_probe(klif_common::now_s(), ProbeResult::Strata(Box::new(m))));
+        }
+        out.metrics = Some(r);
+    } else if job.metrics && enough(left()) {
         let r = p.metrics_at(host, port, key, req_timeout());
         if let MetricsResult::Ok(s) = &r {
             let s = s.clone();

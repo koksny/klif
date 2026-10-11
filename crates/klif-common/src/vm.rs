@@ -258,6 +258,10 @@ pub enum AdapterId {
     SdCpp,
     #[serde(rename = "vllm")]
     Vllm,
+    /// Strata (`serve/server.py --engine strata --config <json>`): an MoE engine with the experts in RAM; its
+    /// `/metrics` JSON gives the live state and per-request timings.
+    #[serde(rename = "strata")]
+    Strata,
     #[serde(rename = "openai")]
     OpenAi,
     /// audio.cpp `audiocpp_server` (text to speech and music; one `--config` JSON names its models).
@@ -269,16 +273,24 @@ pub enum AdapterId {
 }
 
 impl AdapterId {
-    pub const ALL: [AdapterId; 6] =
-        [AdapterId::LlamaCpp, AdapterId::SdCpp, AdapterId::Vllm, AdapterId::OpenAi, AdapterId::AudioCpp, AdapterId::Generic];
+    pub const ALL: [AdapterId; 7] = [
+        AdapterId::LlamaCpp,
+        AdapterId::SdCpp,
+        AdapterId::Vllm,
+        AdapterId::Strata,
+        AdapterId::OpenAi,
+        AdapterId::AudioCpp,
+        AdapterId::Generic,
+    ];
 
-    /// The serde / klif.toml value, also the display label: "llama.cpp", "sd.cpp", "vllm", "openai", "audiocpp",
-    /// "generic".
+    /// The serde / klif.toml value, also the display label: "llama.cpp", "sd.cpp", "vllm", "strata", "openai",
+    /// "audiocpp", "generic".
     pub fn as_str(self) -> &'static str {
         match self {
             AdapterId::LlamaCpp => "llama.cpp",
             AdapterId::SdCpp => "sd.cpp",
             AdapterId::Vllm => "vllm",
+            AdapterId::Strata => "strata",
             AdapterId::OpenAi => "openai",
             AdapterId::AudioCpp => "audiocpp",
             AdapterId::Generic => "generic",
@@ -291,6 +303,7 @@ impl AdapterId {
             "llama.cpp" | "llamacpp" | "llama-cpp" => AdapterId::LlamaCpp,
             "sd.cpp" | "sdcpp" | "sd-cpp" => AdapterId::SdCpp,
             "vllm" => AdapterId::Vllm,
+            "strata" => AdapterId::Strata,
             "openai" | "openai-compatible" => AdapterId::OpenAi,
             "audiocpp" | "audio.cpp" | "audio-cpp" => AdapterId::AudioCpp,
             "generic" => AdapterId::Generic,
@@ -299,23 +312,23 @@ impl AdapterId {
     }
 
     /// Port used when neither the preset nor its args name one (generic: none; that is an error unless the
-    /// preset gives `health`). audio.cpp: its own default, 8080.
+    /// preset gives `health`). audio.cpp and Strata: their own default, 8080.
     pub fn default_port(self) -> Option<u16> {
         match self {
             AdapterId::LlamaCpp => Some(7030),
             AdapterId::SdCpp => Some(1234),
             AdapterId::Vllm => Some(8000),
-            AdapterId::OpenAi | AdapterId::AudioCpp => Some(8080),
+            AdapterId::Strata | AdapterId::OpenAi | AdapterId::AudioCpp => Some(8080),
             AdapterId::Generic => None,
         }
     }
 
     /// Kind when the preset does not say: image for sd.cpp (`kind = "video"` for sd.cpp video), llm for
-    /// llama.cpp/vllm/openai, tts for audiocpp (a music preset says `kind = "music"`), none for generic (required there).
+    /// llama.cpp/vllm/strata/openai, tts for audiocpp (a music preset says `kind = "music"`), none for generic (required there).
     pub fn default_kind(self) -> Option<SystemKind> {
         match self {
             AdapterId::SdCpp => Some(SystemKind::Image),
-            AdapterId::LlamaCpp | AdapterId::Vllm | AdapterId::OpenAi => Some(SystemKind::Llm),
+            AdapterId::LlamaCpp | AdapterId::Vllm | AdapterId::Strata | AdapterId::OpenAi => Some(SystemKind::Llm),
             AdapterId::AudioCpp => Some(SystemKind::Tts),
             AdapterId::Generic => None,
         }
@@ -326,7 +339,7 @@ impl AdapterId {
         match self {
             AdapterId::LlamaCpp => Some("LLAMA_API_KEY"),
             AdapterId::Vllm => Some("VLLM_API_KEY"),
-            AdapterId::SdCpp | AdapterId::OpenAi | AdapterId::AudioCpp | AdapterId::Generic => None,
+            AdapterId::SdCpp | AdapterId::Strata | AdapterId::OpenAi | AdapterId::AudioCpp | AdapterId::Generic => None,
         }
     }
 }

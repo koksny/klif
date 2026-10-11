@@ -613,9 +613,10 @@ fn tokens_per_word(agent: &ureq::Agent, t: &Target, model: &str) -> f64 {
     }
 }
 
-/// llama.cpp: wait until no slot is processing (other clients may be mid-request). Servers without /slots skip.
+/// llama.cpp and Strata: wait until no slot is processing (other clients may be mid-request). Servers without /slots
+/// skip.
 fn wait_slots_idle(agent: &ureq::Agent, t: &Target, label: &str) -> Result<()> {
-    if t.adapter != AdapterId::LlamaCpp {
+    if !matches!(t.adapter, AdapterId::LlamaCpp | AdapterId::Strata) {
         return Ok(());
     }
     let t0 = Instant::now();
@@ -733,6 +734,8 @@ fn bench_llm(
     let backend_build = match t.adapter {
         AdapterId::LlamaCpp => get_json(agent, t, "/props").and_then(|v| v.get("build_info").and_then(Value::as_str).map(str::to_string)),
         AdapterId::Vllm => get_json(agent, t, "/version").and_then(|v| v.get("version").and_then(Value::as_str).map(|s| format!("vLLM {s}"))),
+        AdapterId::Strata => get_json(agent, t, "/metrics")
+            .and_then(|v| v.get("engine").and_then(|e| e.get("version")).and_then(Value::as_str).map(|s| format!("Strata {s}"))),
         _ => None,
     };
     let ratio = tokens_per_word(agent, t, &model);

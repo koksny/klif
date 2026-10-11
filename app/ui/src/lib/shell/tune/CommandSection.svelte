@@ -25,7 +25,7 @@
   let { vm, system, viewedId }: Props = $props();
   const t = getTune();
 
-  const ADAPTERS: AdapterId[] = ['llama.cpp', 'sd.cpp', 'vllm', 'openai', 'audiocpp', 'generic'];
+  const ADAPTERS: AdapterId[] = ['llama.cpp', 'sd.cpp', 'vllm', 'strata', 'openai', 'audiocpp', 'generic'];
   const KINDS: SystemKind[] = ['llm', 'image', 'tts', 'stt', 'video', 'music'];
 
   /** A loaded draft spec always carries its lists (TuneState makes sure), so the editors can bind them. */

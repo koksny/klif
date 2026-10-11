@@ -181,7 +181,7 @@ fn table(adapter: AdapterId) -> &'static [Flag] {
         AdapterId::SdCpp => SDCPP,
         AdapterId::Vllm => VLLM,
         AdapterId::AudioCpp => AUDIOCPP,
-        AdapterId::OpenAi | AdapterId::Generic => GENERIC,
+        AdapterId::Strata | AdapterId::OpenAi | AdapterId::Generic => GENERIC,
     }
 }
 

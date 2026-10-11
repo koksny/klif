@@ -31,7 +31,7 @@ because bench records are named after it. An id with a dot is read as a sub-tabl
 | Key | Meaning |
 | --- | --- |
 | `name` | Display name (default: the id) |
-| `adapter` | `llama.cpp` (default), `sd.cpp`, `vllm`, `openai`, `audiocpp`, `generic` |
+| `adapter` | `llama.cpp` (default), `sd.cpp`, `vllm`, `strata`, `openai`, `audiocpp`, `generic` |
 | `kind` | `llm`, `image`, `tts`, `stt`, `video`, `music`. Default: `image` for sd.cpp, `llm` for llama.cpp, vllm and openai. **Required for `generic`** |
 | `command` | The program: an absolute path, or a name on PATH. Windows: `.exe` and `.com` only; macOS: a file with the execute bit, run directly (never through a shell). Empty when `endpoint` is set |
 | `args` | The argument list, one token per entry. KLIF never re-splits or merges tokens |
@@ -59,6 +59,7 @@ An unknown key is a warning and is ignored. A preset that does not parse (or who
 | `llama.cpp` | llm | 7030 | HTTP `/health` | `LLAMA_API_KEY` | Log (load steps, VRAM buffers, device, timings), `/health`, `/slots`, `/v1/models`, `/metrics` |
 | `sd.cpp` | image (or `kind = "video"`) | 1234 | TCP; video: HTTP `/sdcpp/v1/capabilities` | none | Log (load steps, sampling steps, device, image and video jobs), TCP |
 | `vllm` | llm | 8000 | HTTP `/health` | `VLLM_API_KEY` | `/health`, `/metrics`, `/v1/models` |
+| `strata` | llm | 8080 | HTTP `/health` | none | `/health`, `/v1/models`, `/metrics` as JSON every second (state, decode rate, each finished request's timings, MTP drafts) |
 | `openai` | llm | 8080 | `/health`, then `/v1/models`, then TCP | none | Probes only |
 | `audiocpp` | tts (music: `kind = "music"`) | 8080 | HTTP `/health` | none | `/health`, `/v1/models` every 3 s (which model is loaded), the listening / failed lines; with `--log` each request from its POST to `session.wall_ms` (busy the whole time) and YuE2's stages |
 | `generic` | required | required (or a `health` check) | TCP, or `health` | none | Process, health, per-process VRAM, log activity, and `/metrics` if it answers Prometheus text |
@@ -88,6 +89,15 @@ activity, so a chatty server looks busy.
   image job; YuE2 also shows its stage (writing the score, composing, rendering, decoding). It also shows the request
   count and the loaded state; the record `musicRtf` (seconds of music per wall second) comes from `klif-cli bench`,
   which asks for a fixed 30 s instrumental (`POST /v1/tasks/run`).
+- **Strata** (an MoE engine that keeps the experts in RAM, [Niko1221/Strata](https://github.com/Niko1221/Strata)):
+  `adapter = "strata"`, `command` = the Python of Strata's `.venv`, `args = ["<Strata>\\serve\\server.py", "--engine",
+  "strata", "--config", "<Strata>\\strata-<pack>.json", "--host", "{host}", "--port", "{port}"]`, `cwd` = the Strata
+  folder. The engine's own settings (context, KV cache, speculation, GPU) live in that JSON, which Strata's setup
+  writes; set the preset's `ctx` to the same context so KLIF shows it before the server answers, and `model` to the
+  first GGUF shard so the records know the file. The live view reads Strata's `/metrics`: busy while it reads the
+  prompt or generates, the engine's decode rate, the context in use and the MTP acceptance; every finished request
+  becomes a live record. Its pinned expert arena (tens of GiB of system memory registered for the GPU) is not
+  counted as VRAM.
 - **whisper.cpp** (`whisper-server.exe`, speech to text): `adapter = "generic"`, `kind = "stt"`, `health =
   "/health"` (it answers 503 while the model loads), `model` plus `-m {model}`. It logs nothing per request beyond
   the file name, so the live view is activity only and records come from `klif-cli bench <system> --audio

@@ -38,6 +38,7 @@ mod sampler;
 pub mod sd;
 pub mod session;
 pub mod steps;
+pub mod strata;
 pub mod tail;
 pub mod text;
 pub mod vram;
@@ -284,7 +285,10 @@ pub struct SessionGpu {
     /// The GPU id ("VEN:DEV" / "VEN:DEV#n").
     pub id: String,
     pub resident_gib: f64,
+    /// Total Committed, capped at the shared memory plus the card's size; without the shared memory for a server
+    /// that does not spill (its shared memory is host memory: sd.cpp offload, Strata's pinned experts).
     pub committed_gib: f64,
+    /// Shared Usage of a server that spills (0 for the others, see `committed_gib`).
     pub shared_gib: f64,
 }
 
@@ -330,7 +334,8 @@ pub struct SessionSignals {
     pub layers: Vec<VramLayer>,
     /// PDH "GPU Process Memory(pid_<pid>_*)\Dedicated Usage" summed over the session's pids on its GPUs.
     pub resident_gib: f64,
-    /// PDH "GPU Process Memory(pid_<pid>_*)\Total Committed" summed over the session's pids on its GPUs.
+    /// PDH "GPU Process Memory(pid_<pid>_*)\Total Committed" summed over the session's pids on its GPUs, as in
+    /// `SessionGpu::committed_gib` (a server that does not spill: without its host memory).
     pub committed_gib: f64,
     /// The same measurements per GPU, for every measured GPU the session's processes hold memory on (multi-GPU
     /// presets reserve on each).

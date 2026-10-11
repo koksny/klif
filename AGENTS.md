@@ -120,7 +120,7 @@ label, kind = "llm"|"image"|"tts"|"stt"|"video" (required), class = "fast"|"deep
 preset = "<preset id>", params = { <param> = "<choice>" }, exclusive = true|false
 
 [presets.<id>]       # id: [a-z0-9][a-z0-9_-]{0,63}
-name, adapter = "llama.cpp"|"sd.cpp"|"vllm"|"openai"|"audiocpp"|"generic", kind (required for generic),
+name, adapter = "llama.cpp"|"sd.cpp"|"vllm"|"strata"|"openai"|"audiocpp"|"generic", kind (required for generic),
 command, args = [..], cwd, env = { K = "V" }, env_remove = [..], port, host, endpoint (external server),
 health = "/path" | "tcp", model, mmproj, ctx, gpu = "VEN:DEV" | "cpu" | "a,b", managed, api_key,
 model_name, quant, backend, device, notes, recommended

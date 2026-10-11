@@ -560,7 +560,10 @@ impl Inner {
                     } else {
                         sig.per_gpu.iter().map(|g| (g.committed_gib - g.shared_gib).max(0.0)).sum()
                     };
-                    if on_card.is_finite() && on_card < MAX_SANE_GIB {
+                    // Only once it is up: while a server loads, its counters can run ahead of what it keeps (Strata's
+                    // pinned arena shows in Total Committed before it shows as shared memory), and that peak would
+                    // be stored as the command's VRAM need.
+                    if matches!(ctx.phase, Phase::Live | Phase::Stopping) && on_card.is_finite() && on_card < MAX_SANE_GIB {
                         ctx.peak_vram = ctx.peak_vram.max(on_card);
                     }
                     ctx.layers = sig.layers.clone();

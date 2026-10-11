@@ -89,7 +89,7 @@ status <system>`), in the API of its `adapter`. A System on another machine has 
 
 | `adapter` (kind) | Request | Answer |
 | --- | --- | --- |
-| `llama.cpp`, `vllm`, `openai` (llm) | `POST {baseUrl}/chat/completions` `{"model", "messages": [...]}`; the model id from `GET {baseUrl}/models` | OpenAI chat JSON (`"stream": true` for SSE) |
+| `llama.cpp`, `vllm`, `strata`, `openai` (llm) | `POST {baseUrl}/chat/completions` `{"model", "messages": [...]}`; the model id from `GET {baseUrl}/models` | OpenAI chat JSON (`"stream": true` for SSE) |
 | `sd.cpp` (image) | `POST {baseUrl}/v1/images/generations` `{"prompt": "...", "n": 1, "output_format": "png"}`; size and steps are the server's launch defaults (the preset's params) | `{"data": [{"b64_json": "..."}]}`: decode the base64 into the PNG |
 | `audiocpp` (tts) | `POST {baseUrl}/v1/audio/speech` `{"model", "input": "text", "response_format": "json"}`; the model id from `GET {baseUrl}/v1/models` | JSON with base64 WAV audio (`audio`) and `timing` |
 | `audiocpp` (stt) | `POST {baseUrl}/v1/audio/transcriptions`, multipart: `file` (WAV), `model`, `response_format=json` | `{"text": "..."}` |

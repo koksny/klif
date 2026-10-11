@@ -106,8 +106,8 @@ The animations come from the browser mock engine with recorded timings, the same
   The Tune drawer, `klif-cli plan` and `klif.toml` show the same thing, and what you see is what runs. Presets can
   declare independent params (reasoning on or off, image size) instead of one preset per combination.
   [docs/presets.md](docs/presets.md)
-- **Adapters, not a fixed list.** `llama.cpp`, `sd.cpp`, `vllm`, `openai` (any OpenAI-compatible server) and
-  `generic` (any program that listens on a port). The adapter decides defaults and which log lines and endpoints
+- **Adapters, not a fixed list.** `llama.cpp`, `sd.cpp`, `vllm`, `strata`, `audiocpp`, `openai` (any
+  OpenAI-compatible server) and `generic` (any program that listens on a port). The adapter decides defaults and which log lines and endpoints
   KLIF reads for telemetry.
 - **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys and nodes, with `--json` and a
   stable `schemaVersion`. [docs/cli.md](docs/cli.md)

@@ -26,6 +26,9 @@ pub struct Segment {
     pub text: String,
     /// Arrival time (seconds since epoch) as seen by the tailer.
     pub at: f64,
+    /// Read from what the file already held when the tailer opened it (an adopted server's earlier log): the
+    /// line is history, not activity now.
+    pub backlog: bool,
 }
 
 /// A committed console line (final state of a terminal line).
@@ -70,7 +73,7 @@ impl LineAssembler {
     fn take_segment(&mut self, at: f64, segs: &mut Vec<Segment>) {
         let text = String::from_utf8_lossy(&self.cur).trim_end().to_string();
         if !self.cur_emitted && !text.trim().is_empty() {
-            segs.push(Segment { stream: self.stream, text: text.clone(), at });
+            segs.push(Segment { stream: self.stream, text: text.clone(), at, backlog: false });
         }
         if !text.trim().is_empty() && !crate::text::is_tag_only(&text) {
             self.line_last = text;
@@ -102,7 +105,7 @@ impl LineAssembler {
                             // Erase to end of line: closes an sd-server bar segment.
                             let text = String::from_utf8_lossy(&self.cur).trim_end().to_string();
                             if !self.cur_emitted && !text.trim().is_empty() {
-                                segs.push(Segment { stream: self.stream, text, at });
+                                segs.push(Segment { stream: self.stream, text, at, backlog: false });
                                 self.cur_emitted = true;
                             }
                         }
@@ -151,6 +154,8 @@ impl LineAssembler {
 pub struct LogTailer {
     path: PathBuf,
     offset: u64,
+    /// The file's length when a `from_start` tailer opened it: segments read below it are backlog.
+    backlog_end: u64,
     asm: LineAssembler,
 }
 
@@ -160,8 +165,9 @@ const MAX_READ: u64 = 8 * 1024 * 1024;
 impl LogTailer {
     /// `from_start = false` starts at the current end of the file (a missing file starts at 0).
     pub fn new(path: &Path, stream: Stream, from_start: bool) -> Self {
-        let offset = if from_start { 0 } else { std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) };
-        Self { path: path.to_path_buf(), offset, asm: LineAssembler::new(stream) }
+        let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let offset = if from_start { 0 } else { len };
+        Self { path: path.to_path_buf(), offset, backlog_end: if from_start { len } else { 0 }, asm: LineAssembler::new(stream) }
     }
 
     pub fn path(&self) -> &Path {
@@ -175,6 +181,7 @@ impl LogTailer {
         if len < self.offset {
             // Truncated or replaced: start over.
             self.offset = 0;
+            self.backlog_end = 0;
             self.asm.reset();
         }
         if len == self.offset {
@@ -194,8 +201,15 @@ impl LogTailer {
             }
         }
         buf.truncate(got);
+        let backlog = self.offset < self.backlog_end;
         self.offset += got as u64;
+        let first = segs.len();
         self.asm.feed(&buf, at, segs, lines);
+        if backlog {
+            for s in &mut segs[first..] {
+                s.backlog = true;
+            }
+        }
         got > 0
     }
 

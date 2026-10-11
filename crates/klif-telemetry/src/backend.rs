@@ -6,6 +6,8 @@
 //! - `SdCpp`: the sd-server log parser + a TCP listener check (sd-server has no /health).
 //! - `Vllm`: `/health`, `/metrics` (live counters: running requests, prompt / generation token totals, KV cache
 //!   use, speculative acceptance), `/v1/models` (`max_model_len`), `/version`.
+//! - `Strata`: Strata's `serve/server.py`: `/health`, `/v1/models` (context) and its `/metrics` JSON every second (the
+//!   live state, the engine's decode rate, every finished request with its timings and MTP drafts).
 //! - `OpenAi`: any OpenAI-compatible server: `/health` -> `/v1/models` -> TCP, `/metrics` if it answers
 //!   Prometheus text, `/v1/models` for the model id and context.
 //! - `AudioCpp`: audio.cpp `audiocpp_server` (TTS and music): `/health`, `/v1/models` every few seconds (`loaded`), the
@@ -117,6 +119,8 @@ pub struct ProbeWants {
     pub models: bool,
     /// `/metrics` (`Some(period_s)`): live counters.
     pub metrics: Option<f64>,
+    /// Read `/metrics` as Strata's JSON instead of Prometheus text.
+    pub metrics_json: bool,
     /// vLLM `/version` (once).
     pub version: bool,
     /// Re-read `/v1/models` this often (s) after it answered (audio.cpp loads and unloads models); None = once.
@@ -129,6 +133,8 @@ pub enum ProbeResult {
     Slots(Vec<SlotSample>),
     Models(ModelsInfo),
     Metrics(Vec<Sample>),
+    /// Strata's `/metrics` JSON.
+    Strata(Box<crate::strata::StrataMetrics>),
     Version(String),
 }
 
@@ -211,6 +217,7 @@ pub fn for_ctx(id: AdapterId, ctx: AdapterCtx) -> Box<dyn BackendAdapter> {
         AdapterId::LlamaCpp => Box::new(LlamaCpp::new(ctx)),
         AdapterId::SdCpp => Box::new(SdCpp::new(ctx)),
         AdapterId::Vllm => Box::new(Vllm::new(ctx)),
+        AdapterId::Strata => Box::new(Strata::new(ctx)),
         AdapterId::OpenAi => Box::new(OpenAi::new(ctx)),
         AdapterId::AudioCpp => Box::new(AudioCpp::new(ctx)),
         AdapterId::Generic => Box::new(Generic::new(ctx)),
@@ -810,6 +817,7 @@ impl BackendAdapter for LlamaCpp {
             slots: ready,
             models: ready && self.models.is_none(),
             metrics: if ready && self.ctx.metrics { Some(2.0) } else { None },
+            metrics_json: false,
             version: false,
             models_every: None,
         }
@@ -829,7 +837,7 @@ impl BackendAdapter for LlamaCpp {
             ProbeResult::Slots(v) => self.apply_slots(&v),
             ProbeResult::Models(m) => self.models = Some(m),
             ProbeResult::Metrics(s) => self.metrics.apply(at, &s),
-            ProbeResult::Version(_) => {}
+            ProbeResult::Version(_) | ProbeResult::Strata(_) => {}
         }
     }
     fn health(&self, probe: Option<Health>) -> Health {
@@ -1050,6 +1058,7 @@ fn short_paths(msg: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flavor {
     Vllm,
+    Strata,
     OpenAi,
     AudioCpp,
     Generic,
@@ -1127,7 +1136,9 @@ impl ApiServer {
             self.steps.finish(0);
             self.steps.reach(2);
         }
-        if !self.is_probe(l) {
+        // An adopted server's earlier log is history: a fresh engine (every one-shot klif-cli command) reads it in
+        // at once, and the busy pulse would report an idle server as busy.
+        if !self.is_probe(l) && !seg.backlog {
             self.last_line = Some(seg.at);
         }
         if self.flavor == Flavor::Vllm && self.version.is_none() {
@@ -1194,6 +1205,8 @@ impl ApiServer {
             steps.detail[0] = Some(match (self.flavor, &self.version) {
                 (Flavor::Vllm, Some(v)) => format!("vLLM {v}"),
                 (Flavor::Vllm, None) => "vLLM".into(),
+                (Flavor::Strata, Some(v)) => format!("Strata {v}"),
+                (Flavor::Strata, None) => "Strata".into(),
                 (Flavor::OpenAi, _) => "OpenAI-compatible".into(),
                 (Flavor::AudioCpp, _) => "audio.cpp".into(),
                 (Flavor::Generic, _) => "generic".into(),
@@ -1322,6 +1335,7 @@ impl ApiServer {
             slots: false,
             models: ready && self.models.is_none() && self.flavor != Flavor::Generic,
             metrics: if ready { metrics_default } else { None },
+            metrics_json: false,
             version: ready && self.flavor == Flavor::Vllm && self.version.is_none(),
             models_every: None,
         }
@@ -1337,7 +1351,7 @@ impl ApiServer {
             }
             ProbeResult::Metrics(s) => self.metrics.apply(at, &s),
             ProbeResult::Version(v) => self.version = Some(v),
-            ProbeResult::Slots(_) => {}
+            ProbeResult::Slots(_) | ProbeResult::Strata(_) => {}
         }
     }
 }
@@ -1427,6 +1441,230 @@ macro_rules! api_impl {
 api_impl!(Vllm, AdapterId::Vllm, HealthCheck::Http { path: "/health".into() }, true, 0.5, Some(1.0));
 api_impl!(OpenAi, AdapterId::OpenAi, HealthCheck::Auto, true, 0.5, Some(2.0));
 api_impl!(Generic, AdapterId::Generic, HealthCheck::Tcp, false, 1.0, Some(2.0));
+
+// ------------------------------------------------------------------------------------------ Strata
+
+/// Strata's `/metrics` JSON is read this often while the server is ready (seconds).
+const STRATA_METRICS_S: f64 = 1.0;
+/// Finished requests kept for the view (the newest).
+const STRATA_REQUESTS: usize = 12;
+
+/// Strata (`serve/server.py --engine strata`): `/health`, `/v1/models` once (the context) and its `/metrics` JSON
+/// every second. Busy is the engine's own state (reading the prompt, generating), not log activity; the decode rate
+/// is the engine's; every finished request comes with its prompt and decode times, so its records are live ones
+/// like llama.cpp's. The engine's own log (experts, expert cache, VRAM) is a file of its own that KLIF does not read.
+pub struct Strata {
+    s: ApiServer,
+    /// The last `/metrics` answer and when it arrived.
+    m: Option<(f64, crate::strata::StrataMetrics)>,
+    /// When the request in flight started (from `elapsed_s`, else when it was first seen busy).
+    busy_start: Option<f64>,
+    decode_hist: RateHistory,
+}
+
+impl Default for Strata {
+    fn default() -> Self {
+        Self::new(AdapterCtx::default())
+    }
+}
+
+impl Strata {
+    pub fn new(ctx: AdapterCtx) -> Self {
+        Strata { s: ApiServer::new(ctx, Flavor::Strata), m: None, busy_start: None, decode_hist: RateHistory::default() }
+    }
+
+    /// The last answer while it is fresh.
+    fn fresh(&self, now: f64) -> Option<&crate::strata::StrataMetrics> {
+        self.m.as_ref().filter(|(t, _)| now - t <= METRICS_FRESH_S).map(|(_, m)| m)
+    }
+
+    fn activity(&self, now: f64) -> LlmActivity {
+        use crate::strata::StrataState;
+        match self.fresh(now).map(|m| m.state) {
+            Some(StrataState::Reading) => LlmActivity::Prefill,
+            Some(StrataState::Generating) => LlmActivity::Decode,
+            _ => LlmActivity::Idle,
+        }
+    }
+
+    /// The finished requests, oldest first; the id is the finish time in milliseconds (stable across answers).
+    fn records(&self) -> Vec<RequestRecord> {
+        let Some((_, m)) = self.m.as_ref() else { return Vec::new() };
+        let mut v: Vec<RequestRecord> = m
+            .requests
+            .iter()
+            .map(|r| RequestRecord {
+                id: (r.time * 1000.0).round().max(0.0) as u64,
+                at: round_to(r.time, 3),
+                prompt_tokens: r.prompt_tokens,
+                cached_tokens: r.reused.min(r.prompt_tokens),
+                prefill_s: round_to(r.prompt_ms / 1000.0, 3),
+                generated_tokens: r.output_tokens,
+                decode_s: round_to(r.decode_ms / 1000.0, 3),
+                peak_decode_tps: None,
+            })
+            .collect();
+        v.sort_by(|a, b| a.at.total_cmp(&b.at).then(a.id.cmp(&b.id)));
+        let n = v.len();
+        if n > STRATA_REQUESTS {
+            v.drain(..n - STRATA_REQUESTS);
+        }
+        v
+    }
+
+    fn llm_live(&self, now: f64) -> LlmLive {
+        let activity = self.activity(now);
+        let m = self.fresh(now);
+        let total = m
+            .and_then(|m| m.context)
+            .or_else(|| self.s.models.as_ref().and_then(|x| x.n_ctx))
+            .or(self.s.ctx.ctx_tokens.map(u64::from))
+            .unwrap_or(0);
+        let busy = activity != LlmActivity::Idle;
+        let used = match m {
+            Some(m) if busy => m.prompt_tokens.unwrap_or(0) + m.generated.unwrap_or(0),
+            _ => 0,
+        };
+        let elapsed = self.busy_start.map(|b| (now - b).max(0.0)).unwrap_or(0.0);
+        let prefill = match m {
+            Some(m) if activity == LlmActivity::Prefill => {
+                let tokens = m.prompt_total.or(m.prompt_tokens).unwrap_or(0);
+                let done = m.prompt_read.unwrap_or(0).min(tokens);
+                let tps = if done > 0 && elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
+                let eta = if tps > 0.0 { tokens.saturating_sub(done) as f64 / tps } else { 0.0 };
+                Some(Prefill {
+                    tokens,
+                    done_tokens: done,
+                    cached_tokens: None,
+                    tps: round_to(tps, 1),
+                    elapsed_s: round_to(elapsed, 1),
+                    eta_s: round_to(eta, 1),
+                })
+            }
+            _ => None,
+        };
+        let records = self.records();
+        let all = self.m.as_ref().map(|(_, m)| m);
+        let offered = all.and_then(|m| m.total_drafts_offered).unwrap_or(0);
+        let accepted = all.and_then(|m| m.total_drafts_accepted).unwrap_or(0);
+        // Strata drafts with the model's MTP layer; shown once it has drafted (or the preset names a mode).
+        let spec = (offered > 0 || self.s.ctx.spec_mode.is_some()).then(|| Spec {
+            acceptance_pct: if offered > 0 { round_to(accepted as f64 / offered as f64 * 100.0, 1) } else { 0.0 },
+            mode: self.s.ctx.spec_mode.clone().unwrap_or_else(|| "MTP".into()),
+            active: Some(activity == LlmActivity::Decode),
+        });
+        let decode_tps = match m {
+            Some(m) if activity == LlmActivity::Decode => round_to(m.tok_s.unwrap_or(0.0), 1),
+            _ => 0.0,
+        };
+        LlmLive {
+            activity,
+            decode_tps,
+            decode_history: self.decode_hist.values(),
+            prefill,
+            generated_tokens: match m {
+                Some(m) if busy => m.generated.unwrap_or(0),
+                _ => records.last().map(|r| r.generated_tokens).unwrap_or(0),
+            },
+            context: ContextFill { used_tokens: used.min(total), total_tokens: total },
+            spec,
+            requests: records,
+            totals: Totals {
+                requests: all.and_then(|m| m.total_requests).unwrap_or(0),
+                prompt_tokens: all.and_then(|m| m.total_prompt_tokens).unwrap_or(0),
+                generated_tokens: all.and_then(|m| m.total_output_tokens).unwrap_or(0),
+            },
+        }
+    }
+}
+
+impl BackendAdapter for Strata {
+    fn id(&self) -> AdapterId {
+        AdapterId::Strata
+    }
+    fn default_health(&self, _kind: SystemKind) -> HealthCheck {
+        HealthCheck::Http { path: "/health".into() }
+    }
+    fn reports_spill(&self) -> bool {
+        // The experts in RAM and the streamed KV cache are the design, not a spill.
+        false
+    }
+    fn probe_period(&self) -> f64 {
+        0.5
+    }
+    fn probe_wants(&self, health: Health) -> ProbeWants {
+        ProbeWants { metrics_json: true, ..self.s.probe_wants(health, Some(STRATA_METRICS_S)) }
+    }
+    fn feed(&mut self, seg: &Segment) {
+        self.s.feed(seg)
+    }
+    fn console_keep(&self, line: &str) -> bool {
+        !self.s.is_probe(line)
+    }
+    fn tick(&mut self, now: f64) {
+        let sample = match self.fresh(now) {
+            Some(m) if self.activity(now) == LlmActivity::Decode => m.tok_s.unwrap_or(0.0),
+            _ => 0.0,
+        };
+        self.decode_hist.push(now, sample);
+    }
+    fn on_health(&mut self, _at: f64, h: Health) {
+        self.s.on_health(h)
+    }
+    fn apply(&mut self, at: f64, r: ProbeResult) {
+        match r {
+            ProbeResult::Strata(m) => {
+                if m.version.is_some() {
+                    self.s.version = m.version.clone();
+                }
+                self.busy_start = if m.busy() {
+                    let from_engine = m.elapsed_s.map(|e| at - e);
+                    Some(from_engine.or(self.busy_start).unwrap_or(at))
+                } else {
+                    None
+                };
+                self.m = Some((at, *m));
+            }
+            other => self.s.apply(at, other),
+        }
+    }
+    fn health(&self, probe: Option<Health>) -> Health {
+        self.s.health(probe)
+    }
+    fn steps_view(&self, health: Health) -> (Vec<LoadStep>, f64) {
+        self.s.steps_view(health)
+    }
+    fn busy_since(&self, now: f64) -> Option<f64> {
+        self.fresh(now).filter(|m| m.busy()).map(|_| self.busy_start.unwrap_or(now))
+    }
+    fn backend_build(&self) -> Option<String> {
+        self.s.version.as_ref().map(|v| format!("Strata {v}"))
+    }
+    fn fill(&self, now: f64, sig: &mut SessionSignals) {
+        self.s.fill(now, sig);
+        if let Some(g) = sig.generic.as_mut() {
+            g.requests_in_flight = Some(u64::from(self.busy_since(now).is_some()));
+            g.requests_total = self.m.as_ref().and_then(|(_, m)| m.total_requests);
+        }
+        if self.s.ctx.kind == SystemKind::Llm {
+            sig.llm = Some(self.llm_live(now));
+        }
+        sig.median_decode_tps = self.median_decode_tps();
+    }
+    fn median_decode_tps(&self) -> Option<f64> {
+        let mut v: Vec<f64> = self
+            .records()
+            .iter()
+            .filter(|r| r.generated_tokens >= 16 && r.decode_s > 0.0)
+            .map(|r| r.generated_tokens as f64 / r.decode_s)
+            .collect();
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f64::total_cmp);
+        Some(round_to(v[v.len() / 2], 1))
+    }
+}
 
 // ------------------------------------------------------------------------------------------ audio.cpp
 

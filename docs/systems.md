@@ -22,7 +22,7 @@ up while KLIF runs.
 
 | Kind | For | Typical adapter | What KLIF shows | Bench |
 | --- | --- | --- | --- | --- |
-| `llm` | Language models | `llama.cpp`, `vllm`, `openai` | Load steps, context, prefill and decode progress, tokens per second, VRAM composition | yes |
+| `llm` | Language models | `llama.cpp`, `vllm`, `strata`, `openai` | Load steps, context, prefill and decode progress, tokens per second, VRAM composition | yes |
 | `image` | Image generation | `sd.cpp` (or `openai` / `generic`) | Load steps, sampling steps, seconds per image | `sd.cpp` and `openai` servers that answer `POST /v1/images/generations` |
 | `tts` | Text to speech | `generic` or `openai` | Process, health, requests in flight and total when the server exposes metrics, per-process VRAM | not yet |
 | `stt` | Speech to text (audio in) | `generic` or `openai` | as `tts` | not yet |

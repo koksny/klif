@@ -459,8 +459,8 @@ per wall second, highest; from `bench` only, since TTS / STT / music servers log
 They are not a certified benchmark: values come from everyday use and from `bench`. A value counts when it is a
 real measurement: decode with at least 128 generated tokens, prefill with at least 1024 prompt tokens that did not
 come from the cache, time to first token from any request (its prompt and cached tokens are kept), an image when its
-generation finished. Per-request timings come from the llama.cpp and sd.cpp logs; vLLM and OpenAI-compatible
-servers only get records from `bench`, and external servers none.
+generation finished. Per-request timings come from the llama.cpp and sd.cpp logs and Strata's `/metrics`; vLLM
+and OpenAI-compatible servers only get records from `bench`, and external servers none.
 
 Next to each value: when, `live` or `bench`, the context the server was launched with, prompt / cached / generated
 tokens or image size and steps, KV type, GPUs, backend build, preset, KLIF version and the machine's FP32 TFLOPS.

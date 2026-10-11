@@ -387,11 +387,12 @@ export function nodePresets(): Record<string, PresetSpec> {
 
 // ----------------------------------------------------------------------------------------- resolution
 
-const ADAPTER_PORT: Record<AdapterId, number | null> = { 'llama.cpp': 7030, 'sd.cpp': 1234, vllm: 8000, openai: 8080, audiocpp: 8080, generic: null };
+const ADAPTER_PORT: Record<AdapterId, number | null> = { 'llama.cpp': 7030, 'sd.cpp': 1234, vllm: 8000, strata: 8080, openai: 8080, audiocpp: 8080, generic: null };
 const ADAPTER_KIND: Record<AdapterId, SystemKind | null> = {
   'llama.cpp': 'llm',
   'sd.cpp': 'image',
   vllm: 'llm',
+  strata: 'llm',
   openai: 'llm',
   audiocpp: 'tts',
   generic: null,

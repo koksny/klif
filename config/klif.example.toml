@@ -162,7 +162,7 @@ preset = "chat-box"
 # Flag names follow current llama.cpp; check llama-server --help for your build.
 [presets.fast-8b]
 name = "Fast 8B"
-adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | openai | audiocpp | generic
+adapter = "llama.cpp"          # llama.cpp | sd.cpp | vllm | strata | openai | audiocpp | generic
 command = 'D:\llama.cpp\llama-server.exe'   # absolute path, or a program name on PATH; .exe/.com only
 # command = '/opt/llama.cpp/llama-server'    # macOS: an executable file (Metal is built in)
 args = [

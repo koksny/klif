@@ -3,7 +3,8 @@
 //! bench windows mark what `klif-cli bench` produced; the view model gets this machine's records plus every online
 //! node's; ForgetRecord removes a junk entry.
 //!
-//! Only per-request timings count: vLLM / OpenAI-compatible servers only give busy-period aggregates (`/metrics`),
+//! Only per-request timings count (llama.cpp's log, Strata's `/metrics` requests): vLLM / OpenAI-compatible servers
+//! only give busy-period aggregates (`/metrics`),
 //! and TTS / STT / music servers (audio.cpp, whisper-server, generic) log no timing at all, so their records come from
 //! `klif-cli bench`, whose numbers the bench hands over at the end of its window.
 //! Externally started servers have no model file KLIF knows, so they keep no records.
@@ -209,6 +210,19 @@ impl Inner {
                     ctx.rec.requests = l.requests.iter().map(|r| r.id).collect();
                 }
             }
+            AdapterId::Strata => {
+                // Its `/metrics` lists the last requests with their timings; after an adoption the ones that finished
+                // before it were already counted (or happened while KLIF was not looking).
+                if let Some(l) = sig.llm.as_ref() {
+                    let (seen, adopted) = (&ctx.rec.requests, ctx.rec.adopted_at);
+                    let new = |r: &&klif_common::vm::RequestRecord| !seen.contains(&r.id) && adopted.is_none_or(|a| r.at > a);
+                    let src = if l.requests.iter().any(|r| new(&r)) { source() } else { RecordSource::Live };
+                    for r in l.requests.iter().filter(new) {
+                        fresh.extend(records::llm_samples(r, src));
+                    }
+                    ctx.rec.requests = l.requests.iter().map(|r| r.id).collect();
+                }
+            }
             AdapterId::SdCpp => {
                 if let Some(i) = sig.image.as_ref() {
                     let key = |j: &klif_common::vm::ImageJob| (j.at as i64, j.seconds.to_bits());
@@ -227,7 +241,7 @@ impl Inner {
                     ctx.rec.images = i.recent.iter().map(key).collect();
                 }
             }
-            // Per-request timings exist only in the llama.cpp / sd.cpp logs (see the module docs).
+            // Per-request timings exist only in the llama.cpp / sd.cpp logs and Strata's /metrics (see the module docs).
             _ => {}
         }
         if fresh.is_empty() {
@@ -328,8 +342,8 @@ impl Inner {
         let found = {
             let st = lock(&self.st);
             match st.sessions.get(system) {
-                // llama.cpp / sd.cpp requests are captured from the log (as bench samples while the window was open).
-                Some(ctx) if !matches!(ctx.p.adapter(), AdapterId::LlamaCpp | AdapterId::SdCpp) => {
+                // llama.cpp / sd.cpp / Strata requests are captured live (as bench samples while the window was open).
+                Some(ctx) if !matches!(ctx.p.adapter(), AdapterId::LlamaCpp | AdapterId::SdCpp | AdapterId::Strata) => {
                     let mut cond = conditions(&ctx.p, None, &st.gpus_mem, &st.machine.cpu_name, tflops);
                     if cond.backend_build.is_none() {
                         cond.backend_build = rec.backend_build.clone();

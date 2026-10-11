@@ -41,7 +41,7 @@ export type SystemStatus =
 export type Availability = 'ready' | 'unsupported' | 'invalid' | 'exe-missing' | 'model-missing' | 'busy';
 
 /** The server family a preset launches (telemetry, defaults, managed env). */
-export type AdapterId = 'llama.cpp' | 'sd.cpp' | 'vllm' | 'openai' | 'audiocpp' | 'generic';
+export type AdapterId = 'llama.cpp' | 'sd.cpp' | 'vllm' | 'strata' | 'openai' | 'audiocpp' | 'generic';
 
 /** How KLIF decides the server is ready. 'auto' = the adapter's default chain. */
 export type HealthCheck = { type: 'auto' } | { type: 'http'; path: string } | { type: 'tcp' };
@@ -52,7 +52,7 @@ export interface ModelRef {
   name: string;
   /** "IQ3_S" ("" unknown) */
   quant: string;
-  /** Adapter label, e.g. "llama.cpp", "sd.cpp", "vllm", "openai", "audiocpp", "generic". */
+  /** Adapter label, e.g. "llama.cpp", "sd.cpp", "vllm", "strata", "openai", "audiocpp", "generic". */
   engine: string;
   /** Display text: "HIP", "Vulkan", "CUDA", "Metal", "CPU" or free text; "" when unknown. Compare case-insensitively. */
   backend: string;

@@ -242,6 +242,26 @@ impl Prober {
         }
     }
 
+    /// Strata's `/metrics` as JSON (no `Accept: text/plain`): the answer in the same classes as `metrics_at`, and the
+    /// parsed body when it is Strata's.
+    pub fn strata_metrics_at(
+        &self,
+        host: &str,
+        port: u16,
+        key: Option<&Secret>,
+        timeout: Duration,
+    ) -> (MetricsResult, Option<crate::strata::StrataMetrics>) {
+        match self.get(host, port, "/metrics", key, timeout, 4 * 1024 * 1024) {
+            Get::Status(200, Some(b)) => match crate::strata::parse(&b) {
+                Some(m) => (MetricsResult::Ok(Vec::new()), Some(m)),
+                None => (MetricsResult::Unavailable, None),
+            },
+            Get::Status(401 | 403, _) => (MetricsResult::Unauthorized, None),
+            Get::Status(404 | 405 | 501, _) | Get::Transport(Fail::NotHttp) => (MetricsResult::Unavailable, None),
+            Get::Status(..) | Get::Transport(_) => (MetricsResult::Failed, None),
+        }
+    }
+
     /// vLLM `/version` -> `{"version": "0.6.3"}`.
     pub fn version_at(&self, host: &str, port: u16, timeout: Duration) -> Option<String> {
         let Get::Status(200, Some(body)) = self.get(host, port, "/version", None, timeout, 64 * 1024) else { return None };
