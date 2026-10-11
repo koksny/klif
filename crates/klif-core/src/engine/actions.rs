@@ -194,9 +194,12 @@ impl Inner {
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
             Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
             Action::ForgetRecord { key, node: _ } => self.forget_record(&key),
-            Action::UpdateSettings { record_moment, skin, webui_enabled, webui_host, webui_port } => {
+            Action::UpdateSettings { record_moment, stop_on_exit, skin, webui_enabled, webui_host, webui_port } => {
                 if let Some(on) = record_moment {
                     self.write(|path| store::set_record_moment(path, on))?;
+                }
+                if let Some(on) = stop_on_exit {
+                    self.write(|path| store::set_stop_on_exit(path, on))?;
                 }
                 if skin.is_some() || webui_enabled.is_some() || webui_host.is_some() || webui_port.is_some() {
                     self.write(|path| store::set_settings(path, skin.as_deref(), webui_enabled, webui_host.as_deref(), webui_port))?;

@@ -1,7 +1,7 @@
 <script lang="ts">
-  // This machine's display settings ([ui] in klif.toml): the skin (also F2 and the tray's Skin menu; the window writes
-  // its choice to [ui] skin) and whether a broken record is celebrated over the skin. One line each, in the drawer's
-  // label | value grid.
+  // This machine's window settings ([ui] in klif.toml): the skin (also F2 and the tray's Skin menu; the window writes
+  // its choice to [ui] skin), whether a broken record is celebrated over the skin, and whether quitting stops the
+  // Systems first. One line each, in the drawer's label | value grid.
   import type { ConfigInfo } from '../../model/types';
   import { player } from '../../state/player.svelte';
   import { ui } from '../../state/ui.svelte';
@@ -19,6 +19,12 @@
   async function toggle() {
     busy = true;
     err = await attempt(() => player.actions.updateSettings({ recordMoment: !config.recordMoment }, QUIET));
+    busy = false;
+  }
+
+  async function toggleStop() {
+    busy = true;
+    err = await attempt(() => player.actions.updateSettings({ stopOnExit: !config.stopOnExit }, QUIET));
     busy = false;
   }
 </script>
@@ -50,6 +56,25 @@
       <i></i>{config.recordMoment ? 'on' : 'off'}
     </button>
     <span class="hint">celebrate a broken record over the skin</span>
+  </div>
+</div>
+<div class="field">
+  <span id="tune-stop-lbl">Stop on exit</span>
+  <div class="line">
+    <button
+      type="button"
+      class="switch"
+      class:on={config.stopOnExit}
+      role="switch"
+      aria-checked={!!config.stopOnExit}
+      aria-labelledby="tune-stop-lbl"
+      title="Off: model servers keep running after KLIF quits, and the next start takes them over"
+      disabled={busy}
+      onclick={() => void toggleStop()}
+    >
+      <i></i>{config.stopOnExit ? 'on' : 'off'}
+    </button>
+    <span class="hint">quitting KLIF stops this machine's Systems</span>
   </div>
 </div>
 {#if err}<p class="err" role="alert">{err}</p>{/if}

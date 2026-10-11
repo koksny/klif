@@ -322,6 +322,32 @@ pub fn delete_preset(path: &Path, id: &str) -> Result<()> {
 }
 
 /// Make sure the config file exists (a commented starter file at `cfg.file_path()`); returns its path.
+/// `[ui] stop_on_exit` (off = the default: the key is removed; on = `stop_on_exit = true`).
+pub fn set_stop_on_exit(path: &Path, on: bool) -> Result<()> {
+    edit(
+        path,
+        |doc, _cfg| {
+            if doc.get("ui").is_none() {
+                doc.insert("ui", Item::Table(Table::new()));
+            }
+            let ui = doc["ui"].as_table_mut().ok_or_else(|| anyhow!("[ui] in klif.toml is not a table."))?;
+            if on {
+                set_value(ui, "stop_on_exit", Value::from(true));
+            } else {
+                ui.remove("stop_on_exit");
+            }
+            Ok(())
+        },
+        |cfg, _| {
+            if cfg.ui.stop_on_exit == on {
+                Ok(())
+            } else {
+                bail!("[ui] stop_on_exit does not read back from klif.toml; nothing was written.")
+            }
+        },
+    )
+}
+
 /// `[ui] record_moment` (on = the default: the key is removed; off = `record_moment = false`).
 pub fn set_record_moment(path: &Path, on: bool) -> Result<()> {
     edit(

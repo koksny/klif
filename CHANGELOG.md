@@ -5,10 +5,14 @@ were built from source; their notes follow, newest first.
 
 ## Unreleased
 
+- **Stop on exit.** A new switch in Tune (`[ui] stop_on_exit`, `klif-cli settings stop-on-exit on|off`): quitting
+  the window stops this machine's Systems first and waits up to 20 s for them. Off by default, so servers still keep
+  running after KLIF quits and the next start takes them over. External Systems and other nodes are never touched.
 - **YuE2 license notes corrected.** The pool said "non-commercial use only". M-A-P's creator permission lets
   individual users, content creators and musicians monetize YuE2's outputs with no fees or royalties, and only
-  companies need a license for the weights. The non-commercial terms stay on the two Mothersuperior adapters of YuE2
-  3B Instrumental.
+  companies need a license for the weights. The two Mothersuperior adapters of YuE2 3B Instrumental are CC BY-NC 4.0 because
+  their weights derive from YuE2-3B: that binds the adapter weights, and their cards set no other terms on the
+  music you generate.
 - **Fix: an idle music System no longer reads as busy.** A music System is busy exactly while a job runs. Before,
   the 2 s log-line pulse also fired when a fresh engine (every one-shot `klif-cli` command) read the adopted
   server's log, so `klif-cli status` reported an idle audio.cpp server as busy. Speech Systems keep the pulse,

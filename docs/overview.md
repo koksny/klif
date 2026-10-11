@@ -40,7 +40,7 @@ klif-cli <command> ── control ───►├─ telemetry   GPU/CPU/RAM cou
 
 Servers are not children of the window. Each runs in its own named job object without kill-on-close, so quitting
 KLIF leaves them running, and the next start adopts them again. Stop is explicit (tab, tray "Stop all Systems", or
-`klif-cli stop`).
+`klif-cli stop`), unless `[ui] stop_on_exit` is on: then quitting the window stops this machine's Systems first.
 
 ## Crates
 
@@ -130,7 +130,7 @@ The UI reaches the engine through Tauri commands (`app/src-tauri/src/commands.rs
 | `klif_toggle_panel` | Move the window to the panel monitor and back |
 | `klif_skins`, `klif_ui_log` | Tray skin list, UI log line |
 
-The tray offers Show/Hide, Panel mode, Skin, **Stop all Systems** (asks first) and Quit (never stops a server).
+The tray offers Show/Hide, Panel mode, Skin, **Stop all Systems** (asks first) and Quit (stops no server unless `[ui] stop_on_exit` is on).
 
 ## Hardware the public tree talks about
 

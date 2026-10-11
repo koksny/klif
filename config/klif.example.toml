@@ -45,6 +45,9 @@ frameless = true
 # panel_monitor = "960x640"
 # Celebrate a broken record over the skin (the "new record" moment). Records are kept either way.
 # record_moment = false
+# Quitting the window stops this machine's Systems first (waits up to 20 s). Off by default: servers keep running
+# and the next start takes them over. A switch in Tune; klif-cli settings stop-on-exit on|off sets it.
+# stop_on_exit = true
 # The skin the window shows (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit). The window
 # writes this line when you change skins and follows a change made here; klif-webui follows it too.
 # klif-cli settings skin <id> sets it.

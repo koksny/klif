@@ -187,6 +187,7 @@ export const SAMPLE_VM: ViewModel = {
     modelsDir: 'D:\\models',
     onConflict: 'ask',
     recordMoment: true,
+    stopOnExit: false,
     webui: { enabled: false, host: '0.0.0.0', port: 7341, listening: false, urls: [], devices: [] },
   },
   nodes: [],

@@ -416,6 +416,8 @@ export class MockEngine {
   private onConflict: ConfigInfo['onConflict'];
   /** `[ui] record_moment` of the mock machine. */
   private recordMoment = true;
+  /** `[ui] stop_on_exit` of the mock machine. */
+  private stopOnExit = false;
   /** `[ui] skin` as the window reported it. */
   private skin?: string;
   /** `[webui]`, its paired devices and the open pairing (the browser mock serves no page). */
@@ -904,6 +906,7 @@ export class MockEngine {
       throw new Error('That is not a port; use 1 to 65535 (default 7341).');
     }
     if (patch.recordMoment !== undefined) this.recordMoment = patch.recordMoment;
+    if (patch.stopOnExit !== undefined) this.stopOnExit = patch.stopOnExit;
     if (patch.skin !== undefined) this.skin = patch.skin;
     if (patch.webuiEnabled !== undefined) this.webui.enabled = patch.webuiEnabled;
     if (patch.webuiHost !== undefined) this.webui.host = patch.webuiHost.trim();
@@ -1804,6 +1807,7 @@ export class MockEngine {
       apiKey: { source: 'file', set: this.apiKeySet },
       onConflict: this.onConflict,
       recordMoment: this.recordMoment,
+      stopOnExit: this.stopOnExit,
       webui: this.webuiInfo(),
     };
     if (this.skin) config.skin = this.skin;

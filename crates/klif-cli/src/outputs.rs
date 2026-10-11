@@ -153,12 +153,14 @@ pub struct DismissDoc {
     pub system: Option<SysBrief>,
 }
 
-/// `settings [record-moment on|off | skin <id>]`: this machine's display settings.
+/// `settings [record-moment on|off | stop-on-exit on|off | skin <id>]`: this machine's window settings.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDoc {
     /// `[ui] record_moment`: the "new record" moment is shown.
     pub record_moment: bool,
+    /// `[ui] stop_on_exit`: quitting the window app stops this machine's Systems first.
+    pub stop_on_exit: bool,
     /// `[ui] skin`: the skin the window uses (its id); absent until the window has reported one or `settings skin`
     /// set one.
     #[serde(skip_serializing_if = "Option::is_none")]

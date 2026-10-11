@@ -107,7 +107,7 @@ template: `config/klif.example.toml`.
 ```toml
 [net]        llm_host, image_host            # default "127.0.0.1"; image presets use image_host, the others llm_host
 [gpu]        inference, ui, inference_name   # PCI "VEN:DEV"; "VEN:DEV#1" = second identical card; inference is the default GPU of presets
-[ui]         frameless, panel_monitor, record_moment (the "new record" moment; default true), skin   # skin = the window's skin id; the window writes it, klif-webui follows it
+[ui]         frameless, panel_monitor, record_moment (the "new record" moment; default true), stop_on_exit (quitting the window stops the Systems; default false), skin   # skin = the window's skin id; the window writes it, klif-webui follows it
 [telemetry]  warn_below_gib, verbose_llama_logs, ram_type
 [paths]      models_dir, logs_dir            # models_dir has no default: downloads are refused until it is set
 [security]   api_key = "file" | "env:NAME" | "none"

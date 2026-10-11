@@ -348,6 +348,8 @@ export interface ConfigInfo {
   onConflict: OnConflict;
   /** `[ui] record_moment`: show the "new record" moment (default on). */
   recordMoment: boolean;
+  /** `[ui] stop_on_exit`: quitting the window app stops this machine's Systems first (default off). */
+  stopOnExit?: boolean;
   /** `[ui] skin`: the skin this window reported last (klif-webui follows it; klif-cli can set it). */
   skin?: string;
   /** klif-webui, the LAN control page (`[webui]`, pairing, devices). */
@@ -958,6 +960,8 @@ export type EngineAction =
 /** This machine's settings in `[ui]` and `[webui]`; absent fields stay as they are. */
 export interface SettingsPatch {
   recordMoment?: boolean;
+  /** `[ui] stop_on_exit`: quitting the window app stops this machine's Systems first. */
+  stopOnExit?: boolean;
   /** The skin the window shows (klif-webui follows it). */
   skin?: string;
   webuiEnabled?: boolean;

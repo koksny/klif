@@ -1067,6 +1067,9 @@ pub struct ConfigInfo {
     /// `[ui] record_moment`: show the "new record" moment (default on).
     #[serde(default = "yes")]
     pub record_moment: bool,
+    /// `[ui] stop_on_exit`: quitting the window app stops this machine's Systems first (default off).
+    #[serde(default)]
+    pub stop_on_exit: bool,
     /// `[ui] skin`: the skin the window reported last (klif-webui follows it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
@@ -1949,6 +1952,9 @@ pub enum Action {
     UpdateSettings {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_moment: Option<bool>,
+        /// `[ui] stop_on_exit`: quitting the window app stops this machine's Systems first.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_on_exit: Option<bool>,
         /// The skin the window shows (its id); klif-webui follows it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skin: Option<String>,
@@ -2225,9 +2231,10 @@ impl fmt::Debug for Action {
                 .field("kv", kv)
                 .finish(),
             Action::ForgetRecord { key, node } => f.debug_struct("ForgetRecord").field("key", key).field("node", node).finish(),
-            Action::UpdateSettings { record_moment, skin, webui_enabled, webui_host, webui_port } => f
+            Action::UpdateSettings { record_moment, stop_on_exit, skin, webui_enabled, webui_host, webui_port } => f
                 .debug_struct("UpdateSettings")
                 .field("record_moment", record_moment)
+                .field("stop_on_exit", stop_on_exit)
                 .field("skin", skin)
                 .field("webui_enabled", webui_enabled)
                 .field("webui_host", webui_host)

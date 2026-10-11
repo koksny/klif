@@ -141,6 +141,9 @@ pub struct UiCfg {
     pub panel_monitor: Option<String>,
     /// Celebrate a broken record over the skin (the "new record" moment). Default on.
     pub record_moment: bool,
+    /// Quitting the window app stops this machine's Systems first. Default off: model servers outlive KLIF and the
+    /// next start adopts them.
+    pub stop_on_exit: bool,
     /// The skin the window uses (its id, e.g. "cliff"); the window reports it, klif-webui follows it. Unset = the
     /// window's own choice.
     pub skin: Option<String>,
@@ -148,7 +151,7 @@ pub struct UiCfg {
 
 impl Default for UiCfg {
     fn default() -> Self {
-        Self { frameless: true, panel_monitor: None, record_moment: true, skin: None }
+        Self { frameless: true, panel_monitor: None, record_moment: true, stop_on_exit: false, skin: None }
     }
 }
 

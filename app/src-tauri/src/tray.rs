@@ -1,5 +1,5 @@
 //! Tray icon: Show / Hide, a "Panel mode" check item, a Skin submenu (emits `klif://skin` to the UI), Stop all
-//! Systems (after a confirmation), Quit. Quitting KLIF never stops a model server.
+//! Systems (after a confirmation), Quit. Quitting KLIF stops no model server unless `[ui] stop_on_exit` is on.
 //! The Skin submenu starts with the built-in skins and is replaced by the UI's own list (`klif_skins`), which
 //! also holds local-only skins.
 //! Left click shows KLIF (macOS: a click opens the menu, as menu bar items do; the icon is a template image that

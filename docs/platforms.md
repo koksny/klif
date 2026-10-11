@@ -91,7 +91,7 @@ Do not commit an ordinal from your machine as if it were universal.
   (`MTL0_Mapped`), which the process's footprint does not count, so KLIF uses `ri_resident_size` (it matches the
   server's own memory breakdown).
 - **Servers keep running** when KLIF quits: each one leads its own process group, outside KLIF's. Quitting from the
-  menu bar or with Cmd+Q never stops a server.
+  menu bar or with Cmd+Q stops no server unless `[ui] stop_on_exit` is on.
 - **Program names.** An app started from Finder or the Dock gets a short PATH (`/usr/bin:/bin:/usr/sbin:/sbin`);
   a bare `command` is also looked up in `/opt/homebrew/bin` and `/usr/local/bin`. Anywhere else, write the absolute
   path. KLIF does not expand `~` in paths.

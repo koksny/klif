@@ -73,7 +73,9 @@ and the reason. A System of another machine carries a muted ` · <node name>` af
 - **Selecting a tab never stops anything.** Launch and Restart select the System they act on when the selected tab
   has no session.
 - **Quitting KLIF leaves servers running.** The next start adopts every session it recorded (found again by job
-  name), so a restart of the window costs nothing. A server that died meanwhile shows as a fault.
+  name), so a restart of the window costs nothing. A server that died meanwhile shows as a fault. **Stop on exit**
+  in Tune (`[ui] stop_on_exit`, `klif-cli settings stop-on-exit on`) makes quitting the window stop this machine's
+  Systems first, waiting up to 20 s for them; external Systems and other nodes are never touched.
 - **Stop all Systems** (tray, `klif-cli stop --all --yes`) stops every local session. External Systems are never
   affected.
 

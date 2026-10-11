@@ -526,10 +526,10 @@ pub static COMMANDS: &[Cmd] = &[
     Cmd {
         name: "settings",
         group: "setup",
-        synopsis: "settings [record-moment on|off | skin <id>]",
-        summary: "This machine's display settings ([ui] in klif.toml): show, or set one",
+        synopsis: "settings [record-moment on|off | stop-on-exit on|off | skin <id>]",
+        summary: "This machine's window settings ([ui] in klif.toml): show, or set one",
         args: &[
-            a("setting", false, "record-moment (then on | off) or skin (then a skin id: cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit)"),
+            a("setting", false, "record-moment or stop-on-exit (then on | off), or skin (then a skin id: cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit)"),
             a("value", false, "on | off, or the skin id"),
         ],
         flags: &[],

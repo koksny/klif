@@ -46,7 +46,7 @@ pub fn run(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             let port = port.as_deref().map(port_arg).transpose()?;
             let conn = conn::connect(loaded)?;
             if enabled.is_some() || host.is_some() || port.is_some() {
-                act(&conn, Action::UpdateSettings { record_moment: None, skin: None, webui_enabled: enabled, webui_host: host, webui_port: port })?;
+                act(&conn, Action::UpdateSettings { record_moment: None, stop_on_exit: None, skin: None, webui_enabled: enabled, webui_host: host, webui_port: port })?;
             }
             show(&conn, out, None)
         }

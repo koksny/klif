@@ -124,7 +124,7 @@ usage: klif-cli [--json] <command> ...
   models adopt <rec-id> [--system S] [--ctx N] [--kv TYPE]
                                            Make a preset from a downloaded model (ctx / KV: this machine's suggestion)
 
-  settings [record-moment on|off | skin <id>]
+  settings [record-moment on|off | stop-on-exit on|off | skin <id>]
                                            This machine's display settings ([ui] in klif.toml): show, or set one
   webui [on|off] [--host IP] [--port N]    klif-webui, the LAN control page: show it, turn it on or off, set its address
   webui pair --yes                         Open a pairing: a one-time code and address (a credential, 5 minutes)
@@ -569,17 +569,20 @@ the error codes as an enum). `klif-cli schema` prints the list with the commands
 
 ### Settings
 
-**`settings [record-moment on|off | skin <id>]`** shows or sets this machine's display settings in `[ui]`.
-`record-moment` is the "new record" moment over the skin (on by default; records are kept either way). `skin` is the
+**`settings [record-moment on|off | stop-on-exit on|off | skin <id>]`** shows or sets this machine's window settings
+in `[ui]`. `record-moment` is the "new record" moment over the skin (on by default; records are kept either way).
+`stop-on-exit` makes quitting the window app stop this machine's Systems first, waiting up to 20 s (off by default:
+servers keep running and the next start adopts them; `klif-cli` itself never stops a server when it exits). `skin` is the
 skin the window shows, by id (`cliff`, `silicon`, `instrument`, `phosphor`, `decode`, `loom`, `ether`, `rings`,
 `spirit`): a running window switches to it, a window that starts later opens in it, and [klif-webui](webui.md)
 follows it. The window writes `[ui] skin` itself whenever you change skins there, so it is also how a script learns
-which skin is showing; a skin id the window does not have is replaced by the window's own the next time it runs. Both
-are local only, never over the network. JSON: `{schemaVersion, recordMoment, skin?}` (`skin` is absent until a skin
-was chosen).
+which skin is showing; a skin id the window does not have is replaced by the window's own the next time it runs. All
+are local only, never over the network. JSON: `{schemaVersion, recordMoment, stopOnExit, skin?}` (`skin` is absent
+until a skin was chosen).
 
 ```
 record-moment  on     (the "new record" moment over the skin; [ui] record_moment)
+stop-on-exit   off    (quitting the window app stops this machine's Systems first; [ui] stop_on_exit)
 skin           cliff  ([ui] skin; the window writes it, klif-webui follows it)
 ```
 

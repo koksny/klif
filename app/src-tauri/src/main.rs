@@ -161,6 +161,7 @@ fn main() {
             let s = shell::shell(app);
             s.geometry.flush();
             if let Some(e) = s.engine_if_ready() {
+                stop_systems_on_exit(&e);
                 e.shutdown();
             }
             log::info!("exit ({} view models pushed)", s.vm_events.load(Ordering::Relaxed));
@@ -168,6 +169,42 @@ fn main() {
         }
         _ => {}
     });
+}
+
+/// How long quitting waits for this machine's Systems to stop (`[ui] stop_on_exit`); a server still stopping after it
+/// is left to the supervisor's own kill, which the next start adopts or finds gone.
+const STOP_ON_EXIT_WAIT: Duration = Duration::from_secs(20);
+
+/// `[ui] stop_on_exit`: stop this machine's Systems (StopAll, as the tray's "Stop all") and wait until they are down.
+/// Remote Systems and watched external servers are not KLIF's to stop here.
+fn stop_systems_on_exit(e: &klif_core::EngineHandle) {
+    use klif_common::vm::{Action, SystemStatus, ViewModel};
+    let running = |vm: &ViewModel| {
+        vm.systems
+            .iter()
+            .filter(|s| s.node.is_none() && !s.external)
+            .filter(|s| matches!(s.status, SystemStatus::Starting | SystemStatus::Online | SystemStatus::Busy | SystemStatus::Stopping))
+            .count()
+    };
+    let vm = e.snapshot();
+    let n = running(&vm);
+    if !vm.config.stop_on_exit || n == 0 {
+        return;
+    }
+    log::info!("exit: stopping {n} System(s) first ([ui] stop_on_exit)");
+    if let Err(err) = e.act(Action::StopAll) {
+        log::warn!("exit: stop all failed: {err:#}");
+        return;
+    }
+    let t0 = Instant::now();
+    while t0.elapsed() < STOP_ON_EXIT_WAIT {
+        std::thread::sleep(Duration::from_millis(250));
+        if running(&e.snapshot()) == 0 {
+            log::info!("exit: Systems stopped after {:.1} s", t0.elapsed().as_secs_f64());
+            return;
+        }
+    }
+    log::warn!("exit: Systems still stopping after {} s; quitting anyway", STOP_ON_EXIT_WAIT.as_secs());
 }
 
 fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: String, webview_dir: PathBuf) -> tauri::Result<()> {
