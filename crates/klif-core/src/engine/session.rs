@@ -25,6 +25,15 @@ use crate::state::{PersistedLast, PersistedSession, MAX_LAYERS};
 /// The label of a measured VRAM layer from the session's peak allocations on the card (0.3.2; 0.3.1 wrote "Measured
 /// peak" from the committed total, which counted offloaded weights: those entries are dropped on load).
 pub(crate) const MEASURED_PEAK: &str = "Measured on the card";
+/// No GPU holds more (GiB): a larger "measured" figure is a broken counter (a process's PDH counters can read close to
+/// 2^64 bytes while it exits), never a real need.
+pub(crate) const MAX_SANE_GIB: f64 = 4096.0;
+
+/// Stored VRAM layers that add up to a real figure.
+pub(crate) fn sane_layers(l: &[VramLayer]) -> bool {
+    let t: f64 = l.iter().map(|x| x.gib).sum();
+    t.is_finite() && (0.0..MAX_SANE_GIB).contains(&t)
+}
 
 /// A fatal log line while the process stays up and the server is not ready: wait this long for it to exit.
 const FATAL_GRACE_S: f64 = 10.0;
@@ -498,7 +507,7 @@ impl Inner {
             } else {
                 None
             };
-            if let Some(l) = layers {
+            if let Some(l) = layers.filter(|l| sane_layers(l)) {
                 st.layers.insert(hash.clone(), l);
                 while st.layers.len() > MAX_LAYERS {
                     let Some(k) = st.layers.keys().find(|k| **k != hash).cloned() else { break };
@@ -551,7 +560,9 @@ impl Inner {
                     } else {
                         sig.per_gpu.iter().map(|g| (g.committed_gib - g.shared_gib).max(0.0)).sum()
                     };
-                    ctx.peak_vram = ctx.peak_vram.max(on_card);
+                    if on_card.is_finite() && on_card < MAX_SANE_GIB {
+                        ctx.peak_vram = ctx.peak_vram.max(on_card);
+                    }
                     ctx.layers = sig.layers.clone();
                 }
                 if matches!(ctx.phase, Phase::Live | Phase::Stopping) {

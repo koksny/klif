@@ -1531,8 +1531,14 @@ impl BackendAdapter for AudioCpp {
         self.s.steps_view(health)
     }
     fn busy_since(&self, now: f64) -> Option<f64> {
-        // A job the log follows (POST .. session.wall_ms) is busy the whole time, not only for the pulse.
-        self.p.job.as_ref().map(|j| j.started).or_else(|| self.s.busy_since(now))
+        if self.s.ctx.kind == SystemKind::Music {
+            // Busy exactly while a job runs (POST .. session.wall_ms; every music family prints it). The log-line
+            // pulse would also fire on an adopted server's log being read in, and a fresh `klif-cli status` (its own
+            // engine) would then report an idle server as busy.
+            return self.p.job.as_ref().map(|j| j.started);
+        }
+        // Speech: some families print no `session.wall_ms`, so a job could never end; the log-line pulse stays.
+        self.s.busy_since(now)
     }
     fn fill(&self, now: f64, sig: &mut SessionSignals) {
         self.s.fill(now, sig);
@@ -1543,8 +1549,8 @@ impl BackendAdapter for AudioCpp {
             g.requests_total = self.p.requests.or(g.requests_total);
             g.model_id = m.and_then(|m| m.loaded_id.clone().or_else(|| m.id.clone()));
             g.model_loaded = if unloaded { Some(false) } else { m.and_then(|m| m.loaded) };
-            if self.p.job.is_some() {
-                g.requests_in_flight = Some(1);
+            if self.s.ctx.kind == SystemKind::Music {
+                g.requests_in_flight = Some(u64::from(self.p.job.is_some()));
             }
         }
         if self.s.ctx.kind == SystemKind::Music {

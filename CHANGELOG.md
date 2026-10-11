@@ -3,6 +3,21 @@
 0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
 were built from source; their notes follow, newest first.
 
+## Unreleased
+
+- **YuE2 license notes corrected.** The pool said "non-commercial use only". M-A-P's creator permission lets
+  individual users, content creators and musicians monetize YuE2's outputs with no fees or royalties, and only
+  companies need a license for the weights. The non-commercial terms stay on the two Mothersuperior adapters of YuE2
+  3B Instrumental.
+- **Fix: an idle music System no longer reads as busy.** A music System is busy exactly while a job runs. Before,
+  the 2 s log-line pulse also fired when a fresh engine (every one-shot `klif-cli` command) read the adopted
+  server's log, so `klif-cli status` reported an idle audio.cpp server as busy. Speech Systems keep the pulse,
+  because some speech models print no end-of-job line.
+- **Fix: no more VRAM needs of ~17 billion GiB.** While a server process exits, Windows' per-process GPU memory
+  counters can read close to 2^64 bytes. KLIF stored that as the command's measured VRAM and then reported "Does
+  not fit even with everything stopped". Such readings are now dropped, implausible peaks are not stored, and
+  figures saved by earlier builds are ignored on load.
+
 ## 0.3.4 (2026-10-11)
 
 Music: YuE2 in the pool, and music Systems that animate while a song is made.

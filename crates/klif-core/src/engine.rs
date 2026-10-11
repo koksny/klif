@@ -419,8 +419,14 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
         externals: BTreeMap::new(),
         last: persisted.last_sessions.clone(),
         arches: persisted.arches.clone(),
-        // 0.3.1's "Measured peak" counted offloaded weights as VRAM: measure those commands again.
-        layers: persisted.layers.iter().filter(|(_, l)| !(l.len() == 1 && l[0].label == "Measured peak")).map(|(k, v)| (k.clone(), v.clone())).collect(),
+        // 0.3.1's "Measured peak" counted offloaded weights as VRAM, and up to 0.3.4 a broken PDH counter could be stored
+        // as a peak of ~2^34 GiB: measure those commands again.
+        layers: persisted
+            .layers
+            .iter()
+            .filter(|(_, l)| !(l.len() == 1 && l[0].label == "Measured peak") && session::sane_layers(l))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
         idle_tails: BTreeMap::new(),
         notes,
         foreign_ports: BTreeMap::new(),

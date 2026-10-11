@@ -228,6 +228,12 @@ pub fn short_cpu_name(brand: &str) -> String {
     brand.trim().to_string()
 }
 
+/// A GPU memory reading in bytes a real card can show. A process's PDH counters can read close to 2^64 (a wrapped
+/// negative) while it exits; such a sample is dropped, or it becomes a session's "measured" VRAM of ~2^34 GiB.
+pub fn plausible_bytes(v: f64) -> bool {
+    v.is_finite() && (0.0..(1u64 << 48) as f64).contains(&v)
+}
+
 /// The canonical adapter key ("luid_0x%08X_0x%08X", as `Adapter::pdh_luid`) inside a PDH instance name such as
 /// "pid_1234_luid_0x00000000_0x0000D1F4_phys_0" or "luid_0x00000000_0x0000D1F4_phys_0".
 pub fn luid_key(instance: &str) -> Option<String> {
@@ -245,7 +251,7 @@ pub fn luid_key(instance: &str) -> Option<String> {
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{luid_key, AdapterMem, Frame, GpuPlatform, HostPlatform, PowerHandle, ProcMem, Sampler};
+    use super::{luid_key, plausible_bytes, AdapterMem, Frame, GpuPlatform, HostPlatform, PowerHandle, ProcMem, Sampler};
     use crate::{parse_gpu_id, win, Adapter, PowerState, UlpsSetting};
     use std::collections::BTreeMap;
     use windows::Win32::System::Performance::PDH_HCOUNTER;
@@ -358,6 +364,9 @@ mod windows_impl {
             let mut adapters: BTreeMap<String, f64> = BTreeMap::new();
             if let Some(c) = self.adapter_ded {
                 for (inst, v) in self.pdh.array(c) {
+                    if !plausible_bytes(v) {
+                        continue;
+                    }
                     if let Some(k) = luid_key(&inst) {
                         *adapters.entry(k).or_default() += v;
                     }
@@ -368,6 +377,9 @@ mod windows_impl {
                 let mut add = |c: Option<PDH_HCOUNTER>, which: u8| {
                     let Some(c) = c else { return };
                     for (inst, v) in self.pdh.array(c) {
+                        if !plausible_bytes(v) {
+                            continue;
+                        }
                         let Some(pid) = win::pid_of(&inst) else { continue };
                         if pids.binary_search(&pid).is_err() {
                             continue;
