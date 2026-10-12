@@ -427,6 +427,8 @@ export interface System {
   external: boolean;
   /** Needs the whole GPU. */
   exclusive: boolean;
+  /** The skin the window shows while this System is selected ([systems.<id>] skin); absent = the global skin. */
+  skin?: string;
   /**
    * Its preset keeps weights in system RAM (--cpu-moe, -ncmoe, -ot ...=CPU, -ngl 0, --offload-to-cpu,
    * --cpu-offload-gb): the server makes do with the VRAM it finds, so it never "does not fit".
@@ -945,7 +947,7 @@ export type EngineAction =
   | { type: 'deletePreset'; id: string; node?: string }
   | { type: 'addSystem'; id?: string; label?: string; kind: SystemKind; class?: LlmClass; preset?: string; node?: string }
   | { type: 'removeSystem'; system: SystemId }
-  | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean }
+  | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean; skin?: string }
   | { type: 'downloadRecommendation'; id: string; node?: string }
   | { type: 'cancelDownload'; id: string; node?: string }
   | { type: 'adoptRecommendation'; id: string; system?: SystemId; ctx?: number; kv?: string }
@@ -985,6 +987,15 @@ export interface CallOpts {
   quiet?: boolean;
 }
 
+/** What `updateSystem` changes (absent = unchanged). */
+export interface SystemPatch {
+  label?: string;
+  moveTo?: number;
+  exclusive?: boolean;
+  /** A skin id, or '' for the global skin. */
+  skin?: string;
+}
+
 export interface Actions {
   // ---- engine actions ----
   select(system: SystemId, call?: CallOpts): Promise<void>;
@@ -1005,7 +1016,8 @@ export interface Actions {
   deletePreset(id: string, node?: string, call?: CallOpts): Promise<void>;
   addSystem(spec: { id?: string; label?: string; kind: SystemKind; class?: LlmClass; preset?: string; node?: string }, call?: CallOpts): Promise<void>;
   removeSystem(system: SystemId, call?: CallOpts): Promise<void>;
-  updateSystem(system: SystemId, patch: { label?: string; moveTo?: number; exclusive?: boolean }, call?: CallOpts): Promise<void>;
+  /** `skin: ''` = back to the global skin. */
+  updateSystem(system: SystemId, patch: SystemPatch, call?: CallOpts): Promise<void>;
   downloadRecommendation(id: string, node?: string, call?: CallOpts): Promise<void>;
   cancelDownload(id: string, node?: string, call?: CallOpts): Promise<void>;
   /**

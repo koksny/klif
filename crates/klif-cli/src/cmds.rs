@@ -521,7 +521,7 @@ fn on_off(v: &str) -> CliResult<bool> {
 }
 
 pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
-    let sub = args.pos("systems subcommand (list, add, remove, rename, move, exclusive)")?;
+    let sub = args.pos("systems subcommand (list, add, remove, rename, move, exclusive, skin)")?;
     match sub.as_str() {
         "list" | "ls" => {
             args.done()?;
@@ -588,40 +588,68 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             if label.trim().is_empty() {
                 return Err(CliError::usage("systems rename needs a label."));
             }
-            update(loaded, out, &arg, Some(label.trim().to_string()), None, None)
+            update(loaded, out, &arg, Some(label.trim().to_string()), None, None, None)
         }
         "move" => {
             let arg = args.pos("System")?;
             let idx = args.pos("tab index")?;
             args.done()?;
             let idx: u32 = idx.trim().parse().map_err(|_| CliError::usage(format!("The tab index must be a number (0 = first), not \"{idx}\".")))?;
-            update(loaded, out, &arg, None, Some(idx), None)
+            update(loaded, out, &arg, None, Some(idx), None, None)
         }
         "exclusive" => {
             let arg = args.pos("System")?;
             let v = on_off(&args.pos("on or off")?)?;
             args.done()?;
-            update(loaded, out, &arg, None, None, Some(v))
+            update(loaded, out, &arg, None, None, Some(v), None)
         }
-        other => Err(CliError::usage(format!("Unknown systems subcommand \"{other}\" (list, add, remove, rename, move, exclusive)."))),
+        "skin" => {
+            let arg = args.pos("System")?;
+            let skin = args.pos("skin id or global")?;
+            args.done()?;
+            let skin = skin.trim().to_ascii_lowercase();
+            let skin = if matches!(skin.as_str(), "global" | "none" | "default" | "-") { String::new() } else { skin };
+            if !skin.is_empty() && !klif_core::klif_catalog::store::valid_skin_id(&skin) {
+                return Err(CliError::usage(format!(
+                    "\"{skin}\" is not a skin id (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit), or global."
+                )));
+            }
+            update(loaded, out, &arg, None, None, None, Some(skin))
+        }
+        other => Err(CliError::usage(format!("Unknown systems subcommand \"{other}\" (list, add, remove, rename, move, exclusive, skin)."))),
     }
 }
 
-fn update(loaded: &LoadedConfig, out: Out, arg: &str, label: Option<String>, move_to: Option<u32>, exclusive: Option<bool>) -> CliResult {
+fn update(
+    loaded: &LoadedConfig,
+    out: Out,
+    arg: &str,
+    label: Option<String>,
+    move_to: Option<u32>,
+    exclusive: Option<bool>,
+    skin: Option<String>,
+) -> CliResult {
     let conn = conn::connect(loaded)?;
     let vm = conn.snapshot(None)?;
     let id = resolve(&vm, arg)?;
-    act(&conn, Action::UpdateSystem { system: id.clone(), label, move_to, exclusive })?;
+    act(&conn, Action::UpdateSystem { system: id.clone(), label, move_to, exclusive, skin })?;
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
     let pos = vm.systems.iter().filter(|x| x.node.is_none()).position(|x| x.id == id);
-    out.doc(val(&SystemsUpdateDoc { system: s.as_ref().map(SysBrief::of), index: pos, exclusive: s.as_ref().map(|s| s.exclusive) }), || match &s {
+    let doc = SystemsUpdateDoc {
+        system: s.as_ref().map(SysBrief::of),
+        index: pos,
+        exclusive: s.as_ref().map(|s| s.exclusive),
+        skin: s.as_ref().and_then(|s| s.skin.clone()),
+    };
+    out.doc(val(&doc), || match &s {
         Some(s) => format!(
-            "{} ({}) · tab {} · exclusive {}",
+            "{} ({}) · tab {} · exclusive {} · skin {}",
             s.label,
             s.id,
             pos.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
-            if s.exclusive { "on" } else { "off" }
+            if s.exclusive { "on" } else { "off" },
+            s.skin.as_deref().unwrap_or("global")
         ),
         None => format!("Updated {id}."),
     });

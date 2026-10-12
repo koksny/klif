@@ -486,12 +486,16 @@ pub struct SystemCfg {
     /// Needs the whole GPU: launching it lists every other running System on that GPU as a conflict, and vice versa.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclusive: bool,
+    /// The skin the window shows while this System is selected (absent = the global `[ui] skin`). The window ignores
+    /// an id it does not have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
 }
 
 impl SystemCfg {
     /// A System of a kind with nothing else set.
     pub fn new(kind: SystemKind) -> SystemCfg {
-        SystemCfg { label: None, kind, class: None, preset: None, params: BTreeMap::new(), exclusive: false }
+        SystemCfg { label: None, kind, class: None, preset: None, params: BTreeMap::new(), exclusive: false, skin: None }
     }
 
     /// The active preset id (trimmed; None when unset or empty).
@@ -501,7 +505,7 @@ impl SystemCfg {
 }
 
 /// The keys `[systems.<id>]` understands.
-pub const SYSTEM_KEYS: &[&str] = &["label", "kind", "class", "preset", "params", "exclusive"];
+pub const SYSTEM_KEYS: &[&str] = &["label", "kind", "class", "preset", "params", "exclusive", "skin"];
 
 /// `[presets.<id>.params.<NAME>]`: one independent launch option (no Cartesian product of presets).
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1439,7 +1443,7 @@ fn systems_from_tiers(tiers: &toml::Table) -> Vec<(SystemId, SystemCfg)> {
                 .and_then(|v| v.as_table())
                 .map(|p| p.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
                 .unwrap_or_default();
-            Some((SystemId::new(id), SystemCfg { label: Some(label.to_string()), kind, class, preset, params, exclusive: false }))
+            Some((SystemId::new(id), SystemCfg { label: Some(label.to_string()), kind, class, preset, params, exclusive: false, skin: None }))
         })
         .collect()
 }

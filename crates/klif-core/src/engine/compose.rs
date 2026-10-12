@@ -234,10 +234,9 @@ impl Inner {
             s.node = None;
             s.editable = true;
             s.controllable = true;
-            if s.model.arch.is_none() {
-                if let Some(k) = model_key(cfg, s.preset.as_deref()) {
-                    s.model.arch = st.arches.get(&k).cloned();
-                }
+            // What the server reported (llama.cpp's print_info) wins over the shape read from the file's header.
+            if let Some(a) = model_key(cfg, s.preset.as_deref()).and_then(|k| st.arches.get(&k)) {
+                s.model.arch = Some(a.clone());
             }
             s.last_session = st.last.get(&id).map(|l| {
                 let mut x: LastSession = l.summary.clone();
@@ -414,6 +413,7 @@ impl Inner {
                 gpus: ctx.p.all_gpus(),
                 external: false,
                 exclusive: ctx.p.exclusive,
+                skin: None,
                 ram_offload: false,
                 editable: false,
                 controllable: true,
@@ -604,6 +604,7 @@ fn merge_remote(systems: &mut Vec<System>, focus: &mut BTreeMap<SystemId, Focus>
                         gpus: Vec::new(),
                         external: false,
                         exclusive: false,
+                        skin: None,
                         ram_offload: false,
                         editable: false,
                         controllable: false,

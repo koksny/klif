@@ -99,6 +99,7 @@ usage: klif-cli [--json] <command> ...
   systems rename <system> <label>          Change a System's tab label
   systems move <system> <index>            Move a System to a tab position (0-based, among the local Systems)
   systems exclusive <system> on|off        Whether the System needs the whole GPU
+  systems skin <system> <id|global>        The skin shown while the System is selected
 
   presets list [--node N]                  Presets with their availability and last bench
   presets show <id> [--node N]             One preset in full with the command it builds (secrets masked); <node>/<id> = --node
@@ -367,7 +368,9 @@ watching: s1 offline, s2 offline, waiting for s2=online (Ctrl-C ends it)
 - **`systems add --kind K [--class C] [--label L] [--id ID] [--preset P] [--node N]`** (without `--label` the default
   label of that kind and class, with ` (2)`, ` (3)` added when it is taken: "System 1 (2)"; see
   [systems.md](systems.md#kinds)), **`remove`** (refused while it runs), **`rename <system> <label>`**,
-  **`move <system> <index>`** (0-based among local Systems), **`exclusive <system> on|off`**.
+  **`move <system> <index>`** (0-based among local Systems), **`exclusive <system> on|off`**, **`skin <system>
+  <id|global>`** (the skin the window shows while that System is selected, `[systems.<id>] skin`; `global` removes
+  it, so the window shows `[ui] skin`).
 - **`presets use <system> <id>`** and **`presets param <system> <name> <value>`** choose a preset and a param
   choice; both apply on the next launch. `presets use` is refused (nothing is written) for a preset that does not
   exist or has another kind than the System, and it removes the System's param selections that the new preset

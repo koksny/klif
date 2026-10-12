@@ -185,7 +185,7 @@
     const params = arch?.params ? ` · ${arch.params}${shape.kind === 'moe' ? '' : ' params'}` : '';
     return [
       ['context', llm ? `${fmtInt(llm.context.usedTokens)} / ${fmtInt(llm.context.totalTokens)} · ${ctxPct}%` : ctxTotal ? `— / ${fmtInt(ctxTotal)}` : '—'],
-      ['layers', shape.known ? `${shape.layers}${heads}` : 'unknown until first load'],
+      ['layers', shape.known ? `${shape.layers}${heads}` : 'not reported'],
       ['experts', shape.kind === 'moe' ? `${shape.active}${shape.shared ? ` + ${shape.shared}` : ''} of ${fmtInt(shape.experts)}${params}` : shape.known ? `dense${params}` : '—'],
       ['speculative', llm?.spec ? `${Math.round(llm.spec.acceptancePct)}% · ${llm.spec.mode.toLowerCase()}` : (model?.specMode?.toLowerCase() ?? 'off')],
     ];

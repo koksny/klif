@@ -189,7 +189,9 @@ impl Inner {
             Action::DeletePreset { id, node: _ } => self.delete_preset(&id),
             Action::AddSystem { id, label, kind, class, preset, node: _ } => self.add_system(id.as_deref(), label.as_deref(), kind, class, preset.as_deref()),
             Action::RemoveSystem { system } => self.remove_system(&system),
-            Action::UpdateSystem { system, label, move_to, exclusive } => self.update_system(&system, label.as_deref(), move_to, exclusive),
+            Action::UpdateSystem { system, label, move_to, exclusive, skin } => {
+                self.update_system(&system, label.as_deref(), move_to, exclusive, skin.as_deref())
+            }
             Action::DownloadRecommendation { id, node: _ } => self.download(&id),
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
             Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
@@ -501,10 +503,8 @@ impl Inner {
             st.dirty = true;
             match r {
                 Ok(mut ctx) => {
-                    if ctx.p.model.arch.is_none() {
-                        if let Some(k) = model_key(&cfg, ctx.p.preset.as_deref()) {
-                            ctx.p.model.arch = st.arches.get(&k).cloned();
-                        }
+                    if let Some(a) = model_key(&cfg, ctx.p.preset.as_deref()).and_then(|k| st.arches.get(&k)) {
+                        ctx.p.model.arch = Some(a.clone());
                     }
                     self.begin_session(&mut st, &cfg, id.clone(), ctx, false);
                     Ok(())
@@ -879,7 +879,7 @@ impl Inner {
         if let Some(p) = preset {
             self.check_preset_for(&cfg, p, kind, &label)?;
         }
-        let sys = SystemCfg { label: Some(label), kind, class, preset: preset.map(str::to_string), params: Default::default(), exclusive: false };
+        let sys = SystemCfg { label: Some(label), kind, class, preset: preset.map(str::to_string), params: Default::default(), exclusive: false, skin: None };
         let mut added: Option<SystemId> = None;
         self.write(|path| {
             added = Some(store::add_system(path, id, &sys)?);
@@ -910,7 +910,14 @@ impl Inner {
         Ok(())
     }
 
-    fn update_system(&self, system: &SystemId, label: Option<&str>, move_to: Option<u32>, exclusive: Option<bool>) -> Result<()> {
+    fn update_system(
+        &self,
+        system: &SystemId,
+        label: Option<&str>,
+        move_to: Option<u32>,
+        exclusive: Option<bool>,
+        skin: Option<&str>,
+    ) -> Result<()> {
         let cfg = self.cfg();
         self.local_system(&cfg, system)?;
         let label = match label {
@@ -918,7 +925,7 @@ impl Inner {
             Some(l) => Some(l.trim()),
             None => None,
         };
-        self.write(|path| store::update_system(path, system, label, move_to, exclusive))
+        self.write(|path| store::update_system(path, system, label, move_to, exclusive, skin))
     }
 
     // ---- recommendations / downloads -----------------------------------------------------------

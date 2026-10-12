@@ -61,11 +61,20 @@ struct Cache {
     generation: u64,
 }
 
+/// Model shapes read from GGUF headers: path -> (the file size it was read at, the shape), and the paths a thread is
+/// reading now.
+#[derive(Debug, Default)]
+struct ArchCache {
+    entries: HashMap<PathBuf, (u64, Option<klif_common::vm::ModelArch>)>,
+    in_flight: HashSet<PathBuf>,
+}
+
 #[derive(Debug, Default)]
 pub struct FileProbe {
     /// Measure on the calling thread every time (no cache, no threads): for a launch and one-off hashing.
     sync: bool,
     cache: Arc<Mutex<Cache>>,
+    arch: Arc<Mutex<ArchCache>>,
 }
 
 fn lock(c: &Mutex<Cache>) -> MutexGuard<'_, Cache> {
@@ -97,7 +106,7 @@ fn is_exec_mode(_: &std::fs::Metadata) -> bool {
 impl FileProbe {
     /// A probe that always asks the disk on the calling thread (blocking, never stale).
     pub fn fresh() -> Self {
-        FileProbe { sync: true, cache: Arc::default() }
+        FileProbe { sync: true, cache: Arc::default(), arch: Arc::default() }
     }
 
     fn ask(&self, fact: Fact, p: &Path) -> Option<Answer> {
@@ -193,6 +202,35 @@ impl FileProbe {
             Some(rest) => first + rest.iter().filter_map(|s| self.lookup(s)).sum::<u64>(),
             None => first,
         })
+    }
+
+    /// The model's shape from its GGUF header (`crate::gguf`). Read once per file and size on a background thread:
+    /// None until that read is done (the next view-model tick has it), and for a missing or non-GGUF file. A file
+    /// on another machine is that machine's to read: a remote System's shape comes with its node's view.
+    pub fn model_arch(&self, p: &Path) -> Option<klif_common::vm::ModelArch> {
+        let size = self.lookup(p)?;
+        if self.sync {
+            return crate::gguf::read_arch(p);
+        }
+        let mut c = self.arch.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((s, a)) = c.entries.get(p) {
+            if *s == size {
+                return a.clone();
+            }
+        }
+        if c.in_flight.insert(p.to_path_buf()) {
+            let (cache, path) = (Arc::clone(&self.arch), p.to_path_buf());
+            let spawned = std::thread::Builder::new().name("klif-gguf-arch".into()).spawn(move || {
+                let a = crate::gguf::read_arch(&path);
+                let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+                c.in_flight.remove(&path);
+                c.entries.insert(path, (size, a));
+            });
+            if spawned.is_err() {
+                c.in_flight.remove(p);
+            }
+        }
+        None
     }
 
     /// Forget everything (e.g. after the user installed a model). Answers being measured right now are dropped.

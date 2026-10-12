@@ -233,7 +233,7 @@ pub struct SystemsRemoveDoc {
     pub removed: SystemId,
 }
 
-/// `systems rename | move | exclusive`.
+/// `systems rename | move | exclusive | skin`.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemsUpdateDoc {
@@ -241,6 +241,9 @@ pub struct SystemsUpdateDoc {
     /// 0-based tab index among the local Systems.
     pub index: Option<usize>,
     pub exclusive: Option<bool>,
+    /// The System's skin override (`[systems.<id>] skin`); absent = the global skin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
 }
 
 /// `nodes list`.

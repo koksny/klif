@@ -1208,6 +1208,9 @@ pub struct System {
     /// Needs the whole GPU (`exclusive = true`).
     #[serde(default)]
     pub exclusive: bool,
+    /// The skin the window shows while this System is selected (`[systems.<id>] skin`); absent = the global one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
     /// Its preset keeps weights in system RAM (`--cpu-moe`, `-ncmoe N`, `-ot ...=CPU`, `-ngl 0`, sd.cpp
     /// `--offload-to-cpu`, vLLM `--cpu-offload-gb`): the server makes do with the VRAM it finds, so KLIF never says
     /// it does not fit (it still frees the GPU from other Systems for speed).
@@ -1839,7 +1842,7 @@ impl Right {
 /// `{type:'usePreset',system,preset}` `{type:'setParam',system,name,value}`
 /// `{type:'savePreset',id,preset,selectFor?,secretsFrom?,baseHash?,node?}` `{type:'deletePreset',id,node?}`
 /// `{type:'addSystem',id?,label?,kind,class?,preset?,node?}` `{type:'removeSystem',system}`
-/// `{type:'updateSystem',system,label?,moveTo?,exclusive?}` `{type:'downloadRecommendation',id,node?}`
+/// `{type:'updateSystem',system,label?,moveTo?,exclusive?,skin?}` `{type:'downloadRecommendation',id,node?}`
 /// `{type:'cancelDownload',id,node?}` `{type:'adoptRecommendation',id,system?}`.
 ///
 /// `Debug` masks the SavePreset env (through `PresetCfg`'s Debug); hosts log only [`Action::summary`].
@@ -1923,7 +1926,8 @@ pub enum Action {
     RemoveSystem {
         system: SystemId,
     },
-    /// Rename, move to a tab index (0-based among the local Systems), set exclusive.
+    /// Rename, move to a tab index (0-based among the local Systems), set exclusive, set the skin override (`""` =
+    /// back to the global skin).
     UpdateSystem {
         system: SystemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1932,6 +1936,8 @@ pub enum Action {
         move_to: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exclusive: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skin: Option<String>,
     },
     DownloadRecommendation {
         id: String,
@@ -2225,12 +2231,13 @@ impl fmt::Debug for Action {
                 .field("node", node)
                 .finish(),
             Action::RemoveSystem { system } => f.debug_struct("RemoveSystem").field("system", system).finish(),
-            Action::UpdateSystem { system, label, move_to, exclusive } => f
+            Action::UpdateSystem { system, label, move_to, exclusive, skin } => f
                 .debug_struct("UpdateSystem")
                 .field("system", system)
                 .field("label", label)
                 .field("move_to", move_to)
                 .field("exclusive", exclusive)
+                .field("skin", skin)
                 .finish(),
             Action::DownloadRecommendation { id, node } => {
                 f.debug_struct("DownloadRecommendation").field("id", id).field("node", node).finish()

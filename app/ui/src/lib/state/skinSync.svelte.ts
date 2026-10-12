@@ -2,11 +2,23 @@
 // (klif-webui follows it, klif-cli can set it). The window reports its choice to the engine and follows a change
 // made elsewhere. A ?skin= URL or a screenshot run (?shot=1) reports nothing.
 import { untrack } from 'svelte';
+import type { SkinId } from '../../skins/contract';
 import { SKINS } from '../../skins/registry';
 import { player } from './player.svelte';
 import { ui } from './ui.svelte';
 
 export function installSkinSync() {
+  // The selected System's own skin ([systems.<id>] skin) is shown over the global one while it is selected.
+  $effect(() => {
+    const vm = player.vm;
+    const sel = vm.systems.find((s) => s.id === vm.selected);
+    const id = sel?.skin;
+    const own = id && SKINS.some((s) => s.id === id) ? { id: id as SkinId, label: sel.label } : null;
+    untrack(() => {
+      if (own?.id !== ui.systemSkin?.id || own?.label !== ui.systemSkin?.label) ui.systemSkin = own;
+    });
+  });
+
   /** The config value last seen (undefined: no view model yet). */
   let seen: string | undefined;
   /** Reports on their way to klif.toml, oldest first: their echo in the view model is not a change made elsewhere. */

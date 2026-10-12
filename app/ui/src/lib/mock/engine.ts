@@ -31,6 +31,7 @@ import type {
   System,
   SystemId,
   SystemKind,
+  SystemPatch,
   SystemStatus,
   ViewModel,
   VramLayer,
@@ -207,6 +208,7 @@ interface MSys {
   preset?: string;
   params: Record<string, string>;
   exclusive: boolean;
+  skin?: string;
   node?: string;
   rt: SessionRt | null;
   last: LastRec | null;
@@ -471,6 +473,7 @@ export class MockEngine {
       preset: w.preset,
       params: { ...(w.params ?? {}) },
       exclusive: !!w.exclusive,
+      skin: w.skin,
       node: w.node,
       rt: null,
       last: null,
@@ -815,7 +818,7 @@ export class MockEngine {
     this.cfgRev++;
   }
 
-  updateSystem(system: SystemId, patch: { label?: string; moveTo?: number; exclusive?: boolean }) {
+  updateSystem(system: SystemId, patch: SystemPatch) {
     const s = this.sysOrThrow(system);
     this.requireEdit(s.node);
     if (patch.label !== undefined) {
@@ -824,6 +827,11 @@ export class MockEngine {
       s.label = l;
     }
     if (patch.exclusive !== undefined) s.exclusive = patch.exclusive;
+    if (patch.skin !== undefined) {
+      const k = patch.skin.trim();
+      if (k && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(k)) throw new Error(`"${k}" is not a skin id.`);
+      s.skin = k || undefined;
+    }
     if (patch.moveTo !== undefined) {
       const group = this.systems.filter((x) => x.node === s.node);
       const idx = clamp(Math.round(patch.moveTo), 0, group.length - 1);
@@ -1720,6 +1728,7 @@ export class MockEngine {
       gpus: spec && !unreachable ? gpuList(spec, r.gpu.id) : [],
       external: !!spec && isExternal(spec),
       exclusive: s.exclusive,
+      ...(s.skin ? { skin: s.skin } : {}),
       editable: node ? node.allow.includes('edit') : true,
       controllable: node ? node.state === 'online' && (node.allow.includes('launch') || node.allow.includes('edit')) : true,
       conflicts: conflicts.ids.slice(),

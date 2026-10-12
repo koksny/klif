@@ -97,7 +97,8 @@ activity, so a chatty server looks busy.
   first GGUF shard so the records know the file. The live view reads Strata's `/metrics`: busy while it reads the
   prompt or generates, the engine's decode rate, the context in use and the MTP acceptance; every finished request
   becomes a live record. Its pinned expert arena (tens of GiB of system memory registered for the GPU) is not
-  counted as VRAM.
+  counted as VRAM, and its model files are not taken as its VRAM need (it sizes its expert cache to the free VRAM,
+  like a llama.cpp preset with `--cpu-moe`); the need comes from what a session measured.
 - **whisper.cpp** (`whisper-server.exe`, speech to text): `adapter = "generic"`, `kind = "stt"`, `health =
   "/health"` (it answers 503 while the model loads), `model` plus `-m {model}`. It logs nothing per request beyond
   the file name, so the live view is activity only and records come from `klif-cli bench <system> --audio

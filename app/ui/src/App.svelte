@@ -57,7 +57,7 @@
 <div class="stage" data-size={ui.size} class:framed={ui.miniFramed}>
   {#if player.ready}
     <div class="frame" style={ui.miniFramed ? `transform: translate(-50%, -50%) scale(${scale})` : ''}>
-      <SkinHost skinId={ui.skinId} vm={player.vm} actions={player.actions} size={ui.size} />
+      <SkinHost skinId={ui.shownSkin} vm={player.vm} actions={player.actions} size={ui.size} />
       {#if ui.consoleOpen && ui.size === 'full'}<ConsoleDrawer />{/if}
       <!-- Mini/panel never shows Tune, but an open drawer stays mounted (hidden) so its unapplied drafts survive a
            switch to mini and back; they are only ever dropped through the drawer's discard confirm. -->

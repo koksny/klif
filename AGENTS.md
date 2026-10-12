@@ -117,7 +117,8 @@ template: `config/klif.example.toml`.
 
 [systems.<id>]       # id: [a-z0-9][a-z0-9_-]{0,31}; tab order = file order
 label, kind = "llm"|"image"|"tts"|"stt"|"video" (required), class = "fast"|"deep"|"max" (llm only),
-preset = "<preset id>", params = { <param> = "<choice>" }, exclusive = true|false
+preset = "<preset id>", params = { <param> = "<choice>" }, exclusive = true|false,
+skin = "<skin id>"   # shown while this System is selected; absent = the global [ui] skin
 
 [presets.<id>]       # id: [a-z0-9][a-z0-9_-]{0,63}
 name, adapter = "llama.cpp"|"sd.cpp"|"vllm"|"strata"|"openai"|"audiocpp"|"generic", kind (required for generic),

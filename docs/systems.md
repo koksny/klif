@@ -12,7 +12,14 @@ class = "fast"                # llm only, optional: fast | deep | max
 preset = "fast-8b"            # absent = "not set"
 params = { reasoning = "on" } # choices for the params the preset declares
 exclusive = false             # true = needs the whole GPU
+skin = "phosphor"             # optional: the skin shown while this System is selected
 ```
+
+**Skin.** The window shows the global skin (`[ui] skin`: Display in Tune, F2, the tray's Skin menu) unless the
+selected System has its own: `skin` here, the Skin field at the top of its Tune tab, or `klif-cli systems skin
+<system> <id|global>`. A heavy System can get a lighter skin, and the skin tells at a glance which System is
+selected. F2 and the tray still change the global skin. An id the window does not have shows the global one, and
+klif-webui follows the global skin.
 
 The id (`s1`) is `[a-z0-9][a-z0-9_-]{0,31}` and never contains `/`. Tab order is the order of the tables in
 `klif.toml`. The window, `klif-cli` and the file all edit the same thing; changes you make in an editor are picked

@@ -22,7 +22,7 @@ export interface Shape {
   audio?: boolean;
 }
 
-/** An LLM never launched yet: a generic dense stack until llama-server prints its shape. */
+/** An LLM whose shape is not known (no GGUF header to read, a server that does not print it): a generic dense stack. */
 const GENERIC_LAYERS = 32;
 /** sd-server prints no block count: the DiT tower is drawn with the prototype's 28 slabs. */
 const DIT_LAYERS = 28;
@@ -64,7 +64,7 @@ export function expertsText(s: Shape): string {
 
 /** The middle-layer label in the scene. */
 export function layerLabel(s: Shape): string {
-  if (!s.known) return s.audio ? 'layers · count not reported' : s.kind === 'dit' ? 'dit blocks · count not reported' : 'shape unknown until first load';
+  if (!s.known) return s.audio ? 'layers · count not reported' : s.kind === 'dit' ? 'dit blocks · count not reported' : 'shape not reported';
   const mid = `layer ${Math.floor(s.layers / 2) + 1} / ${s.layers}`;
   if (s.kind === 'moe') return `${mid} · ${expertsText(s)}`;
   if (s.audio) return mid;
@@ -73,7 +73,7 @@ export function layerLabel(s: Shape): string {
 
 /** One line for the mini caption: "48 layers · 10 + 1 of 512". */
 export function shapeLine(s: Shape): string {
-  if (!s.known) return s.audio ? 'layers not reported' : s.kind === 'dit' ? 'dit · blocks not reported' : 'shape unknown until first load';
+  if (!s.known) return s.audio ? 'layers not reported' : s.kind === 'dit' ? 'dit · blocks not reported' : 'shape not reported';
   if (s.kind === 'moe') return `${s.layers} layers · ${s.active}${s.shared ? ` + ${s.shared}` : ''} of ${fmtInt(s.experts)}`;
   if (s.audio) return `${s.layers} layers`;
   return `${s.layers} layers · ${s.kind}`;

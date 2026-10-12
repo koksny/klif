@@ -125,6 +125,7 @@ kind = "llm"
 class = "max"
 preset = "max-moe"
 exclusive = true               # needs the whole GPU: launching it lists every other System on that GPU as a conflict
+# skin = "phosphor"            # the skin the window shows while this System is selected (absent = [ui] skin)
 
 [systems.cgi]
 label = "System CGI"

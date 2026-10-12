@@ -169,9 +169,22 @@ pub fn remove_system(path: &Path, system: &SystemId) -> Result<()> {
 }
 
 /// Rename (`label`; empty = back to the default label), move to tab index `move_to` (0-based among the local
-/// Systems; reorders the `[systems.*]` tables, comments move with them), set `exclusive`. `None` leaves a field
-/// unchanged.
-pub fn update_system(path: &Path, system: &SystemId, label: Option<&str>, move_to: Option<u32>, exclusive: Option<bool>) -> Result<()> {
+/// Systems; reorders the `[systems.*]` tables, comments move with them), set `exclusive`, set `skin` (empty = back
+/// to the global skin). `None` leaves a field unchanged.
+pub fn update_system(
+    path: &Path,
+    system: &SystemId,
+    label: Option<&str>,
+    move_to: Option<u32>,
+    exclusive: Option<bool>,
+    skin: Option<&str>,
+) -> Result<()> {
+    let skin = skin.map(str::trim);
+    if let Some(s) = skin.filter(|s| !s.is_empty()) {
+        if !valid_skin_id(s) {
+            bail!("\"{s}\" is not a skin id (lowercase letters, digits, - and _).");
+        }
+    }
     let id = local_id(system)?;
     let wanted_order = std::cell::RefCell::new(None::<Vec<String>>);
     edit(
@@ -196,6 +209,13 @@ pub fn update_system(path: &Path, system: &SystemId, label: Option<&str>, move_t
                     }
                     None => {}
                 }
+                match skin {
+                    Some("") => {
+                        entry.remove("skin");
+                    }
+                    Some(s) => set_value(entry, "skin", Value::from(s)),
+                    None => {}
+                }
             }
             if let Some(to) = move_to {
                 let good: Vec<&str> = cfg.systems.iter().map(|(k, _)| k.as_str()).collect();
@@ -214,6 +234,9 @@ pub fn update_system(path: &Path, system: &SystemId, label: Option<&str>, move_t
             }
             if exclusive.is_some_and(|x| x != s.exclusive) {
                 bail!("exclusive of System \"{id}\" does not read back from klif.toml; nothing was written.");
+            }
+            if skin.is_some_and(|x| Some(x).filter(|x| !x.is_empty()) != s.skin.as_deref()) {
+                bail!("The skin of System \"{id}\" does not read back from klif.toml; nothing was written.");
             }
             if let Some(want) = wanted_order.borrow().as_ref() {
                 let got: Vec<&str> = cfg.systems.iter().map(|(k, _)| k.as_str()).collect();
@@ -809,7 +832,7 @@ fn prune_params(entry: &mut dyn TableLike, spec: Option<&PresetCfg>) {
     }
 }
 
-/// `[systems.<id>]` for a SystemCfg: label, kind, class, preset, params (inline), exclusive (only when true).
+/// `[systems.<id>]` for a SystemCfg: label, kind, class, preset, params (inline), skin, exclusive (only when true).
 fn system_table(sys: &SystemCfg) -> Table {
     let mut t = Table::new();
     if let Some(l) = sys.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
@@ -828,6 +851,9 @@ fn system_table(sys: &SystemCfg) -> Table {
             it.insert(k, Value::from(v.as_str()));
         }
         t.insert("params", Item::Value(Value::InlineTable(it)));
+    }
+    if let Some(s) = sys.skin.as_deref() {
+        t.insert("skin", toml_edit::value(s));
     }
     if sys.exclusive {
         t.insert("exclusive", toml_edit::value(true));

@@ -16,6 +16,7 @@
 //! Frozen API: SPEC section 4 (klif-catalog). Owner: package B.
 
 pub mod facts;
+pub mod gguf;
 pub mod probe;
 pub mod recommend;
 mod resolve;
@@ -229,6 +230,7 @@ impl Catalog {
                 gpus: Vec::new(),
                 external: false,
                 exclusive: row.sys.exclusive,
+                skin: row.sys.skin.clone().filter(|s| !s.trim().is_empty()),
                 ram_offload: false,
                 editable: true,
                 controllable: true,
@@ -760,7 +762,9 @@ impl Catalog {
             mode: r.facts.mode.clone(),
             image_size: r.facts.image_size.clone(),
             weights_gib: weights.map(|b| b as f64 / GIB),
-            arch: None,
+            // From the file's header until the server reports its own (engine `arches`); an external server has no
+            // file here.
+            arch: if r.external.is_some() { None } else { loaded.as_deref().and_then(|p| self.probe.model_arch(p)) },
         }
     }
 

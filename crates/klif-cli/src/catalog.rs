@@ -302,6 +302,18 @@ pub static COMMANDS: &[Cmd] = &[
         outputs: &[o("systems-update")],
         streams: false,
     },
+    Cmd {
+        name: "systems skin",
+        group: "systems",
+        synopsis: "systems skin <system> <id|global>",
+        summary: "The skin the window shows while this System is selected (global = the [ui] skin)",
+        args: &[SYSTEM, a("id|global", true, "a skin id (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit) or global")],
+        flags: &[],
+        yes: Yes::No,
+        engine: Eng::May,
+        outputs: &[o("systems-update")],
+        streams: false,
+    },
     // ---- presets
     Cmd {
         name: "presets list",

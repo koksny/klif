@@ -184,7 +184,8 @@ klif-cli webui on --host 127.0.0.1    # [webui] in klif.toml: on|off, --host IP,
 klif-cli webui pair --yes             # one-time code and address, valid 5 minutes: a credential
 klif-cli webui cancel                 # close the open pairing
 klif-cli webui forget <id> --yes      # remove a paired device (--all --yes: every device)
-klif-cli settings skin cliff          # [ui] skin: the skin the window shows, which the page follows
+klif-cli settings skin cliff          # [ui] skin: the global skin, which the page follows
+klif-cli systems skin s3 phosphor     # [systems.s3] skin: shown while System 3 is selected (global removes it)
 ```
 
 - Do not turn it on, or point `host` at a LAN address, on your own initiative: the user decides.

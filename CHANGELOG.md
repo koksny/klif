@@ -5,6 +5,19 @@ were built from source; their notes follow, newest first.
 
 ## Unreleased
 
+- **A skin per System.** A System can have its own skin (`[systems.<id>] skin`, the Skin field at the top of its Tune
+  tab, `klif-cli systems skin <system> <id|global>`), shown while it is selected; the others show the global skin
+  (`[ui] skin`, which F2 and the tray still change). A heavy System can get a lighter skin, and the skin tells at a
+  glance which System is selected.
+- **Model shapes from the GGUF header.** KLIF reads a model's layers, experts, heads, width and vocabulary from the
+  header of its GGUF file (only the metadata, once per file, in the background), so Loom draws the real tower before a
+  server ever loaded the model, and for servers that never print it (Strata). A shape the server reports itself
+  (llama.cpp) still wins. A System on another node gets its shape from that node; an external server has no file
+  here, and Loom then says "shape not reported".
+- **Fix: Strata Systems no longer "do not fit".** Before a Strata command had run, KLIF took its model files as its
+  VRAM need (78 GiB for a 76 GB model whose experts stay in RAM) and showed it over the card in red. A Strata
+  preset now counts as offloading to RAM, like llama.cpp with `--cpu-moe`: no estimate from the files, and the
+  need comes from what a session measured.
 - **Strata adapter.** `adapter = "strata"` for [Strata](https://github.com/Niko1221/Strata), the MoE engine that keeps
   the experts in RAM. KLIF reads its `/metrics` every second: busy while it reads a prompt or generates, the
   engine's own decode rate, the context in use, MTP acceptance, the engine version, and every finished request

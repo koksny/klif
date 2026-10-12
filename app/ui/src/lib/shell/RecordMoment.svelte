@@ -121,17 +121,17 @@
 
 {#if hero}
   {#key turn}
-    <div class="moment" data-skin={ui.skinId} data-size={ui.size} class:reduced class:fading aria-live="polite" role="status">
+    <div class="moment" data-skin={ui.shownSkin} data-size={ui.size} class:reduced class:fading aria-live="polite" role="status">
       <div class="fx" aria-hidden="true">
-        {#if ui.skinId === 'cliff' || ui.skinId === 'rings'}
+        {#if ui.shownSkin === 'cliff' || ui.shownSkin === 'rings'}
           <svg viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid slice">
             {#each [0, 1, 2, 3, 4, 5] as i}<ellipse class="ring" style="animation-delay:{i * 0.18}s" rx={18 + i * 4} ry={11 + i * 2.6} />{/each}
           </svg>
-        {:else if ui.skinId === 'silicon'}
+        {:else if ui.shownSkin === 'silicon'}
           {#each [0, 1, 2, 3, 4, 5, 6] as i}<i class="trace" style="top:{18 + i * 10}%; animation-delay:{i * 0.07}s"></i>{/each}
-        {:else if ui.skinId === 'instrument'}
+        {:else if ui.shownSkin === 'instrument'}
           <div class="dial"><i class="needle"></i></div>
-        {:else if ui.skinId === 'spirit'}
+        {:else if ui.shownSkin === 'spirit'}
           <span class="rec">● REC</span><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
         {:else}
           <i class="bloom"></i><i class="bloom b2"></i>
@@ -141,7 +141,7 @@
         <span class="kicker">{kicker}</span>
         <span class="metric">{metricMeta(hero.metric).long}</span>
         <div class="value" class:landed>
-          <b>{ui.skinId === 'decode' && !reduced ? scramble(heroText, progress) : heroText}</b><span>{metricMeta(hero.metric).unit}</span>
+          <b>{ui.shownSkin === 'decode' && !reduced ? scramble(heroText, progress) : heroText}</b><span>{metricMeta(hero.metric).unit}</span>
         </div>
         {#if hero.ev.old !== undefined}<div class="delta">{deltaText(hero.metric, hero.ev)}</div>{/if}
         {#if rest.length}

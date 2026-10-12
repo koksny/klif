@@ -1,9 +1,11 @@
 <script lang="ts">
-  // Top of a System tab: its label (inline rename), status + reason, the node it lives on, and the ⋯ menu
-  // (move, exclusive GPU, remove). Remote Systems are read-only unless their node grants "edit".
+  // Top of a System tab: its label (inline rename), status + reason, the node it lives on, its skin (the global one
+  // or its own, shown while it is selected), and the ⋯ menu (move, exclusive GPU, remove). Remote Systems are
+  // read-only unless their node grants "edit".
   import { tick } from 'svelte';
   import { isHeld, STATUS_TEXT } from '../../model/systems';
-  import type { NodeView, System, ViewModel } from '../../model/types';
+  import type { NodeView, System, SystemPatch, ViewModel } from '../../model/types';
+  import { SKINS, skinMeta } from '../../../skins/registry';
   import { player } from '../../state/player.svelte';
   import { ui } from '../../state/ui.svelte';
   import StatusDot from '../SystemTabs/StatusDot.svelte';
@@ -68,7 +70,11 @@
     }
   }
 
-  async function update(patch: { moveTo?: number; exclusive?: boolean }) {
+  const globalSkin = $derived(skinMeta(ui.skinId));
+  /** Its own skin when the window has it (an unknown id falls back to the global one, so it is shown as such). */
+  const ownSkin = $derived(system.skin && SKINS.some((s) => s.id === system.skin) ? system.skin : '');
+
+  async function update(patch: SystemPatch) {
     busy = true;
     err = await attempt(() => player.actions.updateSystem(system.id, patch, QUIET));
     busy = false;
@@ -145,6 +151,19 @@
       on <b>{node?.name ?? system.node}</b>{node ? ` · ${NODE_STATE[node.state]}` : ''}{node?.latencyMs !== undefined ? ` · ${Math.round(node.latencyMs)} ms` : ''}
     </div>
   {/if}
+  <div class="skin">
+    <span id="tune-sysskin-{system.id}">Skin</span>
+    <select
+      aria-labelledby="tune-sysskin-{system.id}"
+      title="Shown while {system.label} is selected; Global follows the skin in Display"
+      value={ownSkin}
+      disabled={!system.editable || busy}
+      onchange={(e) => void update({ skin: e.currentTarget.value })}
+    >
+      <option value="">Global ({globalSkin.name})</option>
+      {#each SKINS as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+    </select>
+  </div>
   {#if readOnlyHint}<p class="hint">{readOnlyHint}</p>{/if}
   {#if err}<p class="err" role="alert">{err}</p>{/if}
 </div>
@@ -205,6 +224,18 @@
   }
   .where {
     font: 500 12px/1.3 var(--k-font-ui, system-ui, sans-serif);
+  }
+  .skin {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 500 12px/1.4 var(--k-font-ui, system-ui, sans-serif);
+    color: var(--k-muted, #8a8a8a);
+  }
+  /* beats the drawer's shared select width (100%) */
+  .skin select {
+    flex: none;
+    width: 170px;
   }
   .where b {
     color: var(--k-ink, #e6e6e6);

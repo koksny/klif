@@ -31,7 +31,12 @@ export interface ToastItem {
 class UiState {
   readonly params: Params = parseParams(typeof location === 'undefined' ? '' : location.search);
 
+  /** The global skin ([ui] skin): F2, the tray and Tune's Skin field change it. */
   skinId = $state<SkinId>(DEFAULT_SKIN);
+  /** The selected System's own skin ([systems.<id>] skin), set by skinSync; null = it shows the global one. */
+  systemSkin = $state<{ id: SkinId; label: string } | null>(null);
+  /** What the window shows: the selected System's skin, else the global one (a ?skin= URL pins it). */
+  shownSkin: SkinId = $derived(this.params.skin ? this.skinId : (this.systemSkin?.id ?? this.skinId));
   /** auto = decide from the viewport; full/mini = explicit (URL or F3). */
   sizeMode = $state<SizeParam>('auto');
   vw = $state(typeof innerWidth === 'undefined' ? 1024 : innerWidth);
@@ -106,7 +111,8 @@ class UiState {
     const i = SKINS.findIndex((s) => s.id === this.skinId);
     const next = SKINS[(i + dir + SKINS.length) % SKINS.length];
     this.setSkin(next.id);
-    this.toast(`Skin: ${next.name}`);
+    const own = this.params.skin ? null : this.systemSkin;
+    this.toast(own ? `Skin: ${next.name} (${own.label} keeps ${skinMeta(own.id).name})` : `Skin: ${next.name}`);
   }
 
   skinByIndex(n: number) {

@@ -46,7 +46,8 @@ pub struct ArgFacts {
     pub image_size: Option<String>,
     /// /metrics is enabled (llama.cpp `--metrics` / LLAMA_ARG_ENDPOINT_METRICS, vllm always).
     pub metrics: bool,
-    /// Weights are (partly) kept in system RAM (`--cpu-moe`, `-ncmoe`, `--n-cpu-moe`, `-ot`, `--override-tensor`).
+    /// Weights are (partly) kept in system RAM (`--cpu-moe`, `-ncmoe`, `--n-cpu-moe`, `-ot`, `--override-tensor`; Strata
+    /// always: its experts live in RAM and its GPU cache is sized to the free VRAM).
     pub cpu_offload: bool,
     /// The port value exactly as written (also when it is a placeholder such as `{port}` or not a number).
     /// `Some` = the args/env name the port at all.
@@ -414,6 +415,11 @@ pub fn from_args(adapter: AdapterId, args: &[String], env: &BTreeMap<String, Str
         if let (Some(w), Some(h)) = (&width, &height) {
             out.image_size = Some(format!("{w}x{h}"));
         }
+    }
+    if adapter == AdapterId::Strata {
+        // The model files are no measure of its VRAM: it keeps the experts in RAM and sizes its expert cache to what
+        // the card has free.
+        out.cpu_offload = true;
     }
     if adapter == AdapterId::Vllm {
         if out.model.is_none() {

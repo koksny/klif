@@ -12,6 +12,7 @@ export interface WorldSystem {
   preset?: string;
   params?: Record<string, string>;
   exclusive?: boolean;
+  skin?: string;
   /** The remote node it lives on. */
   node?: string;
 }
