@@ -3,7 +3,9 @@
 0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
 were built from source; their notes follow, newest first.
 
-## Unreleased
+## 0.3.5 (2026-10-14)
+
+Strata, a skin per System, model shapes from the GGUF header, and a switch that stops the Systems when KLIF quits.
 
 - **A skin per System.** A System can have its own skin (`[systems.<id>] skin`, the Skin field at the top of its Tune
   tab, `klif-cli systems skin <system> <id|global>`), shown while it is selected; the others show the global skin
