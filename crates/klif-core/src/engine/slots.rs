@@ -202,18 +202,39 @@ pub(crate) fn save(t: &Target, n: u8) -> Result<String> {
     check_slot(n)?;
     std::fs::create_dir_all(&t.dir).with_context(|| format!("creating {}", t.dir.display()))?;
     let slots = call(t, "GET", "/slots", None)?;
-    let held: Vec<u64> = slots
+    let list: Vec<(u64, u64, bool)> = slots
         .as_array()
-        .map(|a| a.iter().filter(|s| u(s, "n_prompt_tokens") > 0).filter_map(|s| s.get("id").and_then(Value::as_u64)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let id = s.get("id").and_then(Value::as_u64)?;
+                    Some((id, u(s, "n_prompt_tokens"), s.get("is_processing").and_then(Value::as_bool).unwrap_or(false)))
+                })
+                .collect()
+        })
         .unwrap_or_default();
+    let mut held: Vec<u64> = list.iter().filter(|(_, tokens, _)| *tokens > 0).map(|(id, ..)| *id).collect();
     if held.is_empty() {
-        bail!("{} holds no conversation to save.", t.label);
+        // The size is not always reported: Strata reads 0 right after a save or restore (it clears its last prompt
+        // size) while it still holds the conversation. Ask every idle slot; the server's n_saved says what it held.
+        held = list.iter().filter(|(_, _, busy)| !busy).map(|(id, ..)| *id).collect();
     }
     let mut files = Vec::new();
     for id in held {
+        // Written under a temporary name first: a slot that turns out empty must not replace the last good save.
         let file = format!("slot{n}-{id}.bin");
-        let r = call(t, "POST", &format!("/slots/{id}?action=save"), Some(&json!({ "filename": file })))?;
-        files.push((FileRec { id, file, tokens: u(&r, "n_saved") }, u(&r, "n_written")));
+        let tmp = format!("slot{n}-{id}.new.bin");
+        let r = call(t, "POST", &format!("/slots/{id}?action=save"), Some(&json!({ "filename": tmp })))?;
+        let tokens = u(&r, "n_saved");
+        if tokens == 0 {
+            let _ = std::fs::remove_file(t.dir.join(&tmp));
+            continue;
+        }
+        std::fs::rename(t.dir.join(&tmp), t.dir.join(&file)).with_context(|| format!("replacing {}", t.dir.join(&file).display()))?;
+        files.push((FileRec { id, file, tokens }, u(&r, "n_written")));
+    }
+    if files.is_empty() {
+        bail!("{} holds no conversation to save.", t.label);
     }
     let mut idx = read_index(&t.dir);
     // Files of the slot's previous save that this one did not overwrite (another server slot id).
