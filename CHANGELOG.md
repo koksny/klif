@@ -3,7 +3,9 @@
 0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
 were built from source; their notes follow, newest first.
 
-## Unreleased
+## 0.3.6 (2026-10-17)
+
+Conversation slots with keys in every skin, a small-layout skin per System, and Tune renamed to Options.
 
 - **Conversation slots.** A llama.cpp or Strata System can save what its server holds (the conversation's KV cache and
   state) to disk and load it back, so a long conversation is not read again after a restart or a switch to another

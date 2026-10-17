@@ -97,11 +97,13 @@ The animations come from the browser mock engine with recorded timings, the same
 ## What it does
 
 - **Systems as tabs.** You define the Systems you have: "System 1", "System 2", "System CGI", "System TTS", or
-  anything else. Kinds are `llm`, `image`, `tts`, `stt` and `video`. Each tab shows online, busy, starting, offline,
+  anything else. Kinds are `llm`, `image`, `tts`, `stt`, `music` and `video`. Each tab shows online, busy, starting, offline,
   not set, invalid, fault or unreachable. [docs/systems.md](docs/systems.md)
 - **Conversations that survive a restart.** A llama.cpp or Strata System can save what its server holds (the KV
-  cache of a long conversation) to one of three slots on disk and load it back, by hand or automatically when KLIF
-  stops and starts it, so a 200K-token session is not read again. [docs/systems.md](docs/systems.md#conversation-slots)
+  cache of a long conversation) to one of three slots on disk and load it back, so a 200K-token session is not read
+  again. Every skin has the three slot keys next to Records: a click loads a slot, holding it saves; while the System
+  is stopped, holding a saved key launches it and loads that slot. Auto-save on stop and auto-load on start are
+  switches of their own. [docs/systems.md](docs/systems.md#conversation-slots)
 - **Several at once.** Every System has its own server, session, logs and telemetry. Before a launch KLIF checks for
   port clashes, an `exclusive` System on the same GPU and free VRAM, and names what would have to stop. It never
   kills a process it does not own.
@@ -182,7 +184,8 @@ The animations come from the browser mock engine with recorded timings, the same
    `plan` prints the program, arguments, working folder and environment that Launch would use, secrets masked.
 
 4. **Launch.** Select a tab and press Launch, or `klif-cli launch s1 --yes --wait`. Closing KLIF does not stop the
-   servers; the next KLIF adopts them. Stop them from KLIF or with `klif-cli stop --all --yes`.
+   servers; the next KLIF adopts them (turn on **Stop on exit** in Options if quitting should stop them). Stop them
+   from KLIF or with `klif-cli stop --all --yes`.
 
 5. **Models.** Set `[paths] models_dir`, then use **Recommended** in the Options drawer, or `klif-cli models list` and
    `klif-cli models download <id> --yes`.
