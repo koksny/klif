@@ -17,6 +17,7 @@
   import PresetRow from './PresetRow.svelte';
   import Recommendations from './Recommendations.svelte';
   import { getTune } from './state.svelte';
+  import SlotsSection from './SlotsSection.svelte';
   import SystemRow from './SystemRow.svelte';
   import TuneFooter from './TuneFooter.svelte';
 
@@ -67,6 +68,7 @@
   {/if}
   <FitPanel {vm} {system} />
   <BenchLine {system} />
+  {#if system.kind === 'llm' && !system.external}<SlotsSection {system} />{/if}
   <CommandSection {vm} {system} {viewedId} />
   {#if !system.node}
     <Recommendations {vm} {system} />

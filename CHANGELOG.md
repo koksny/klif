@@ -3,6 +3,27 @@
 0.3.3 is the first version published as a release, with builds for Windows, macOS and Linux. The versions before it
 were built from source; their notes follow, newest first.
 
+## Unreleased
+
+- **Conversation slots.** A llama.cpp or Strata System can save what its server holds (the conversation's KV cache and
+  state) to disk and load it back, so a long conversation is not read again after a restart or a switch to another
+  System. The Slots switch in its Tune tab (`[systems.<id>] slots`, `klif-cli systems slots <system> on`) makes KLIF
+  start the server with `--slot-save-path <data dir>/slots/<id>`. Each System has three slots with Save, Load and
+  Clear, in Tune and in `klif-cli slots save|load|clear`, so different conversations can be kept side by side; a slot
+  loads only into the command it was saved from. Every skin's control row has three slot keys next to Records: a click
+  loads that slot, holding it saves (the key fills while held), and the line under its number marks a saved slot and,
+  at full strength, the active one. While the System is stopped, holding a saved key launches it and loads that slot
+  once it is up (`klif-cli launch <system> --yes --slot N`), also with auto-load off. Two separate switches: auto-save saves the active slot when KLIF stops the System (a launch that stops
+  it first, and quitting with Stop on exit, wait for that save), auto-load loads it when KLIF has started it. The
+  active slot is picked by clicking it (`klif-cli slots use`); Save and Load also make theirs active. Slots can be
+  named (the pencil, `klif-cli slots rename`).
+- **A small-layout skin per System.** Next to Skin at the top of a System's Tune tab, Mini picks the skin of the small
+  layout (panel mode, a short landscape window) while that System is selected (`[systems.<id>] mini_skin`,
+  `klif-cli systems skin <system> <id|full> --mini`). Like full, the default, shows what the full size shows.
+- **Tune lines up.** Skin and Mini sit in the same label and control columns as the rest of a System's tab, each select
+  half the width; a param choice written as `Name (details)` shows the details as a smaller line under the name; the
+  preset list leaves out the quant and backend when the preset's name already says them.
+
 ## 0.3.5 (2026-10-14)
 
 Strata, a skin per System, model shapes from the GGUF header, and a switch that stops the Systems when KLIF quits.

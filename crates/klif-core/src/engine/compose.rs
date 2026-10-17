@@ -249,6 +249,7 @@ impl Inner {
                     s.bench = self.cached_bench(p, &c.hash);
                 }
             }
+            s.slots = self.slots_view(cfg, &id, s.command.as_ref(), st.sessions.get(&id).map(|c| &c.p));
             if let Some(ctx) = st.sessions.get(&id) {
                 let (status, reason) = session_status(ctx);
                 s.status = status;
@@ -414,6 +415,8 @@ impl Inner {
                 external: false,
                 exclusive: ctx.p.exclusive,
                 skin: None,
+                mini_skin: None,
+                slots: None,
                 ram_offload: false,
                 editable: false,
                 controllable: true,
@@ -605,6 +608,8 @@ fn merge_remote(systems: &mut Vec<System>, focus: &mut BTreeMap<SystemId, Focus>
                         external: false,
                         exclusive: false,
                         skin: None,
+                        mini_skin: None,
+                        slots: None,
                         ram_offload: false,
                         editable: false,
                         controllable: false,

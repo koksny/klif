@@ -119,6 +119,8 @@ template: `config/klif.example.toml`.
 label, kind = "llm"|"image"|"tts"|"stt"|"video" (required), class = "fast"|"deep"|"max" (llm only),
 preset = "<preset id>", params = { <param> = "<choice>" }, exclusive = true|false,
 skin = "<skin id>"   # shown while this System is selected; absent = the global [ui] skin
+mini_skin = "<skin id>"   # the small layout's skin while it is selected; absent = the same as skin
+slots = true|false, slots_auto_save = true|false, slots_auto_load = true|false   # conversation slots on disk (llama.cpp, Strata): <data dir>/slots/<id>, 3 per System
 
 [presets.<id>]       # id: [a-z0-9][a-z0-9_-]{0,63}
 name, adapter = "llama.cpp"|"sd.cpp"|"vllm"|"strata"|"openai"|"audiocpp"|"generic", kind (required for generic),

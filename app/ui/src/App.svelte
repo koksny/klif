@@ -7,6 +7,7 @@
   import { installKeys } from './lib/shell/keys';
   import RecordsView from './lib/shell/records/RecordsView.svelte';
   import SkinHost from './lib/shell/SkinHost.svelte';
+  import SlotNotices from './lib/shell/slots/SlotNotices.svelte';
   import { installTierDriver, refreshTier } from './lib/shell/tier';
   import RecordMoment from './lib/shell/RecordMoment.svelte';
   import Toast from './lib/shell/Toast.svelte';
@@ -75,6 +76,8 @@
   <!-- Every layout: a refusal of a mini Launch / Stop / Restart is otherwise invisible. -->
   <!-- Every layout: a broken record is celebrated on the panel too. -->
   {#if player.ready}<RecordMoment />{/if}
+  <!-- Every layout: how a slot save or load ended (the skins' slot keys, auto-save on stop, auto-load on start). -->
+  {#if player.ready}<SlotNotices />{/if}
   <Toast />
   {#if ui.devbar && !ui.shot}<DevBar />{/if}
 </div>

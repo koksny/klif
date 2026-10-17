@@ -26,6 +26,7 @@
   import { layerLabel, shapeOf } from './shape';
   import { held, useSleep } from './state.svelte';
   import { availabilityText, fitOf, fmtAgo, fmtDur, fmtEta, lastSessionText, modelShort, modelText, shortTier } from './text';
+  import { slotKey, slotKeys } from '../../lib/shell/slots/slotKeys';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
 
@@ -363,6 +364,13 @@
     {/if}
     <button class="btn w4" onclick={() => actions.openTune(selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
     <button class="btn w7 rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">RECORDS</span></button>
+    {#if selSlot?.slots}
+      <span class="slotkeys" role="group" aria-label="Conversation slots of {selSlot.label}: click loads, hold saves">
+        {#each slotKeys(selSlot) as k (k.n)}
+          <button class="btn sk" use:slotKey={{ system: selSlot, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+        {/each}
+      </span>
+    {/if}
     <button class="btn w8" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'WEB UI' : 'ENDPOINT'}</button>
     <button class="btn w8" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'FULL LOG' : 'CONSOLE'}</button>
   </footer>
@@ -1092,5 +1100,23 @@
     .caret {
       animation: none;
     }
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .btn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .btn.sk + .btn.sk {
+    margin-left: -1px;
+  }
+  .btn.sk:hover:not(:disabled),
+  .btn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

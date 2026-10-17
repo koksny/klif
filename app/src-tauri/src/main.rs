@@ -174,6 +174,9 @@ fn main() {
 /// How long quitting waits for this machine's Systems to stop (`[ui] stop_on_exit`); a server still stopping after it
 /// is left to the supervisor's own kill, which the next start adopts or finds gone.
 const STOP_ON_EXIT_WAIT: Duration = Duration::from_secs(20);
+/// While a System saves its conversation slot first (Auto slots), quitting waits up to this long instead: a save cut
+/// off halfway would leave the slot's files and their record out of step.
+const SLOT_SAVE_WAIT: Duration = Duration::from_secs(10 * 60);
 
 /// `[ui] stop_on_exit`: stop this machine's Systems (StopAll, as the tray's "Stop all") and wait until they are down.
 /// Remote Systems and watched external servers are not KLIF's to stop here.
@@ -196,15 +199,21 @@ fn stop_systems_on_exit(e: &klif_core::EngineHandle) {
         log::warn!("exit: stop all failed: {err:#}");
         return;
     }
+    let saving = |vm: &ViewModel| vm.systems.iter().any(|s| s.node.is_none() && s.slots.as_ref().is_some_and(|v| v.job.is_some()));
     let t0 = Instant::now();
-    while t0.elapsed() < STOP_ON_EXIT_WAIT {
+    loop {
         std::thread::sleep(Duration::from_millis(250));
-        if running(&e.snapshot()) == 0 {
+        let vm = e.snapshot();
+        if running(&vm) == 0 {
             log::info!("exit: Systems stopped after {:.1} s", t0.elapsed().as_secs_f64());
             return;
         }
+        let limit = if saving(&vm) { SLOT_SAVE_WAIT } else { STOP_ON_EXIT_WAIT };
+        if t0.elapsed() >= limit {
+            break;
+        }
     }
-    log::warn!("exit: Systems still stopping after {} s; quitting anyway", STOP_ON_EXIT_WAIT.as_secs());
+    log::warn!("exit: Systems still stopping after {:.0} s; quitting anyway", t0.elapsed().as_secs_f64());
 }
 
 fn setup(app: &AppHandle, cfg: Config, loaded: LoadedConfig, browser_args: String, webview_dir: PathBuf) -> tauri::Result<()> {

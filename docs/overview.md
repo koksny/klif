@@ -40,7 +40,9 @@ klif-cli <command> ── control ───►├─ telemetry   GPU/CPU/RAM cou
 
 Servers are not children of the window. Each runs in its own named job object without kill-on-close, so quitting
 KLIF leaves them running, and the next start adopts them again. Stop is explicit (tab, tray "Stop all Systems", or
-`klif-cli stop`), unless `[ui] stop_on_exit` is on: then quitting the window stops this machine's Systems first.
+`klif-cli stop`), unless `[ui] stop_on_exit` is on: then quitting the window stops this machine's Systems first. A
+System with conversation slots can save its conversation to disk before KLIF stops it (auto-save) and load it once
+KLIF has started it again (auto-load) ([systems.md](systems.md#conversation-slots)).
 
 ## Crates
 
@@ -81,6 +83,7 @@ folder** is the state folder, except for the default `%APPDATA%\KLIF`, whose dat
 | `logs\` | One `.out.log` and `.err.log` per session (`klif-<stamp>-<system>-<preset>-p<port>`), and `klif-shell.log` (`[paths] logs_dir` moves it) |
 | `bench\<preset>.json` | Bench records, last 50 per preset |
 | `node-cache.json` | Last known Systems of remote nodes, for showing them as unreachable |
+| `slots\<system>\` | Conversation slots of a System with slots on: `slot<N>-<server slot>.bin` and `slots.json` (a few GiB each for a long conversation) |
 | `webview-data\` | The WebView2 profile |
 
 Downloaded models go to `[paths] models_dir` (`<models_dir>\<owner>--<repo>\<file>`).

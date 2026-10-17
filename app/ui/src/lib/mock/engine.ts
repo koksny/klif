@@ -28,6 +28,7 @@ import type {
   RecordValue,
   SettingsPatch,
   Session,
+  SlotsView,
   System,
   SystemId,
   SystemKind,
@@ -119,6 +120,8 @@ function names(labels: string[]): string {
 }
 
 export interface LaunchOpts {
+  /** Load this conversation slot once the session is live (Launch { load_slot }). */
+  loadSlot?: number;
   /** Start already live (no boot sequence). */
   skipBoot?: boolean;
   /** Pretend the session started this long before the scenario's t=0. */
@@ -153,6 +156,17 @@ export interface DormantOpts {
 
 /** The previous session of a System, kept by the engine; endedAgoS is derived from the clock at snapshot time. */
 export type LastRec = Omit<LastSession, 'endedAgoS'> & { endedAt: number };
+
+/** A System's conversation slots in the mock: saves and loads take a few simulated seconds. */
+interface MockSlots {
+  active: number;
+  names?: Map<number, string>;
+  entries: Map<number, { savedAt: number; tokens: number; bytes: number; model: string; preset: string }>;
+  job?: { op: 'save' | 'load'; slot: number; since: number; endT: number };
+  /** The slot the next launch loads once it is live. */
+  armed?: number;
+  notice?: { ok: boolean; text: string; at: number; untilT: number };
+}
 
 interface SessionRt {
   sys: MSys;
@@ -209,6 +223,12 @@ interface MSys {
   params: Record<string, string>;
   exclusive: boolean;
   skin?: string;
+  miniSkin?: string;
+  /** Conversation slots ([systems.<id>] slots, slots_auto_save, slots_auto_load) and what the mock keeps in them. */
+  slots?: boolean;
+  slotsAutoSave?: boolean;
+  slotsAutoLoad?: boolean;
+  slotData?: MockSlots;
   node?: string;
   rt: SessionRt | null;
   last: LastRec | null;
@@ -474,6 +494,10 @@ export class MockEngine {
       params: { ...(w.params ?? {}) },
       exclusive: !!w.exclusive,
       skin: w.skin,
+      miniSkin: w.miniSkin,
+      slots: w.slots,
+      slotsAutoSave: w.slotsAutoSave,
+      slotsAutoLoad: w.slotsAutoLoad,
       node: w.node,
       rt: null,
       last: null,
@@ -625,6 +649,15 @@ export class MockEngine {
     if (!r.spec) throw new Error(`${s.label} has no preset. Choose one in Tune.`);
     if (isExternal(r.spec)) throw new Error('External server: start it where it runs.');
     if (r.avail.availability !== 'ready') throw new Error(`${s.label} cannot start: ${r.avail.reason ?? r.avail.availability}`);
+    const d = s.slotData;
+    if (opts.loadSlot) {
+      const e = d?.entries.get(opts.loadSlot);
+      if (!s.slots || !d) throw new Error(`${s.label} has slots off; turn them on first.`);
+      if (!e) throw new Error(`Slot ${opts.loadSlot} of ${s.label} is empty.`);
+      if (e.preset !== s.preset) throw new Error(`Slot ${opts.loadSlot} was saved with another command of ${s.label} (model, context or KV type); it loads only into that command.`);
+      d.active = opts.loadSlot;
+      d.armed = opts.loadSlot;
+    } else if (d) d.armed = undefined;
     const conflicts = this.conflictsFor(s).ids;
     if (conflicts.length) {
       const names = conflicts.map((c) => this.sysOrThrow(c).label);
@@ -831,6 +864,14 @@ export class MockEngine {
       const k = patch.skin.trim();
       if (k && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(k)) throw new Error(`"${k}" is not a skin id.`);
       s.skin = k || undefined;
+    }
+    if (patch.slots !== undefined) s.slots = patch.slots || undefined;
+    if (patch.slotsAutoSave !== undefined) s.slotsAutoSave = patch.slotsAutoSave || undefined;
+    if (patch.slotsAutoLoad !== undefined) s.slotsAutoLoad = patch.slotsAutoLoad || undefined;
+    if (patch.miniSkin !== undefined) {
+      const k = patch.miniSkin.trim();
+      if (k && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(k)) throw new Error(`"${k}" is not a skin id.`);
+      s.miniSkin = k || undefined;
     }
     if (patch.moveTo !== undefined) {
       const group = this.systems.filter((x) => x.node === s.node);
@@ -1295,8 +1336,122 @@ export class MockEngine {
 
   // ---- internals: stepping ----------------------------------------------------------------------------
 
+  /** Save or load a conversation slot of a running System (SaveSlot / LoadSlot). */
+  slotJob(system: SystemId, op: 'save' | 'load', n: number) {
+    const s = this.sysOrThrow(system);
+    if (!s.slots) throw new Error(`${s.label} has slots off; turn them on in Tune.`);
+    if (!Number.isInteger(n) || n < 1 || n > 3) throw new Error(`There is no slot ${n}; a System has slots 1 to 3.`);
+    const rt = s.rt;
+    if (!rt || rt.phase !== 'live') throw new Error(`${s.label} is not running; start it to ${op} a slot.`);
+    if (rt.cmd.adapter !== 'llama.cpp' && rt.cmd.adapter !== 'strata') throw new Error(`${s.label}'s server (${rt.cmd.adapter}) cannot save conversation slots; llama.cpp and Strata can.`);
+    const d: MockSlots = (s.slotData ??= { active: 1, entries: new Map() });
+    if (d.job) throw new Error('A slot of this System is being saved or loaded already; wait until it is done.');
+    if (op === 'load') {
+      const e = d.entries.get(n);
+      if (!e) throw new Error(`Slot ${n} of ${s.label} is empty.`);
+      if (e.preset !== rt.preset) throw new Error(`Slot ${n} was saved with another command of ${s.label} (model, context or KV type); it loads only into that command.`);
+    }
+    d.job = { op, slot: n, since: Date.now() / 1000, endT: this.t + (op === 'save' ? 3.5 : 2) };
+  }
+
+  /** ?slots=1: conversation slots on (with auto-save and auto-load) for every local LLM System. */
+  enableSlots() {
+    for (const s of this.systems) {
+      if (s.kind === 'llm' && !s.node) {
+        s.slots = true;
+        s.slotsAutoSave = true;
+        s.slotsAutoLoad = true;
+        // Two saved slots to show: 1 (active) and 3, both from its preset.
+        const at = Date.now() / 1000 - 3600;
+        const entry = (tokens: number) => ({ savedAt: at, tokens, bytes: tokens * 20_480, model: s.rt?.model.name ?? '', preset: s.preset ?? '' });
+        s.slotData ??= { active: 1, entries: new Map([[1, entry(48_210)], [3, entry(91_377)]]) };
+      }
+    }
+  }
+
+  /** Delete a slot (ClearSlot). */
+  clearSlot(system: SystemId, n: number) {
+    const s = this.sysOrThrow(system);
+    const d: MockSlots = (s.slotData ??= { active: 1, entries: new Map() });
+    if (d.job) throw new Error(`A slot of ${s.label} is being saved or loaded; wait until it is done.`);
+    const had = d.entries.delete(n);
+    d.notice = { ok: true, text: had ? `Cleared slot ${n} of ${s.label}.` : `Slot ${n} of ${s.label} was already empty.`, at: Date.now() / 1000, untilT: this.t + 30 };
+  }
+
+  /** Make a slot the active one (UseSlot). */
+  useSlot(system: SystemId, n: number) {
+    const s = this.sysOrThrow(system);
+    if (!s.slots) throw new Error(`${s.label} has slots off; turn them on first.`);
+    const d: MockSlots = (s.slotData ??= { active: 1, entries: new Map() });
+    if (d.job) throw new Error(`A slot of ${s.label} is being saved or loaded; wait until it is done.`);
+    d.active = n;
+    d.notice = { ok: true, text: `Slot ${n} is ${s.label}'s active slot: auto-save writes to it and auto-load reads it.`, at: Date.now() / 1000, untilT: this.t + 30 };
+  }
+
+  /** Name a slot (RenameSlot; '' = back to "Slot N"). */
+  renameSlot(system: SystemId, n: number, name: string) {
+    const s = this.sysOrThrow(system);
+    if (!s.slots) throw new Error(`${s.label} has slots off; turn them on first.`);
+    const clean = name.split(/\s+/).filter(Boolean).join(' ');
+    if (clean.length > 40) throw new Error('A slot name has at most 40 characters.');
+    const d: MockSlots = (s.slotData ??= { active: 1, entries: new Map() });
+    d.names ??= new Map();
+    if (clean) d.names.set(n, clean);
+    else d.names.delete(n);
+    d.notice = { ok: true, text: clean ? `Slot ${n} of ${s.label} is "${clean}" now.` : `Slot ${n} of ${s.label} has no name now.`, at: Date.now() / 1000, untilT: this.t + 30 };
+  }
+
+  /** A slot job whose simulated time is up ends: the save is kept, the load becomes the active slot. */
+  private settleSlots() {
+    for (const s of this.systems) {
+      const d = s.slotData;
+      // A launch that asked for a slot: load it once the session is live.
+      if (d?.armed && !d.job && s.rt?.phase === 'live') {
+        d.job = { op: 'load', slot: d.armed, since: Date.now() / 1000, endT: this.t + 2 };
+        d.armed = undefined;
+      }
+      const j = d?.job;
+      if (!d || !j || this.t < j.endT) continue;
+      d.job = undefined;
+      const at = Date.now() / 1000;
+      if (j.op === 'save') {
+        const tokens = 40_000 + Math.round(((this.t * 7919) % 1) * 150_000);
+        d.entries.set(j.slot, { savedAt: at, tokens, bytes: tokens * 20_480, model: s.rt?.model.name ?? '', preset: s.rt?.preset ?? '' });
+        d.notice = { ok: true, text: `Saved ${s.label} to slot ${j.slot}: ${tokens} tokens, ${((tokens * 20_480) / 2 ** 30).toFixed(1)} GiB.`, at, untilT: this.t + 30 };
+      } else {
+        d.notice = { ok: true, text: `Loaded slot ${j.slot} into ${s.label}: ${d.entries.get(j.slot)?.tokens ?? 0} tokens.`, at, untilT: this.t + 30 };
+      }
+      d.active = j.slot;
+    }
+  }
+
+  private slotsView(s: MSys, adapter: string | undefined): SlotsView | undefined {
+    if (!s.slots) return undefined;
+    const d = s.slotData;
+    const preset = s.rt?.preset ?? s.preset;
+    return {
+      autoSave: !!s.slotsAutoSave,
+      autoLoad: !!s.slotsAutoLoad,
+      active: d?.active ?? 1,
+      supported: adapter === 'llama.cpp' || adapter === 'strata',
+      entries: [1, 2, 3].map((n) => {
+        const e = d?.entries.get(n);
+        const name = d?.names?.get(n);
+        return {
+          n,
+          ...(name ? { name } : {}),
+          ...(e ? { savedAt: e.savedAt, tokens: e.tokens, bytes: e.bytes, model: e.model } : {}),
+          compatible: !!e && e.preset === preset,
+        };
+      }),
+      ...(d?.job ? { job: { op: d.job.op, slot: d.job.slot, since: d.job.since } } : {}),
+      ...(d?.notice && this.t < d.notice.untilT ? { notice: { ok: d.notice.ok, text: d.notice.text, at: d.notice.at } } : {}),
+    };
+  }
+
   private step(h: number) {
     this.t += h;
+    this.settleSlots();
     for (const s of this.systems) {
       const rt = s.rt;
       if (rt) {
@@ -1729,6 +1884,8 @@ export class MockEngine {
       external: !!spec && isExternal(spec),
       exclusive: s.exclusive,
       ...(s.skin ? { skin: s.skin } : {}),
+      ...(s.miniSkin ? { miniSkin: s.miniSkin } : {}),
+      ...(s.slots ? { slots: this.slotsView(s, s.rt?.cmd.adapter ?? spec?.adapter) } : {}),
       editable: node ? node.allow.includes('edit') : true,
       controllable: node ? node.state === 'online' && (node.allow.includes('launch') || node.allow.includes('edit')) : true,
       conflicts: conflicts.ids.slice(),

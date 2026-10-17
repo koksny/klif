@@ -9,11 +9,11 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Result};
 use klif_catalog::recommend::Recommendation;
 use klif_catalog::store;
-use klif_common::config::{default_system_label, validate_preset_id, validate_system_id, Config, OnConflict, PresetCfg, SystemCfg};
+use klif_common::config::{default_system_label, validate_preset_id, validate_system_id, Config, OnConflict, PresetCfg, SlotsPatch, SystemCfg};
 use klif_common::now_s;
 use klif_common::secret::{is_secret_env, is_secret_flag, MASK};
 use klif_common::vm::{
-    Action, AdapterId, DownloadInfo, DownloadState, LlmClass, ModelRef, Phase, System, SystemId, SystemKind, SystemStatus,
+    Action, AdapterId, DownloadInfo, DownloadState, LlmClass, ModelRef, Phase, SlotOp, System, SystemId, SystemKind, SystemStatus,
 };
 use klif_supervisor::{PortOwner, ProcessHost};
 
@@ -43,7 +43,7 @@ fn is_are(n: usize) -> &'static str {
 /// Actions whose System defaults to the selected one.
 fn fill_selected(a: Action, sel: Option<&SystemId>) -> Action {
     match a {
-        Action::Launch { system: None, stop_others } => Action::Launch { system: sel.cloned(), stop_others },
+        Action::Launch { system: None, stop_others, load_slot } => Action::Launch { system: sel.cloned(), stop_others, load_slot },
         Action::Stop { system: None } => Action::Stop { system: sel.cloned() },
         Action::Restart { system: None } => Action::Restart { system: sel.cloned() },
         Action::Dismiss { system: None } => Action::Dismiss { system: sel.cloned() },
@@ -176,7 +176,19 @@ impl Inner {
     fn act_local(&self, action: Action) -> Result<()> {
         match action {
             Action::Select { system } => self.select(system),
-            Action::Launch { system, stop_others } => self.launch(target(system)?, stop_others),
+            Action::Launch { system, stop_others, load_slot } => {
+                let id = target(system)?;
+                // A slot to load once it is up (armed before the launch, so the live edge finds it), or none.
+                match load_slot {
+                    Some(n) => self.arm_slot_load(&id, n)?,
+                    None => self.disarm_slot_load(&id),
+                }
+                let r = self.launch(id.clone(), stop_others);
+                if r.is_err() {
+                    self.disarm_slot_load(&id);
+                }
+                r
+            }
             Action::Stop { system } => self.stop(target(system)?),
             Action::StopAll => self.stop_all(),
             Action::Restart { system } => self.restart(target(system)?),
@@ -189,9 +201,15 @@ impl Inner {
             Action::DeletePreset { id, node: _ } => self.delete_preset(&id),
             Action::AddSystem { id, label, kind, class, preset, node: _ } => self.add_system(id.as_deref(), label.as_deref(), kind, class, preset.as_deref()),
             Action::RemoveSystem { system } => self.remove_system(&system),
-            Action::UpdateSystem { system, label, move_to, exclusive, skin } => {
-                self.update_system(&system, label.as_deref(), move_to, exclusive, skin.as_deref())
+            Action::UpdateSystem { system, label, move_to, exclusive, skin, mini_skin, slots, slots_auto_save, slots_auto_load } => {
+                let slots = SlotsPatch { on: slots, auto_save: slots_auto_save, auto_load: slots_auto_load };
+                self.update_system(&system, label.as_deref(), move_to, exclusive, skin.as_deref(), mini_skin.as_deref(), slots)
             }
+            Action::SaveSlot { system, slot } => self.slot_action(&system, SlotOp::Save, slot),
+            Action::LoadSlot { system, slot } => self.slot_action(&system, SlotOp::Load, slot),
+            Action::ClearSlot { system, slot } => self.clear_slot(&system, slot),
+            Action::UseSlot { system, slot } => self.use_slot(&system, slot),
+            Action::RenameSlot { system, slot, name } => self.rename_slot(&system, slot, &name),
             Action::DownloadRecommendation { id, node: _ } => self.download(&id),
             Action::CancelDownload { id, node: _ } => self.cancel_download(&id),
             Action::AdoptRecommendation { id, system, ctx, kv } => self.adopt_recommendation(&id, system.as_ref(), ctx, kv),
@@ -308,7 +326,7 @@ impl Inner {
     }
 
     /// The System as last published (static part + status).
-    fn published_system(&self, id: &SystemId) -> Option<System> {
+    pub(super) fn published_system(&self, id: &SystemId) -> Option<System> {
         lock(&self.published).vm.systems.iter().find(|s| &s.id == id).cloned()
     }
 
@@ -438,7 +456,9 @@ impl Inner {
                 ready.push(id);
                 continue;
             }
-            if now - p.at > PENDING_TIMEOUT_S {
+            // A System saving its conversation slot before it stops takes as long as the save does.
+            let saving = remaining.iter().any(|w| self.slot_saving(w));
+            if now - p.at > PENDING_TIMEOUT_S && !saving {
                 let labels: Vec<String> = remaining.iter().map(|w| st.label_of(cfg, w)).collect();
                 failed.push((id, format!("{} did not stop in time", names(&labels))));
                 continue;
@@ -547,6 +567,10 @@ impl Inner {
                 let image = klif_supervisor::image_name(pid).unwrap_or_else(|| "another program".into());
                 bail!("Port {} is in use by {image} (pid {pid}). KLIF will not stop a process it did not start.", plan.port);
             }
+        }
+        // Conversation slots: the server checks its --slot-save-path folder when it starts (Strata), so it exists first.
+        if let Some(dir) = super::slots::session_dir(Some(&plan.command)) {
+            std::fs::create_dir_all(&dir).map_err(|e| anyhow!("{label} cannot start: its slot folder {} could not be created: {e}.", dir.display()))?;
         }
         let owned = self.sup.launch(&plan.spec).map_err(|e| anyhow!("{label} could not be started: {}.", trim_dot(format!("{e:#}"))))?;
         let record = owned.record.clone();
@@ -879,7 +903,7 @@ impl Inner {
         if let Some(p) = preset {
             self.check_preset_for(&cfg, p, kind, &label)?;
         }
-        let sys = SystemCfg { label: Some(label), kind, class, preset: preset.map(str::to_string), params: Default::default(), exclusive: false, skin: None };
+        let sys = SystemCfg { label: Some(label), kind, class, preset: preset.map(str::to_string), params: Default::default(), exclusive: false, skin: None, mini_skin: None, slots: false, slots_auto_save: false, slots_auto_load: false };
         let mut added: Option<SystemId> = None;
         self.write(|path| {
             added = Some(store::add_system(path, id, &sys)?);
@@ -917,6 +941,8 @@ impl Inner {
         move_to: Option<u32>,
         exclusive: Option<bool>,
         skin: Option<&str>,
+        mini_skin: Option<&str>,
+        slots: SlotsPatch,
     ) -> Result<()> {
         let cfg = self.cfg();
         self.local_system(&cfg, system)?;
@@ -925,7 +951,7 @@ impl Inner {
             Some(l) => Some(l.trim()),
             None => None,
         };
-        self.write(|path| store::update_system(path, system, label, move_to, exclusive, skin))
+        self.write(|path| store::update_system(path, system, label, move_to, exclusive, skin, mini_skin, slots))
     }
 
     // ---- recommendations / downloads -----------------------------------------------------------

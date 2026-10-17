@@ -1,0 +1,82 @@
+/* The skins' slot keys (slotKeys.ts): states shared by every skin, drawn in currentColor so each skin's own button
+   colours carry them. They live in the key's own children (.sk-n, .sk-fill), so a skin's ::before / ::after stay its
+   own. A skin sets the keys' size; it may restyle any of this. */
+button[data-slotkey][data-slotkey] {
+  position: relative;
+  justify-content: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* The number, underlined when the slot is saved: thin for a saved slot, full strength for the active one (auto-save
+   and auto-load use it), dashed for an active slot that is still empty. */
+[data-slotkey] .sk-n {
+  position: relative;
+  display: inline-block;
+  line-height: 1;
+  padding: 0 0.15em;
+  pointer-events: none;
+}
+[data-slotkey] .sk-n::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.3em;
+  height: 2px;
+  background: currentColor;
+  opacity: 0;
+}
+[data-slotkey][data-saved] .sk-n::after {
+  opacity: 0.4;
+  height: 1px;
+}
+[data-slotkey][data-active] .sk-n {
+  font-weight: 700;
+}
+[data-slotkey][data-active][data-saved] .sk-n::after {
+  opacity: 1;
+  height: 2px;
+}
+[data-slotkey][data-active]:not([data-saved]) .sk-n::after {
+  opacity: 0.5;
+  background: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px);
+}
+[data-slotkey]:not([data-saved]):not([data-holding]) .sk-n {
+  opacity: 0.55;
+}
+[data-slotkey][data-stale] .sk-n {
+  text-decoration: line-through;
+}
+/* The hold: fills from the left while the key is held, a save when it is full; a running save or load pulses. */
+[data-slotkey] .sk-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  transform-origin: left center;
+  transform: scaleX(var(--hold, 0));
+  background: currentColor;
+  opacity: 0.28;
+  pointer-events: none;
+}
+[data-slotkey][data-job] .sk-fill {
+  transform: scaleX(1);
+  animation: slotkey-job 1.1s ease-in-out infinite;
+}
+@keyframes slotkey-job {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.32;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slotkey][data-job] .sk-fill {
+    animation: none;
+    opacity: 0.22;
+  }
+}

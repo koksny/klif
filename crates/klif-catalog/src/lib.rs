@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub use recommend::Recommendation;
-pub use resolve::{external_port_clash, ports_overlap};
+pub use resolve::{external_port_clash, ports_overlap, slots_dir, SLOT_SAVE_FLAG};
 use resolve::{Cat, ForSystem, KeyInfo, Req, Resolved};
 
 /// Facts the catalog needs from the live system.
@@ -165,7 +165,7 @@ impl Catalog {
             cfg,
             spec,
             params: &row.sys.params,
-            system: Some(ForSystem { label: &row.label, sys: row.sys }),
+            system: Some(ForSystem { id: row.id.as_str(), label: &row.label, sys: row.sys }),
             key,
             probe,
             checks,
@@ -231,6 +231,8 @@ impl Catalog {
                 external: false,
                 exclusive: row.sys.exclusive,
                 skin: row.sys.skin.clone().filter(|s| !s.trim().is_empty()),
+                mini_skin: row.sys.mini_skin.clone().filter(|s| !s.trim().is_empty()),
+                slots: None,
                 ram_offload: false,
                 editable: true,
                 controllable: true,
@@ -365,7 +367,7 @@ impl Catalog {
                 cfg,
                 spec,
                 params: &rows[i].sys.params,
-                system: Some(ForSystem { label: &rows[i].label, sys: rows[i].sys }),
+                system: Some(ForSystem { id: rows[i].id.as_str(), label: &rows[i].label, sys: rows[i].sys }),
                 key: KeyInfo::Set(live.api_key_set),
                 probe: &self.probe,
                 checks: true,

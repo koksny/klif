@@ -83,7 +83,7 @@ usage: klif-cli [--json] <command> ...
   hardware [--node N]                      GPUs, CPU and RAM with their peak FP32 TFLOPS (reads this machine directly)
   plan <system>                            The exact command a System would launch now (secrets masked)
   select <system>                          Select a tab
-  launch <system> --yes [--stop-others] [--wait]
+  launch <system> --yes [--stop-others] [--slot N] [--wait]
                                            Start a model server
   stop <system> --yes | stop --all --yes   Stop a model server, or every running System
   restart <system> --yes [--wait]          Stop and start a System again with its preset
@@ -99,7 +99,15 @@ usage: klif-cli [--json] <command> ...
   systems rename <system> <label>          Change a System's tab label
   systems move <system> <index>            Move a System to a tab position (0-based, among the local Systems)
   systems exclusive <system> on|off        Whether the System needs the whole GPU
-  systems skin <system> <id|global>        The skin shown while the System is selected
+  systems skin <system> <id|global>        The skin shown while the System is selected (--mini: the small layout's)
+  systems slots <system> on|off            Conversation slots on disk (llama.cpp, Strata; next launch)
+  systems slots <system> auto-save|auto-load on|off
+                                           Save the active slot on stop / load it on start
+  slots <system>                           A System's three conversation slots
+  slots save|load <system> [1-3]           Save the running conversation to a slot, or load one (default: the active slot)
+  slots use <system> <1-3>                 Make a slot the active one (auto-save writes to it, auto-load reads it)
+  slots rename <system> <1-3> <name>       Name a slot (no name: back to "Slot N")
+  slots clear <system> <1-3> --yes         Delete a slot's files
 
   presets list [--node N]                  Presets with their availability and last bench
   presets show <id> [--node N]             One preset in full with the command it builds (secrets masked); <node>/<id> = --node
@@ -357,9 +365,11 @@ watching: s1 offline, s2 offline, waiting for s2=online (Ctrl-C ends it)
 ### Acting
 
 - **`select <system>`** selects a tab (it never stops anything).
-- **`launch <system> --yes [--stop-others] [--wait]`** starts the System. With conflicts it is refused and names
-  them; `--stop-others` stops them first (one at a time, waiting for each), as the "Stop X & launch" button does.
-  `--wait` blocks until the server is ready (up to 15 minutes), failing with `fault` (and the log tail) or
+- **`launch <system> --yes [--stop-others] [--slot N] [--wait]`** starts the System. With conflicts it is refused
+  and names them; `--stop-others` stops them first (one at a time, waiting for each), as the "Stop X & launch" button
+  does. `--slot N` makes conversation slot N the active one and loads it once the server is up, also with auto-load
+  off; it is refused unless that slot is saved with the command this launch runs. `--wait` blocks until the server is
+  ready (up to 15 minutes; with a slot to load, until it is loaded), failing with `fault` (and the log tail) or
   `stopped` if it never gets there. Without `--wait` it returns once the session exists.
 - **`stop <system> --yes`**, **`stop --all --yes`** (every local session, never an external System),
   **`restart <system> --yes [--wait]`**, **`dismiss <system>`** (leave a fault). `restart` is refused before
@@ -370,7 +380,19 @@ watching: s1 offline, s2 offline, waiting for s2=online (Ctrl-C ends it)
   [systems.md](systems.md#kinds)), **`remove`** (refused while it runs), **`rename <system> <label>`**,
   **`move <system> <index>`** (0-based among local Systems), **`exclusive <system> on|off`**, **`skin <system>
   <id|global>`** (the skin the window shows while that System is selected, `[systems.<id>] skin`; `global` removes
-  it, so the window shows `[ui] skin`).
+  it, so the window shows `[ui] skin`; with **`--mini`** the small layout's skin, `[systems.<id>] mini_skin`, where
+  `full` removes it, so the small layout shows what the full size shows), **`slots <system> on|off`** (conversation
+  slots on disk, `[systems.<id>] slots`; applies on the next launch), **`slots <system> auto-save on|off`** and
+  **`slots <system> auto-load on|off`** (`slots_auto_save`, `slots_auto_load`: save the active slot when KLIF stops the
+  System, load it when KLIF has started it).
+- **`slots <system>`** lists a System's three conversation slots (what each holds, which one is active, whether it
+  was saved with the current command). **`slots save <system> [1-3]`** and **`slots load <system> [1-3]`** (default:
+  the active slot) save the running server's conversation or load one back; they wait until the engine is done (up to
+  30 minutes) and fail with `refused` and the reason (not running, slots off, a slot saved with another command, the
+  server refused). **`slots use <system> <1-3>`** makes a slot the active one, the one auto-save writes to and
+  auto-load reads (also while the System is stopped). **`slots rename <system> <1-3> <name>`** names a slot (up to
+  40 characters; no name goes back to "Slot N"). **`slots clear <system> <1-3> --yes`** deletes a slot. See
+  [systems.md](systems.md#conversation-slots).
 - **`presets use <system> <id>`** and **`presets param <system> <name> <value>`** choose a preset and a param
   choice; both apply on the next launch. `presets use` is refused (nothing is written) for a preset that does not
   exist or has another kind than the System, and it removes the System's param selections that the new preset
@@ -546,7 +568,7 @@ a catalog an agent can read once instead of parsing text:
 
 ```json
 { "schemaVersion": 1, "usage": "...", "systemArgument": "...", "globalFlags": [...], "errorCodes": [ { "code": "needs_yes", "exitCode": 2, "meaning": "..." } ],
-  "commands": [ { "name": "launch", "group": "run", "synopsis": "launch <system> --yes [--stop-others] [--wait]", "summary": "Start a model server",
+  "commands": [ { "name": "launch", "group": "run", "synopsis": "launch <system> --yes [--stop-others] [--slot N] [--wait]", "summary": "Start a model server",
       "args": [ { "name": "system", "required": true, "repeats": false, "description": "..." } ],
       "flags": [ { "name": "--wait", "description": "..." } ],
       "needsYes": true, "mayStartEngine": true, "outputs": [ { "schema": "launch" } ], "streams": false } ] }

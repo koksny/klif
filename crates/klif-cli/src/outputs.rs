@@ -9,7 +9,7 @@
 use klif_core::bench::BenchRecord;
 use klif_core::klif_common::vm::{
     ApiKeyInfo, BenchSummary, DownloadInfo, DownloadState, Ended, HardwareInfo, Issue, NodeView, ParamView, PresetDetail, PresetInfo,
-    RecommendationInfo, RecordEntry, RecordEvent, RecordMetric, Suggestion, System, SystemId, SystemKind, SystemStatus, WebUiDevice,
+    RecommendationInfo, RecordEntry, RecordEvent, RecordMetric, SlotsView, Suggestion, System, SystemId, SystemKind, SystemStatus, WebUiDevice,
 };
 use klif_core::wire::{StatusJson, StatusSystem};
 use schemars::JsonSchema;
@@ -244,6 +244,18 @@ pub struct SystemsUpdateDoc {
     /// The System's skin override (`[systems.<id>] skin`); absent = the global skin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
+    /// The small layout's skin (`[systems.<id>] mini_skin`); absent = the same as at full size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mini_skin: Option<String>,
+    /// Conversation slots on (`[systems.<id>] slots`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slots: Option<bool>,
+    /// With slots on: saved when KLIF stops the System (`slots_auto_save`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slots_auto_save: Option<bool>,
+    /// With slots on: loaded when KLIF has started the System (`slots_auto_load`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slots_auto_load: Option<bool>,
 }
 
 /// `nodes list`.
@@ -362,6 +374,19 @@ pub struct BenchPresetFile {
 #[serde(rename_all = "camelCase")]
 pub struct RecordsDoc {
     pub records: Vec<RecordEntry>,
+}
+
+/// `slots <system>`, `slots save|load|clear`: a System's conversation slots after the command.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotsDoc {
+    pub system: SysBrief,
+    /// Absent while the System has slots off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slots: Option<SlotsView>,
+    /// How the save, load or clear ended (one sentence).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
 }
 
 /// `records forget`.

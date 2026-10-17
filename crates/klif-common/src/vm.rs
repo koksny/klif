@@ -334,6 +334,11 @@ impl AdapterId {
         }
     }
 
+    /// Its server can save and load conversation slots (`POST /slots/{id}?action=save|restore`, `--slot-save-path`).
+    pub fn can_save_slots(self) -> bool {
+        matches!(self, AdapterId::LlamaCpp | AdapterId::Strata)
+    }
+
     /// The environment variable the server reads its API key from (KLIF injects the key there).
     pub fn api_key_env(self) -> Option<&'static str> {
         match self {
@@ -1161,6 +1166,91 @@ pub enum VramSource {
 }
 
 /// One System (a tab): its configuration, what it would run, and its live state.
+/// A System's conversation slots on disk (`[systems.<id>] slots`): what its server held, saved to a file in
+/// `<data dir>/slots/<id>` and loaded back into the same command (model, context, KV type).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct SlotsView {
+    /// Save the active slot when KLIF stops the System (`slots_auto_save`).
+    pub auto_save: bool,
+    /// Load the active slot when KLIF has started the System (`slots_auto_load`).
+    pub auto_load: bool,
+    /// The slot Auto saves to and loads from: the one saved or loaded last (1-based).
+    pub active: u8,
+    /// Its preset's server can save slots (llama.cpp, Strata). False: the slots are kept but cannot be used.
+    pub supported: bool,
+    /// Slots 1 to 3, empty ones included.
+    pub entries: Vec<SlotEntryView>,
+    /// A save or load running now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<SlotJobView>,
+    /// How the last save or load ended (kept for a short while).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<SlotNotice>,
+}
+
+/// One slot: empty, or a saved conversation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct SlotEntryView {
+    /// 1-based.
+    pub n: u8,
+    /// The name the user gave the slot (absent: "Slot N"). Kept when the slot is cleared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Unix seconds; absent = empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_at: Option<f64>,
+    /// Tokens the conversation held.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    /// Size of its files on disk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// The model it was saved with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// It was saved with the System's current command: it can be loaded.
+    pub compatible: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum SlotOp {
+    #[default]
+    Save,
+    Load,
+}
+
+/// A save or load in progress.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct SlotJobView {
+    pub op: SlotOp,
+    pub slot: u8,
+    /// Unix seconds.
+    pub since: f64,
+}
+
+/// How a save or load ended: one sentence for the user.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[serde(default)]
+pub struct SlotNotice {
+    pub ok: bool,
+    pub text: String,
+    /// Unix seconds.
+    pub at: f64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
@@ -1211,6 +1301,12 @@ pub struct System {
     /// The skin the window shows while this System is selected (`[systems.<id>] skin`); absent = the global one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
+    /// The skin of the small layout while this System is selected (`[systems.<id>] mini_skin`); absent = `skin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_skin: Option<String>,
+    /// Its conversation slots (`[systems.<id>] slots`); absent while they are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<SlotsView>,
     /// Its preset keeps weights in system RAM (`--cpu-moe`, `-ncmoe N`, `-ot ...=CPU`, `-ngl 0`, sd.cpp
     /// `--offload-to-cpu`, vLLM `--cpu-offload-gb`): the server makes do with the VRAM it finds, so KLIF never says
     /// it does not fit (it still frees the GPU from other Systems for speed).
@@ -1854,12 +1950,16 @@ pub enum Action {
         system: SystemId,
     },
     /// Launch a System. With conflicts: `stop_others` (or `[launch] on_conflict = "stop"`, never for a busy
-    /// holder) stops them first, else the launch is refused with a sentence naming them.
+    /// holder) stops them first, else the launch is refused with a sentence naming them. `load_slot`: make that
+    /// conversation slot the active one and load it once the server is up (whatever auto-load says); the slot must
+    /// be saved with the command this launch runs.
     Launch {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<SystemId>,
         #[serde(default, skip_serializing_if = "is_false")]
         stop_others: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        load_slot: Option<u8>,
     },
     Stop {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1927,7 +2027,7 @@ pub enum Action {
         system: SystemId,
     },
     /// Rename, move to a tab index (0-based among the local Systems), set exclusive, set the skin override (`""` =
-    /// back to the global skin).
+    /// back to the global skin), set the small layout's skin (`""` = the same as at full size).
     UpdateSystem {
         system: SystemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1938,6 +2038,44 @@ pub enum Action {
         exclusive: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skin: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mini_skin: Option<String>,
+        /// Conversation slots on or off (`[systems.<id>] slots`; applies on the next launch).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slots: Option<bool>,
+        /// Save the active slot when KLIF stops the System (`slots_auto_save`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slots_auto_save: Option<bool>,
+        /// Load the active slot when KLIF has started the System (`slots_auto_load`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slots_auto_load: Option<bool>,
+    },
+    /// Save what the running System's server holds to slot `slot` (1-3), replacing what the slot had.
+    SaveSlot {
+        system: SystemId,
+        slot: u8,
+    },
+    /// Load slot `slot` (1-3) into the running System's server. Refused for a slot saved with another command.
+    LoadSlot {
+        system: SystemId,
+        slot: u8,
+    },
+    /// Delete slot `slot`'s files.
+    ClearSlot {
+        system: SystemId,
+        slot: u8,
+    },
+    /// Make slot `slot` (1-3) the active one: auto-save writes to it and auto-load reads it. Works while the System is
+    /// stopped.
+    UseSlot {
+        system: SystemId,
+        slot: u8,
+    },
+    /// Name slot `slot` (1-3); an empty name goes back to "Slot N".
+    RenameSlot {
+        system: SystemId,
+        slot: u8,
+        name: String,
     },
     DownloadRecommendation {
         id: String,
@@ -2014,6 +2152,11 @@ impl Action {
             Action::AddSystem { .. } => "addSystem",
             Action::RemoveSystem { .. } => "removeSystem",
             Action::UpdateSystem { .. } => "updateSystem",
+            Action::SaveSlot { .. } => "saveSlot",
+            Action::LoadSlot { .. } => "loadSlot",
+            Action::ClearSlot { .. } => "clearSlot",
+            Action::UseSlot { .. } => "useSlot",
+            Action::RenameSlot { .. } => "renameSlot",
             Action::DownloadRecommendation { .. } => "downloadRecommendation",
             Action::CancelDownload { .. } => "cancelDownload",
             Action::AdoptRecommendation { .. } => "adoptRecommendation",
@@ -2032,7 +2175,12 @@ impl Action {
             | Action::UsePreset { system, .. }
             | Action::SetParam { system, .. }
             | Action::RemoveSystem { system }
-            | Action::UpdateSystem { system, .. } => Some(system),
+            | Action::UpdateSystem { system, .. }
+            | Action::SaveSlot { system, .. }
+            | Action::LoadSlot { system, .. }
+            | Action::ClearSlot { system, .. }
+            | Action::UseSlot { system, .. }
+            | Action::RenameSlot { system, .. } => Some(system),
             Action::Launch { system, .. }
             | Action::Stop { system }
             | Action::Restart { system }
@@ -2065,7 +2213,12 @@ impl Action {
             | Action::UsePreset { system, .. }
             | Action::SetParam { system, .. }
             | Action::RemoveSystem { system }
-            | Action::UpdateSystem { system, .. } => *system = f(std::mem::take(system)),
+            | Action::UpdateSystem { system, .. }
+            | Action::SaveSlot { system, .. }
+            | Action::LoadSlot { system, .. }
+            | Action::ClearSlot { system, .. }
+            | Action::UseSlot { system, .. }
+            | Action::RenameSlot { system, .. } => *system = f(std::mem::take(system)),
             Action::Launch { system, .. }
             | Action::Stop { system }
             | Action::Restart { system }
@@ -2149,12 +2302,17 @@ impl Action {
             | Action::Restart { .. }
             | Action::Dismiss { .. }
             | Action::UsePreset { .. }
-            | Action::SetParam { .. } => Right::Launch,
+            | Action::SetParam { .. }
+            | Action::SaveSlot { .. }
+            | Action::LoadSlot { .. }
+            | Action::UseSlot { .. }
+            | Action::RenameSlot { .. } => Right::Launch,
             Action::SavePreset { .. }
             | Action::DeletePreset { .. }
             | Action::AddSystem { .. }
             | Action::RemoveSystem { .. }
             | Action::UpdateSystem { .. }
+            | Action::ClearSlot { .. }
             | Action::DownloadRecommendation { .. }
             | Action::CancelDownload { .. }
             | Action::AdoptRecommendation { .. }
@@ -2189,6 +2347,9 @@ impl Action {
         if let Action::Launch { stop_others: true, .. } = self {
             out.push_str(" stopOthers");
         }
+        if let Action::Launch { load_slot: Some(n), .. } = self {
+            out.push_str(&format!(" loadSlot={n}"));
+        }
         out
     }
 }
@@ -2197,9 +2358,12 @@ impl fmt::Debug for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Action::Select { system } => f.debug_struct("Select").field("system", system).finish(),
-            Action::Launch { system, stop_others } => {
-                f.debug_struct("Launch").field("system", system).field("stop_others", stop_others).finish()
-            }
+            Action::Launch { system, stop_others, load_slot } => f
+                .debug_struct("Launch")
+                .field("system", system)
+                .field("stop_others", stop_others)
+                .field("load_slot", load_slot)
+                .finish(),
             Action::Stop { system } => f.debug_struct("Stop").field("system", system).finish(),
             Action::StopAll => f.write_str("StopAll"),
             Action::Restart { system } => f.debug_struct("Restart").field("system", system).finish(),
@@ -2231,13 +2395,24 @@ impl fmt::Debug for Action {
                 .field("node", node)
                 .finish(),
             Action::RemoveSystem { system } => f.debug_struct("RemoveSystem").field("system", system).finish(),
-            Action::UpdateSystem { system, label, move_to, exclusive, skin } => f
+            Action::SaveSlot { system, slot } => f.debug_struct("SaveSlot").field("system", system).field("slot", slot).finish(),
+            Action::LoadSlot { system, slot } => f.debug_struct("LoadSlot").field("system", system).field("slot", slot).finish(),
+            Action::ClearSlot { system, slot } => f.debug_struct("ClearSlot").field("system", system).field("slot", slot).finish(),
+            Action::UseSlot { system, slot } => f.debug_struct("UseSlot").field("system", system).field("slot", slot).finish(),
+            Action::RenameSlot { system, slot, name } => {
+                f.debug_struct("RenameSlot").field("system", system).field("slot", slot).field("name", name).finish()
+            }
+            Action::UpdateSystem { system, label, move_to, exclusive, skin, mini_skin, slots, slots_auto_save, slots_auto_load } => f
                 .debug_struct("UpdateSystem")
                 .field("system", system)
                 .field("label", label)
                 .field("move_to", move_to)
                 .field("exclusive", exclusive)
                 .field("skin", skin)
+                .field("mini_skin", mini_skin)
+                .field("slots", slots)
+                .field("slots_auto_save", slots_auto_save)
+                .field("slots_auto_load", slots_auto_load)
                 .finish(),
             Action::DownloadRecommendation { id, node } => {
                 f.debug_struct("DownloadRecommendation").field("id", id).field("node", node).finish()

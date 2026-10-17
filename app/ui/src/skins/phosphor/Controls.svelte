@@ -6,6 +6,7 @@
   // Restart <TIER> after a fault. Tune is always enabled: on a running tier the drawer offers "Restart to apply".
   import type { Actions, Session, System, ViewModel } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../lib/model/systems';
+  import { slotKey, slotKeys } from '../../lib/shell/slots/slotKeys';
 
   let {
     vm,
@@ -93,6 +94,13 @@
   <button class="btn wr" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">Records</span>
   </button>
+  {#if selected?.slots}
+    <span class="slotkeys" role="group" aria-label="Conversation slots of {selected.label}: click loads, hold saves">
+      {#each slotKeys(selected) as k (k.n)}
+        <button class="btn sk" use:slotKey={{ system: selected, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+      {/each}
+    </span>
+  {/if}
   <button class="btn w4" onclick={() => actions.openEndpoint(selected?.id)} disabled={!online} title={image ? 'Open the image server web UI' : 'Open the endpoint'}>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4" /><path d="M13.5 2.5L7.5 8.5" /><path d="M12 9.5v3.2a.8.8 0 0 1-.8.8H3.3a.8.8 0 0 1-.8-.8V4.8a.8.8 0 0 1 .8-.8h3.2" /></svg>{image ? 'Web UI' : 'Endpoint'}
   </button>
@@ -285,5 +293,23 @@
   .btn.tune {
     border-color: var(--ph-brand);
     color: var(--ph-cyan);
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .btn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .btn.sk + .btn.sk {
+    margin-left: -1px;
+  }
+  .btn.sk:hover:not(:disabled),
+  .btn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

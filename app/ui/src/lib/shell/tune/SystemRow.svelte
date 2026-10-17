@@ -1,7 +1,7 @@
 <script lang="ts">
-  // Top of a System tab: its label (inline rename), status + reason, the node it lives on, its skin (the global one
-  // or its own, shown while it is selected), and the ⋯ menu (move, exclusive GPU, remove). Remote Systems are
-  // read-only unless their node grants "edit".
+  // Top of a System tab: its label (inline rename), status + reason, the node it lives on, its skins (the global one
+  // or its own, shown while it is selected; the small layout can have another one), and the ⋯ menu (move, exclusive
+  // GPU, remove). Remote Systems are read-only unless their node grants "edit".
   import { tick } from 'svelte';
   import { isHeld, STATUS_TEXT } from '../../model/systems';
   import type { NodeView, System, SystemPatch, ViewModel } from '../../model/types';
@@ -73,6 +73,10 @@
   const globalSkin = $derived(skinMeta(ui.skinId));
   /** Its own skin when the window has it (an unknown id falls back to the global one, so it is shown as such). */
   const ownSkin = $derived(system.skin && SKINS.some((s) => s.id === system.skin) ? system.skin : '');
+  /** Its small layout's skin when the window has it ('' = the same as at full size). */
+  const ownMini = $derived(system.miniSkin && SKINS.some((s) => s.id === system.miniSkin) ? system.miniSkin : '');
+  /** What the full size shows for it, named in the small layout's "Like full" choice. */
+  const fullName = $derived(ownSkin ? skinMeta(ownSkin).name : globalSkin.name);
 
   async function update(patch: SystemPatch) {
     busy = true;
@@ -151,18 +155,31 @@
       on <b>{node?.name ?? system.node}</b>{node ? ` · ${NODE_STATE[node.state]}` : ''}{node?.latencyMs !== undefined ? ` · ${Math.round(node.latencyMs)} ms` : ''}
     </div>
   {/if}
-  <div class="skin">
+  <div class="field">
     <span id="tune-sysskin-{system.id}">Skin</span>
-    <select
-      aria-labelledby="tune-sysskin-{system.id}"
-      title="Shown while {system.label} is selected; Global follows the skin in Display"
-      value={ownSkin}
-      disabled={!system.editable || busy}
-      onchange={(e) => void update({ skin: e.currentTarget.value })}
-    >
-      <option value="">Global ({globalSkin.name})</option>
-      {#each SKINS as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-    </select>
+    <div class="skins">
+      <select
+        aria-labelledby="tune-sysskin-{system.id}"
+        title="Shown while {system.label} is selected; Global follows the skin in Display"
+        value={ownSkin}
+        disabled={!system.editable || busy}
+        onchange={(e) => void update({ skin: e.currentTarget.value })}
+      >
+        <option value="">Global ({globalSkin.name})</option>
+        {#each SKINS as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+      </select>
+      <span class="sub" id="tune-sysmini-{system.id}">Mini</span>
+      <select
+        aria-labelledby="tune-sysmini-{system.id}"
+        title="The small layout (panel mode, a short landscape window) while {system.label} is selected"
+        value={ownMini}
+        disabled={!system.editable || busy}
+        onchange={(e) => void update({ miniSkin: e.currentTarget.value })}
+      >
+        <option value="">Like full ({fullName})</option>
+        {#each SKINS as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+      </select>
+    </div>
   </div>
   {#if readOnlyHint}<p class="hint">{readOnlyHint}</p>{/if}
   {#if err}<p class="err" role="alert">{err}</p>{/if}
@@ -225,17 +242,18 @@
   .where {
     font: 500 12px/1.3 var(--k-font-ui, system-ui, sans-serif);
   }
-  .skin {
-    display: flex;
+  /* Full and small layout side by side in the control column, each select half of it */
+  .skins {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: 10px;
-    font: 500 12px/1.4 var(--k-font-ui, system-ui, sans-serif);
-    color: var(--k-muted, #8a8a8a);
+    min-width: 0;
   }
-  /* beats the drawer's shared select width (100%) */
-  .skin select {
-    flex: none;
-    width: 170px;
+  .sub {
+    color: var(--k-muted, #8a8a8a);
+    font: 500 12px/1.2 var(--k-font-ui, system-ui, sans-serif);
+    letter-spacing: 0.04em;
   }
   .where b {
     color: var(--k-ink, #e6e6e6);

@@ -247,7 +247,15 @@ class Player {
     return {
       select: (system, call) => this.act({ type: 'select', system }, call),
       launch: (system, opts) =>
-        this.act({ type: 'launch', ...(system ? { system } : {}), ...(opts?.stopOthers ? { stopOthers: true } : {}) }, opts),
+        this.act(
+          {
+            type: 'launch',
+            ...(system ? { system } : {}),
+            ...(opts?.stopOthers ? { stopOthers: true } : {}),
+            ...(opts?.loadSlot ? { loadSlot: opts.loadSlot } : {}),
+          },
+          opts,
+        ),
       stop: (system, call) => this.act({ type: 'stop', ...(system ? { system } : {}) }, call),
       stopAll: (call) => this.act({ type: 'stopAll' }, call),
       restart: (system, call) => this.act({ type: 'restart', ...(system ? { system } : {}) }, call),
@@ -263,6 +271,11 @@ class Player {
       addSystem: (spec, call) => this.act({ type: 'addSystem', ...spec }, call),
       removeSystem: (system, call) => this.act({ type: 'removeSystem', system }, call),
       updateSystem: (system, patch, call) => this.act({ type: 'updateSystem', system, ...patch }, call),
+      saveSlot: (system, slot, call) => this.act({ type: 'saveSlot', system, slot }, call),
+      loadSlot: (system, slot, call) => this.act({ type: 'loadSlot', system, slot }, call),
+      clearSlot: (system, slot, call) => this.act({ type: 'clearSlot', system, slot }, call),
+      useSlot: (system, slot, call) => this.act({ type: 'useSlot', system, slot }, call),
+      renameSlot: (system, slot, name, call) => this.act({ type: 'renameSlot', system, slot, name }, call),
       downloadRecommendation: (id, node, call) => this.act({ type: 'downloadRecommendation', id, ...(node ? { node } : {}) }, call),
       cancelDownload: (id, node, call) => this.act({ type: 'cancelDownload', id, ...(node ? { node } : {}) }, call),
       forgetRecord: (key, node, call) => this.act({ type: 'forgetRecord', key, ...(node ? { node } : {}) }, call),
@@ -346,7 +359,8 @@ class Player {
   private mockActions(): Actions {
     return {
       select: (system, call) => this.mock((e) => e.select(system), call),
-      launch: (system, opts) => this.mock((e) => e.launch(system, opts?.stopOthers ? { stopOthers: true } : {}), opts),
+      launch: (system, opts) =>
+        this.mock((e) => e.launch(system, { ...(opts?.stopOthers ? { stopOthers: true } : {}), ...(opts?.loadSlot ? { loadSlot: opts.loadSlot } : {}) }), opts),
       stop: (system, call) => this.mock((e) => e.stop(system), call),
       stopAll: (call) => this.mock((e) => e.stopAll(), call),
       restart: (system, call) => this.mock((e) => e.restart(system), call),
@@ -361,6 +375,11 @@ class Player {
       addSystem: (spec, call) => this.mock((e) => e.addSystem(spec), call),
       removeSystem: (system, call) => this.mock((e) => e.removeSystem(system), call),
       updateSystem: (system, patch, call) => this.mock((e) => e.updateSystem(system, patch), call),
+      saveSlot: (system, slot, call) => this.mock((e) => e.slotJob(system, 'save', slot), call),
+      loadSlot: (system, slot, call) => this.mock((e) => e.slotJob(system, 'load', slot), call),
+      clearSlot: (system, slot, call) => this.mock((e) => e.clearSlot(system, slot), call),
+      useSlot: (system, slot, call) => this.mock((e) => e.useSlot(system, slot), call),
+      renameSlot: (system, slot, name, call) => this.mock((e) => e.renameSlot(system, slot, name), call),
       downloadRecommendation: (id, node, call) => this.mock((e) => e.downloadRecommendation(id, node), call),
       cancelDownload: (id, node, call) => this.mock((e) => e.cancelDownload(id, node), call),
       adoptRecommendation: (id, system, opts) => this.mock((e) => e.adoptRecommendation(id, system, opts?.fit), { quiet: opts?.quiet }),
@@ -443,6 +462,7 @@ class Player {
       t,
       seed: this.params?.seed ?? 0,
     });
+    if (this.params?.slots) this.engine.enableSlots();
     this.publish();
   }
 

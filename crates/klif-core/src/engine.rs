@@ -23,6 +23,7 @@ mod compose;
 mod conflicts;
 mod record_capture;
 mod session;
+mod slots;
 mod watch;
 
 use std::collections::BTreeMap;
@@ -276,6 +277,8 @@ pub(crate) struct Inner {
     key_info: Mutex<ApiKeyInfo>,
     bench: Mutex<BenchCache>,
     downloads: Arc<Mutex<Downloads>>,
+    /// Conversation slot saves and loads running now, and how the last ones ended.
+    slot_jobs: slots::Jobs,
     servers: Mutex<Servers>,
     /// ULPS settings by GPU pci id, read lazily (the first time a dormancy episode is narrated).
     ulps: Mutex<BTreeMap<String, Option<UlpsSetting>>>,
@@ -466,6 +469,7 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
         key_info: Mutex::new(key_info),
         bench: Mutex::new(BenchCache::default()),
         downloads: Arc::new(Mutex::new(Downloads::default())),
+        slot_jobs: Arc::new(Mutex::new(slots::SlotJobs::default())),
         servers: Mutex::new(Servers::default()),
         ulps: Mutex::new(BTreeMap::new()),
         gpu_ids: Mutex::new(gpu_ids),
@@ -639,6 +643,7 @@ impl Inner {
             // The catalog probes files (programs, models, PATH; a dead network share blocks for its timeout): that
             // happens here, never under `st`, so Stop / Launch / previews are not held up by it (SPEC 5).
             let live = self.live_facts(&cfg);
+            self.refresh_slot_indexes(&cfg);
             let parts = compose::CatalogParts {
                 systems: catalog.systems(&cfg, &live),
                 presets: catalog.presets(&cfg, &live),

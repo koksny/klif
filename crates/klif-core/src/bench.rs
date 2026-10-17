@@ -210,7 +210,7 @@ pub fn run(link: &dyn EngineLink, system: &SystemId, opts: &BenchOpts) -> Result
         }
         log::info!("launching {label} (preset {preset_id})");
         let t0 = Instant::now();
-        link.act(Action::Launch { system: Some(system.clone()), stop_others: false })?;
+        link.act(Action::Launch { system: Some(system.clone()), stop_others: false, load_slot: None })?;
         launched = true;
         match wait_ready(link, system, &label) {
             Ok(()) => load_s = Some(t0.elapsed().as_secs_f64()),

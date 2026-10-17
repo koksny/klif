@@ -13,6 +13,10 @@ export interface WorldSystem {
   params?: Record<string, string>;
   exclusive?: boolean;
   skin?: string;
+  miniSkin?: string;
+  slots?: boolean;
+  slotsAutoSave?: boolean;
+  slotsAutoLoad?: boolean;
   /** The remote node it lives on. */
   node?: string;
 }

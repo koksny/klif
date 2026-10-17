@@ -126,6 +126,10 @@ class = "max"
 preset = "max-moe"
 exclusive = true               # needs the whole GPU: launching it lists every other System on that GPU as a conflict
 # skin = "phosphor"            # the skin the window shows while this System is selected (absent = [ui] skin)
+# mini_skin = "silicon"        # the small layout's skin while it is selected (absent = the same as skin)
+# slots = true                 # conversation slots on disk (llama.cpp, Strata): 3 per System, Save / Load
+# slots_auto_save = true       # save the active slot when KLIF stops the System
+# slots_auto_load = true       # load it when KLIF has started the System
 
 [systems.cgi]
 label = "System CGI"

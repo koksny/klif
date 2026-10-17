@@ -23,6 +23,7 @@
   import WinCtl from './WinCtl.svelte';
   import { useSleep } from './sleep.svelte';
   import { availabilityText, baselineOf, fmtAgo, fmtDur, fmtEta, modelLine, phaseWord, tierWord } from './text';
+  import { slotKey, slotKeys } from '../../lib/shell/slots/slotKeys';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
 
@@ -391,6 +392,13 @@
     {/if}
     <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>≡ tune</button>
     <button class="btn" onclick={() => actions.openRecords()} title="Records: the best each model reached">▲ records</button>
+    {#if sel?.slots}
+      <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">
+        {#each slotKeys(sel) as k (k.n)}
+          <button class="btn sk" use:slotKey={{ system: sel, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+        {/each}
+      </span>
+    {/if}
     <button class="btn" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>↗ {kind === 'image' ? 'web ui' : 'endpoint'}</button>
     <button class="btn" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>&gt;_ {faulted ? 'full log' : 'console'}</button>
   </footer>
@@ -1095,5 +1103,23 @@
     .st i.pulse {
       animation: none;
     }
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .btn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .btn.sk + .btn.sk {
+    margin-left: -1px;
+  }
+  .btn.sk:hover:not(:disabled),
+  .btn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

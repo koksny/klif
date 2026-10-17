@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.5-5AB6EB" alt="Version 0.3.5">
+  <img src="https://img.shields.io/badge/version-0.3.6-5AB6EB" alt="Version 0.3.6">
   <img src="https://img.shields.io/badge/license-MIT-5AB6EB" alt="MIT license">
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-5AB6EB" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/macOS-13%2B%20Apple%20silicon-5AB6EB" alt="macOS 13 or later on Apple silicon">
@@ -66,7 +66,8 @@ the right script. Everything the window does is also in `klif-cli`, so scripts a
 
 Nine looks over the same data. Every skin has a full window and a 960×640 layout for a small status screen, such as
 a 3.5-inch USB display next to the monitor. Pick one in Tune (Skin, at the bottom), from the tray's Skin menu, or with
-F2 (Shift+F2 back) and Ctrl+1..9.
+F2 (Shift+F2 back) and Ctrl+1..9. A System can also have its own skin, and another one for the small layout, shown
+while it is selected (Skin and Mini at the top of its Tune tab).
 
 **Live decode**, a language model answering requests. Top row: the full window. Bottom row: the 3.5-inch panel.
 Left to right: Cliff, Silicon, Instrument, Phosphor, Decode, Loom, Ether, Rings, Spirit.
@@ -97,6 +98,9 @@ The animations come from the browser mock engine with recorded timings, the same
 - **Systems as tabs.** You define the Systems you have: "System 1", "System 2", "System CGI", "System TTS", or
   anything else. Kinds are `llm`, `image`, `tts`, `stt` and `video`. Each tab shows online, busy, starting, offline,
   not set, invalid, fault or unreachable. [docs/systems.md](docs/systems.md)
+- **Conversations that survive a restart.** A llama.cpp or Strata System can save what its server holds (the KV
+  cache of a long conversation) to one of three slots on disk and load it back, by hand or automatically when KLIF
+  stops and starts it, so a 200K-token session is not read again. [docs/systems.md](docs/systems.md#conversation-slots)
 - **Several at once.** Every System has its own server, session, logs and telemetry. Before a launch KLIF checks for
   port clashes, an `exclusive` System on the same GPU and free VRAM, and names what would have to stop. It never
   kills a process it does not own.
@@ -109,7 +113,7 @@ The animations come from the browser mock engine with recorded timings, the same
 - **Adapters, not a fixed list.** `llama.cpp`, `sd.cpp`, `vllm`, `strata`, `audiocpp`, `openai` (any
   OpenAI-compatible server) and `generic` (any program that listens on a port). The adapter decides defaults and which log lines and endpoints
   KLIF reads for telemetry.
-- **klif-cli.** Status, plan, launch, stop, presets, params, bench, downloads, keys and nodes, with `--json` and a
+- **klif-cli.** Status, plan, launch, stop, presets, params, slots, bench, downloads, keys and nodes, with `--json` and a
   stable `schemaVersion`. [docs/cli.md](docs/cli.md)
 - **klif-webui.** An opt-in page for a phone or a browser on your network: every System's status, with launch, stop,
   restart, preset and params. Devices pair with a QR code; it is off by default and plain HTTP, so use it on a network

@@ -6,6 +6,7 @@
   import type { Actions, ViewModel } from '../../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
   import { blockView, selectedSystem, sessionKind } from '../util';
+  import { slotKey, slotKeys } from '../../../lib/shell/slots/slotKeys';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
   const s = $derived(vm.session);
@@ -115,6 +116,13 @@
     <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16.5V10h4v6.5M8 16.5V4h4v12.5M12 16.5V8h4v8.5" class="ln" /></svg>
     </button>
+    {#if sel?.slots}
+      <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">
+        {#each slotKeys(sel) as k (k.n)}
+          <button class="btn sk" use:slotKey={{ system: sel, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+        {/each}
+      </span>
+    {/if}
     <button class="btn w-ep" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={online ? '' : 'The endpoint is not up'}>
       <svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M9 3.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V11" class="ln" /><path d="M11.5 3.5h5v5M16.5 3.5 9 11" class="ln" /></svg
@@ -324,5 +332,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .btn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .btn.sk + .btn.sk {
+    margin-left: -1px;
+  }
+  .btn.sk:hover:not(:disabled),
+  .btn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

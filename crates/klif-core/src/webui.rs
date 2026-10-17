@@ -860,7 +860,11 @@ fn web_action(v: &Value) -> Result<Action, String> {
     let system = s("system").map(SystemId::new).ok_or("The action names no System.")?;
     let kind = s("type").ok_or("The action has no type.")?;
     Ok(match kind.as_str() {
-        "launch" => Action::Launch { system: Some(system), stop_others: v.get("stopOthers").and_then(Value::as_bool).unwrap_or(false) },
+        "launch" => Action::Launch {
+            system: Some(system),
+            stop_others: v.get("stopOthers").and_then(Value::as_bool).unwrap_or(false),
+            load_slot: None,
+        },
         "stop" => Action::Stop { system: Some(system) },
         "restart" => Action::Restart { system: Some(system) },
         "dismiss" => Action::Dismiss { system: Some(system) },

@@ -94,6 +94,8 @@ pub(crate) struct SessionCtx {
     pub(crate) dormant_seen: Option<(u64, u64)>,
     /// What the session already handed to the records.
     pub(crate) rec: RecordTrack,
+    /// Taken over from an earlier engine, not launched by this one (Auto slots load only into a fresh launch).
+    pub(crate) adopted: bool,
 }
 
 impl SessionCtx {
@@ -128,6 +130,7 @@ impl SessionCtx {
             activity: 0.0,
             dormant_seen: None,
             rec: RecordTrack::default(),
+            adopted: false,
         }
     }
 
@@ -304,9 +307,23 @@ pub(crate) fn build_fault(
 }
 
 pub(crate) fn spawn_stop(owned: Arc<Owned>, what: &'static str) -> Option<JoinHandle<Result<()>>> {
+    spawn_stop_after(owned, what, None)
+}
+
+/// `spawn_stop` that first runs `before` on the stop thread while the server is still up (Auto slots save there).
+pub(crate) fn spawn_stop_after(
+    owned: Arc<Owned>,
+    what: &'static str,
+    before: Option<Box<dyn FnOnce() + Send>>,
+) -> Option<JoinHandle<Result<()>>> {
     std::thread::Builder::new()
         .name(format!("klif-{what}"))
-        .spawn(move || Supervisor::new().stop(&owned))
+        .spawn(move || {
+            if let Some(f) = before {
+                f();
+            }
+            Supervisor::new().stop(&owned)
+        })
         .map_err(|e| log::error!("could not start the {what} thread: {e}"))
         .ok()
 }
@@ -433,6 +450,7 @@ impl Inner {
         }
         let mut ctx = SessionCtx::new(p, owned, Phase::Loading, header);
         ctx.rec = RecordTrack::adopted(now_s());
+        ctx.adopted = true;
         self.begin_session(st, cfg, id, ctx, true);
         true
     }
@@ -443,10 +461,15 @@ impl Inner {
             return;
         }
         log::info!("stopping {} ({id})", ctx.p.record.session_name);
+        let was_live = ctx.phase == Phase::Live;
         ctx.phase = Phase::Stopping;
         ctx.stop_at = Some(now_s());
         ctx.tail.push(format!("[KLIF] stopping {}", ctx.p.record.session_name));
-        ctx.stopper = spawn_stop(ctx.owned.clone(), "stop");
+        let before = if was_live { self.auto_slot_save(id, ctx) } else { None };
+        if before.is_some() {
+            ctx.tail.push("[KLIF] saving the conversation slot first".into());
+        }
+        ctx.stopper = spawn_stop_after(ctx.owned.clone(), "stop", before);
         st.dirty = true;
     }
 
@@ -670,6 +693,9 @@ impl Inner {
                                 log::info!("{} ({id}) is live", ctx.p.record.session_name);
                                 ctx.phase = Phase::Live;
                                 ctx.been_live = true;
+                                if !ctx.adopted {
+                                    self.auto_slot_load(cfg, &id, ctx);
+                                }
                             } else if ctx.phase == Phase::Starting && sig.map(progressed).unwrap_or(false) {
                                 ctx.phase = Phase::Loading;
                             }

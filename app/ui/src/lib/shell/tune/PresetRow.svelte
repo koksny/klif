@@ -41,7 +41,9 @@
       t.isDirty(t.draft(system.node, p.id)) ? 'edited' : '',
       p.external ? 'external' : '',
     ].filter(Boolean);
-    const main = joinParts([p.name, p.model.quant, p.model.backend]);
+    // The quant and backend only when the name does not already say them ("Flash-Next IQ3_S (Strata)").
+    const named = (x?: string) => !!x && p.name.toLowerCase().includes(x.toLowerCase());
+    const main = joinParts([p.name, named(p.model.quant) ? undefined : p.model.quant, named(p.model.backend) ? undefined : p.model.backend]);
     return badges.length ? `${main}  —  ${badges.join(', ')}` : main;
   }
 

@@ -76,6 +76,40 @@ export interface ModelRef {
   arch?: ModelArch;
 }
 
+/** One slot: empty (no savedAt), or a saved conversation. */
+export interface SlotEntryView {
+  /** 1-based. */
+  n: number;
+  /** The name the user gave it (absent: "Slot N"); kept when the slot is cleared. */
+  name?: string;
+  savedAt?: number;
+  tokens?: number;
+  bytes?: number;
+  model?: string;
+  /** Saved with the System's current command: it can be loaded. */
+  compatible: boolean;
+}
+
+/**
+ * A System's conversation slots ([systems.<id>] slots): three files in <data dir>/slots/<id>, saved from and loaded
+ * into its server when asked, and optionally on their own when KLIF stops (autoSave) and starts (autoLoad) it.
+ */
+export interface SlotsView {
+  /** Save the active slot when KLIF stops the System ([systems.<id>] slots_auto_save). */
+  autoSave: boolean;
+  /** Load the active slot when KLIF has started the System ([systems.<id>] slots_auto_load). */
+  autoLoad: boolean;
+  /** The slot auto-save and auto-load use: the one saved or loaded last. */
+  active: number;
+  /** Its preset's server can save slots (llama.cpp, Strata). */
+  supported: boolean;
+  entries: SlotEntryView[];
+  /** A save or load running now. */
+  job?: { op: 'save' | 'load'; slot: number; since: number };
+  /** How the last save or load ended (kept for a short while). */
+  notice?: { ok: boolean; text: string; at: number };
+}
+
 /** The model's shape from the server log: what the Loom skin draws. */
 export interface ModelArch {
   /** Transformer blocks (n_layer). */
@@ -429,6 +463,10 @@ export interface System {
   exclusive: boolean;
   /** The skin the window shows while this System is selected ([systems.<id>] skin); absent = the global skin. */
   skin?: string;
+  /** The small layout's skin while this System is selected ([systems.<id>] mini_skin); absent = the same as `skin`. */
+  miniSkin?: string;
+  /** Its conversation slots ([systems.<id>] slots); absent while they are off. */
+  slots?: SlotsView;
   /**
    * Its preset keeps weights in system RAM (--cpu-moe, -ncmoe, -ot ...=CPU, -ngl 0, --offload-to-cpu,
    * --cpu-offload-gb): the server makes do with the VRAM it finds, so it never "does not fit".
@@ -928,7 +966,7 @@ export type Right = 'view' | 'launch' | 'edit' | 'local-only';
  */
 export type EngineAction =
   | { type: 'select'; system: SystemId }
-  | { type: 'launch'; system?: SystemId; stopOthers?: boolean }
+  | { type: 'launch'; system?: SystemId; stopOthers?: boolean; loadSlot?: number }
   | { type: 'stop'; system?: SystemId }
   | { type: 'stopAll' }
   | { type: 'restart'; system?: SystemId }
@@ -947,7 +985,9 @@ export type EngineAction =
   | { type: 'deletePreset'; id: string; node?: string }
   | { type: 'addSystem'; id?: string; label?: string; kind: SystemKind; class?: LlmClass; preset?: string; node?: string }
   | { type: 'removeSystem'; system: SystemId }
-  | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean; skin?: string }
+  | { type: 'updateSystem'; system: SystemId; label?: string; moveTo?: number; exclusive?: boolean; skin?: string; miniSkin?: string; slots?: boolean; slotsAutoSave?: boolean; slotsAutoLoad?: boolean }
+  | { type: 'saveSlot' | 'loadSlot' | 'clearSlot' | 'useSlot'; system: SystemId; slot: number }
+  | { type: 'renameSlot'; system: SystemId; slot: number; name: string }
   | { type: 'downloadRecommendation'; id: string; node?: string }
   | { type: 'cancelDownload'; id: string; node?: string }
   | { type: 'adoptRecommendation'; id: string; system?: SystemId; ctx?: number; kv?: string }
@@ -994,13 +1034,21 @@ export interface SystemPatch {
   exclusive?: boolean;
   /** A skin id, or '' for the global skin. */
   skin?: string;
+  /** The small layout's skin id, or '' for the same as at full size. */
+  miniSkin?: string;
+  /** Conversation slots on or off (applies on the next launch). */
+  slots?: boolean;
+  /** Save the active slot when KLIF stops the System. */
+  slotsAutoSave?: boolean;
+  /** Load the active slot when KLIF has started the System. */
+  slotsAutoLoad?: boolean;
 }
 
 export interface Actions {
   // ---- engine actions ----
   select(system: SystemId, call?: CallOpts): Promise<void>;
   /** With conflicts the control reads "Stop <labels> & launch" and passes stopOthers: true. */
-  launch(system?: SystemId, opts?: { stopOthers?: boolean } & CallOpts): Promise<void>;
+  launch(system?: SystemId, opts?: { stopOthers?: boolean; loadSlot?: number } & CallOpts): Promise<void>;
   stop(system?: SystemId, call?: CallOpts): Promise<void>;
   stopAll(call?: CallOpts): Promise<void>;
   restart(system?: SystemId, call?: CallOpts): Promise<void>;
@@ -1018,6 +1066,14 @@ export interface Actions {
   removeSystem(system: SystemId, call?: CallOpts): Promise<void>;
   /** `skin: ''` = back to the global skin. */
   updateSystem(system: SystemId, patch: SystemPatch, call?: CallOpts): Promise<void>;
+  /** Conversation slots of a running System: save to / load from slot 1-3, or delete a slot. */
+  saveSlot(system: SystemId, slot: number, call?: CallOpts): Promise<void>;
+  loadSlot(system: SystemId, slot: number, call?: CallOpts): Promise<void>;
+  clearSlot(system: SystemId, slot: number, call?: CallOpts): Promise<void>;
+  /** Make a slot the active one (auto-save writes to it, auto-load reads it). */
+  useSlot(system: SystemId, slot: number, call?: CallOpts): Promise<void>;
+  /** Name a slot ('' = back to "Slot N"). */
+  renameSlot(system: SystemId, slot: number, name: string, call?: CallOpts): Promise<void>;
   downloadRecommendation(id: string, node?: string, call?: CallOpts): Promise<void>;
   cancelDownload(id: string, node?: string, call?: CallOpts): Promise<void>;
   /**

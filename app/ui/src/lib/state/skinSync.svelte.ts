@@ -8,14 +8,18 @@ import { player } from './player.svelte';
 import { ui } from './ui.svelte';
 
 export function installSkinSync() {
-  // The selected System's own skin ([systems.<id>] skin) is shown over the global one while it is selected.
+  // The selected System's own skins ([systems.<id>] skin and mini_skin) are shown over the global one while it is
+  // selected. An id the window does not have counts as not set.
   $effect(() => {
     const vm = player.vm;
     const sel = vm.systems.find((s) => s.id === vm.selected);
-    const id = sel?.skin;
-    const own = id && SKINS.some((s) => s.id === id) ? { id: id as SkinId, label: sel.label } : null;
+    const known = (id: string | undefined) => (id && SKINS.some((s) => s.id === id) ? (id as SkinId) : null);
+    const full = known(sel?.skin);
+    const mini = known(sel?.miniSkin);
+    const own = sel && (full || mini) ? { full, mini, label: sel.label } : null;
     untrack(() => {
-      if (own?.id !== ui.systemSkin?.id || own?.label !== ui.systemSkin?.label) ui.systemSkin = own;
+      const cur = ui.systemSkin;
+      if (own?.full !== cur?.full || own?.mini !== cur?.mini || own?.label !== cur?.label) ui.systemSkin = own;
     });
   });
 

@@ -26,6 +26,12 @@
     for (const p of system.params) if (pending[p.name] === p.value) delete pending[p.name];
   });
 
+  /** "Full (all experts in RAM, ~50 GB)": the name on the button, the parenthesis as a smaller line under it. */
+  function split(label: string): { main: string; sub?: string } {
+    const m = /^(.+?)\s*\((.+)\)\s*$/.exec(label);
+    return m ? { main: m[1], sub: m[2] } : { main: label };
+  }
+
   async function set(p: ParamView, value: string) {
     if (value === current(p)) return;
     pending[p.name] = value;
@@ -52,7 +58,8 @@
               aria-checked={current(p) === c.value}
               class:on={current(p) === c.value}
               disabled={!system.controllable}
-              onclick={() => void set(p, c.value)}>{c.label || c.value}</button
+              onclick={() => void set(p, c.value)}
+              >{#each [split(c.label || c.value)] as l}<b>{l.main}</b>{#if l.sub}<small>{l.sub}</small>{/if}{/each}</button
             >
           {/each}
         </div>
@@ -75,5 +82,21 @@
   .params {
     display: grid;
     gap: 10px;
+  }
+  .seg3 button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    line-height: 1.2;
+  }
+  .seg3 b {
+    font-weight: 600;
+  }
+  .seg3 small {
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.72;
   }
 </style>

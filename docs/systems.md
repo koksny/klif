@@ -21,6 +21,13 @@ selected System has its own: `skin` here, the Skin field at the top of its Tune 
 selected. F2 and the tray still change the global skin. An id the window does not have shows the global one, and
 klif-webui follows the global skin.
 
+The small layout (panel mode, or a landscape window up to 700 px tall) can have a skin of its own: `mini_skin` here,
+the Mini field next to Skin in Tune, or `klif-cli systems skin <system> <id|full> --mini`. Absent (Like full), the
+small layout shows what the full size shows for that System.
+
+**Slots.** `slots = true` keeps conversations on disk for llama.cpp and Strata Systems: see
+[Conversation slots](#conversation-slots).
+
 The id (`s1`) is `[a-z0-9][a-z0-9_-]{0,31}` and never contains `/`. Tab order is the order of the tables in
 `klif.toml`. The window, `klif-cli` and the file all edit the same thing; changes you make in an editor are picked
 up while KLIF runs.
@@ -146,6 +153,42 @@ its `adapter` (both in `klif-cli --json status`): OpenAI chat at `{baseUrl}/chat
 The request and answer of each are in the Agent Skill, [skills/klif/SKILL.md](../skills/klif/SKILL.md#using-a-running-system).
 A System on another machine is reached at that machine's address, which works only when its server listens on the
 network (the preset's `host`) and that machine's firewall lets the client in.
+
+## Conversation slots
+
+A llama.cpp or Strata System can keep what its server holds (the conversation's KV cache and state) on disk, so a
+long conversation is not read again after a restart or a switch to another System. `slots = true` in
+`[systems.<id>]` (the Slots switch in its Tune tab, `klif-cli systems slots <system> on`) adds
+`--slot-save-path <data dir>/slots/<id>` to the command; it applies on the next launch, and a preset that names its own
+`--slot-save-path` keeps it.
+
+- A System has three slots. Save writes what the running server holds to a slot (`slot<N>-<server slot>.bin` plus
+  `slots.json`), replacing what that slot had; Load puts it back. Every skin's full window shows three slot keys (1, 2,
+  3) next to Records while the selected System has slots on: a click loads that slot, holding it about a second saves
+  to it (the key fills while held, and letting go early saves nothing). A thin line under the number marks a saved
+  slot, a full-strength one the active slot, a dashed one an active slot that is still empty. Tune's Slots section
+  has Save, Load and Clear per slot. While the System is stopped, holding a saved key launches it (stopping the
+  Systems that conflict, as "Stop X & launch" does) and loads that slot once it is up, whatever auto-load says
+  (`klif-cli launch <system> --yes --slot N`); `klif-cli slots <system>`, `slots save|load <system> [1-3]` and `slots clear <system> <1-3>
+  --yes` do it from a script.
+- A slot loads only into the command it was saved from (the same model, context and KV type: KLIF compares the
+  command hash). One saved with another command is kept and marked as such.
+- **The active slot** is the one auto-save writes to and auto-load reads: click a slot in Tune, or
+  `klif-cli slots use <system> <1-3>`, also while the System is stopped. Save and Load make
+  the slot they used the active one, so after loading a conversation, auto-save keeps writing it back there.
+- **Auto-save** (`slots_auto_save = true`, `klif-cli systems slots <system> auto-save on`) saves the active slot
+  when KLIF stops the System (Stop, Restart, a launch that stops it first, quitting with Stop
+  on exit), before the server is stopped. A server that crashes or is killed outside KLIF saves nothing.
+- **Auto-load** (`slots_auto_load = true`, `... auto-load on`) loads the active slot when KLIF has started the System
+  and it is up, when that slot was saved with the same command. A server KLIF took over from an earlier run is not
+  loaded into. The two are independent: auto-save alone keeps the last conversation without loading it unasked.
+- A save waits until the server is free (a request still running finishes first). The files are as large as the
+  conversation's KV cache: a few GiB for a long one.
+- A slot can have a name (the pencil next to it, `klif-cli slots rename <system> <1-3> <name>`), kept when it is
+  cleared. Each slot can hold a different conversation, for example OMP's session in a slot named "OMP" and
+  Hermes's in "Hermes".
+  Strata also keeps recent conversations in RAM by itself (`--conversation-cache-mib`); the slots are what survives a
+  restart.
 
 ## Removed from the file while running
 

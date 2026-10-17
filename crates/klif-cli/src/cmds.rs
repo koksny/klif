@@ -5,7 +5,8 @@ use crate::conn::{self, Conn};
 use crate::out::{note, num, refused, table, val, CliError, CliResult, Out};
 use crate::outputs::*;
 use crate::resolve::{resolve, resolve_system};
-use klif_core::klif_common::config::LoadedConfig;
+use klif_core::klif_common::config::{LoadedConfig, SlotsPatch};
+use klif_core::klif_common::vm::SlotsView;
 use klif_core::klif_common::vm::{Action, CommandView, LlmClass, Phase, System, SystemId, SystemKind, SystemStatus, ViewModel};
 use klif_core::wire::{status_of, StatusJson, StatusSystem};
 use std::collections::BTreeSet;
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 const LAUNCH_WAIT: Duration = Duration::from_secs(15 * 60);
 /// Longest wait for a stop.
 const STOP_WAIT: Duration = Duration::from_secs(60);
+/// `stop` while a System saves its conversation slot first (Auto slots).
+const SLOT_SAVE_WAIT: Duration = Duration::from_secs(30 * 60);
 
 pub fn find<'a>(vm: &'a ViewModel, id: &SystemId) -> Option<&'a System> {
     vm.systems.iter().find(|s| &s.id == id)
@@ -80,6 +83,9 @@ pub fn wait_live(conn: &Conn, id: &SystemId, timeout: Duration, restarted_from: 
         }
         match s.status {
             SystemStatus::Online | SystemStatus::Busy if !new_session => {}
+            // Auto slots: a conversation slot loading right after the start is part of being ready (and a one-shot
+            // engine must not exit under it).
+            SystemStatus::Online | SystemStatus::Busy if s.slots.as_ref().is_some_and(|v| v.job.is_some()) => {}
             SystemStatus::Online | SystemStatus::Busy if s.external || phase.is_none_or(|p| p == Phase::Live) => return Ok(s.clone()),
             SystemStatus::Fault => return Err(fault_error(s)),
             SystemStatus::Starting | SystemStatus::Stopping => seen_start = true,
@@ -131,9 +137,11 @@ fn wait_stopped(conn: &Conn, ids: &[SystemId]) -> CliResult<ViewModel> {
         if left.is_empty() {
             return Ok(vm);
         }
-        if t0.elapsed() > STOP_WAIT {
+        // Auto slots: a System saving its conversation before it stops takes as long as the save.
+        let saving = left.iter().any(|s| s.slots.as_ref().is_some_and(|v| v.job.is_some()));
+        if t0.elapsed() > if saving { SLOT_SAVE_WAIT } else { STOP_WAIT } {
             let names: Vec<String> = left.iter().map(|s| s.label.clone()).collect();
-            return Err(CliError::new("timeout", format!("Still stopping after {} s: {}.", STOP_WAIT.as_secs(), names.join(", "))));
+            return Err(CliError::new("timeout", format!("Still stopping after {:.0} s: {}.", t0.elapsed().as_secs_f64(), names.join(", "))));
         }
     }
 }
@@ -390,6 +398,16 @@ pub fn launch(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let yes = args.flag("--yes");
     let stop_others = args.flag("--stop-others");
     let wait = args.flag("--wait");
+    let load_slot = match args.opt("--slot")? {
+        Some(v) => Some(
+            v.trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|n| (1..=klif_core::klif_common::config::SLOT_COUNT).contains(n))
+                .ok_or_else(|| CliError::usage(format!("\"{v}\" is not a slot; --slot takes 1 to 3.")))?,
+        ),
+        None => None,
+    };
     let arg = args.pos("System")?;
     args.done()?;
     if !yes {
@@ -400,7 +418,7 @@ pub fn launch(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let conn = conn::connect(loaded)?;
     let vm = conn.snapshot(None)?;
     let id = resolve(&vm, &arg)?;
-    act(&conn, Action::Launch { system: Some(id.clone()), stop_others })?;
+    act(&conn, Action::Launch { system: Some(id.clone()), stop_others, load_slot })?;
     let s = if wait {
         note(format!("launched {id}; waiting until it is ready (the server keeps running if klif-cli is interrupted)"));
         wait_live(&conn, &id, LAUNCH_WAIT, None)?
@@ -521,7 +539,7 @@ fn on_off(v: &str) -> CliResult<bool> {
 }
 
 pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
-    let sub = args.pos("systems subcommand (list, add, remove, rename, move, exclusive, skin)")?;
+    let sub = args.pos("systems subcommand (list, add, remove, rename, move, exclusive, skin, slots)")?;
     match sub.as_str() {
         "list" | "ls" => {
             args.done()?;
@@ -588,35 +606,61 @@ pub fn systems(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
             if label.trim().is_empty() {
                 return Err(CliError::usage("systems rename needs a label."));
             }
-            update(loaded, out, &arg, Some(label.trim().to_string()), None, None, None)
+            update(loaded, out, &arg, Some(label.trim().to_string()), None, None, None, None, SlotsPatch::default())
         }
         "move" => {
             let arg = args.pos("System")?;
             let idx = args.pos("tab index")?;
             args.done()?;
             let idx: u32 = idx.trim().parse().map_err(|_| CliError::usage(format!("The tab index must be a number (0 = first), not \"{idx}\".")))?;
-            update(loaded, out, &arg, None, Some(idx), None, None)
+            update(loaded, out, &arg, None, Some(idx), None, None, None, SlotsPatch::default())
         }
         "exclusive" => {
             let arg = args.pos("System")?;
             let v = on_off(&args.pos("on or off")?)?;
             args.done()?;
-            update(loaded, out, &arg, None, None, Some(v), None)
+            update(loaded, out, &arg, None, None, Some(v), None, None, SlotsPatch::default())
+        }
+        "slots" => {
+            // systems slots <system> on|off | auto-save on|off | auto-load on|off
+            let arg = args.pos("System")?;
+            let first = args.pos("on, off, auto-save or auto-load")?;
+            let patch = match first.as_str() {
+                "auto-save" | "auto-load" => {
+                    let v = on_off(&args.pos("on or off")?)?;
+                    if first == "auto-save" {
+                        SlotsPatch { auto_save: Some(v), ..Default::default() }
+                    } else {
+                        SlotsPatch { auto_load: Some(v), ..Default::default() }
+                    }
+                }
+                v => SlotsPatch { on: Some(on_off(v)?), ..Default::default() },
+            };
+            args.done()?;
+            update(loaded, out, &arg, None, None, None, None, None, patch)
         }
         "skin" => {
+            let mini = args.flag("--mini");
             let arg = args.pos("System")?;
-            let skin = args.pos("skin id or global")?;
+            let skin = args.pos(if mini { "skin id or full" } else { "skin id or global" })?;
             args.done()?;
             let skin = skin.trim().to_ascii_lowercase();
-            let skin = if matches!(skin.as_str(), "global" | "none" | "default" | "-") { String::new() } else { skin };
+            // --mini: "full" (or "same") = the small layout shows what the full size shows.
+            let clear: &[&str] = if mini { &["full", "same", "none", "default", "-"] } else { &["global", "none", "default", "-"] };
+            let skin = if clear.contains(&skin.as_str()) { String::new() } else { skin };
             if !skin.is_empty() && !klif_core::klif_catalog::store::valid_skin_id(&skin) {
                 return Err(CliError::usage(format!(
-                    "\"{skin}\" is not a skin id (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit), or global."
+                    "\"{skin}\" is not a skin id (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit), or {}.",
+                    if mini { "full" } else { "global" }
                 )));
             }
-            update(loaded, out, &arg, None, None, None, Some(skin))
+            if mini {
+                update(loaded, out, &arg, None, None, None, None, Some(skin), SlotsPatch::default())
+            } else {
+                update(loaded, out, &arg, None, None, None, Some(skin), None, SlotsPatch::default())
+            }
         }
-        other => Err(CliError::usage(format!("Unknown systems subcommand \"{other}\" (list, add, remove, rename, move, exclusive, skin)."))),
+        other => Err(CliError::usage(format!("Unknown systems subcommand \"{other}\" (list, add, remove, rename, move, exclusive, skin, slots)."))),
     }
 }
 
@@ -628,11 +672,23 @@ fn update(
     move_to: Option<u32>,
     exclusive: Option<bool>,
     skin: Option<String>,
+    mini_skin: Option<String>,
+    slots: SlotsPatch,
 ) -> CliResult {
     let conn = conn::connect(loaded)?;
     let vm = conn.snapshot(None)?;
     let id = resolve(&vm, arg)?;
-    act(&conn, Action::UpdateSystem { system: id.clone(), label, move_to, exclusive, skin })?;
+    act(&conn, Action::UpdateSystem {
+        system: id.clone(),
+        label,
+        move_to,
+        exclusive,
+        skin,
+        mini_skin,
+        slots: slots.on,
+        slots_auto_save: slots.auto_save,
+        slots_auto_load: slots.auto_load,
+    })?;
     let vm = conn.snapshot(None)?;
     let s = find(&vm, &id).cloned();
     let pos = vm.systems.iter().filter(|x| x.node.is_none()).position(|x| x.id == id);
@@ -641,19 +697,42 @@ fn update(
         index: pos,
         exclusive: s.as_ref().map(|s| s.exclusive),
         skin: s.as_ref().and_then(|s| s.skin.clone()),
+        mini_skin: s.as_ref().and_then(|s| s.mini_skin.clone()),
+        slots: s.as_ref().map(|s| s.slots.is_some()),
+        slots_auto_save: s.as_ref().and_then(|s| s.slots.as_ref()).map(|v| v.auto_save),
+        slots_auto_load: s.as_ref().and_then(|s| s.slots.as_ref()).map(|v| v.auto_load),
     };
     out.doc(val(&doc), || match &s {
         Some(s) => format!(
-            "{} ({}) · tab {} · exclusive {} · skin {}",
+            "{} ({}) · tab {} · exclusive {} · skin {} · mini {} · slots {}",
             s.label,
             s.id,
             pos.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
             if s.exclusive { "on" } else { "off" },
-            s.skin.as_deref().unwrap_or("global")
+            s.skin.as_deref().unwrap_or("global"),
+            s.mini_skin.as_deref().unwrap_or("full"),
+            slots_word(s.slots.as_ref())
         ),
         None => format!("Updated {id}."),
     });
     Ok(())
+}
+
+/// "off", "on", "on, auto-save, auto-load".
+pub(crate) fn slots_word(v: Option<&SlotsView>) -> String {
+    match v {
+        None => "off".into(),
+        Some(v) => {
+            let mut w = vec!["on"];
+            if v.auto_save {
+                w.push("auto-save");
+            }
+            if v.auto_load {
+                w.push("auto-load");
+            }
+            w.join(", ")
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------- nodes

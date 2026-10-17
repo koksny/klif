@@ -23,6 +23,7 @@
   import { factsOf, heroOf, type Ctx } from './hero';
   import { held, useSleep } from './state.svelte';
   import { availabilityText, fitOf, modelLine, modelShort } from './text';
+  import { slotKey, slotKeys } from '../../lib/shell/slots/slotKeys';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
 
@@ -327,6 +328,13 @@
       {/if}
       <button class="tbtn w2" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
       <button class="tbtn w1" onclick={() => actions.openRecords()} title="Records: the best each model reached">Records</button>
+      {#if sel?.slots}
+        <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">
+          {#each slotKeys(sel) as k (k.n)}
+            <button class="tbtn sk" use:slotKey={{ system: sel, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+          {/each}
+        </span>
+      {/if}
       <button class="tbtn w3" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>{kind === 'image' ? 'Web UI' : 'Endpoint'}</button>
       <button class="tbtn w3" onclick={() => actions.toggleConsole(faulted ? true : undefined)}>{faulted ? 'Full log' : 'Console'}</button>
     </footer>
@@ -1187,5 +1195,23 @@
     .steps i.active {
       animation: none;
     }
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .tbtn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .tbtn.sk + .tbtn.sk {
+    margin-left: -1px;
+  }
+  .tbtn.sk:hover:not(:disabled),
+  .tbtn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

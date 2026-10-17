@@ -69,6 +69,14 @@ klif-cli watch --until s2=online --timeout 900           # wait for a status wit
 klif-cli stop s2 --yes                                   # or: stop --all --yes
 klif-cli restart s2 --yes --wait                         # after a preset change
 klif-cli dismiss s2                                      # leave a fault (back to offline)
+klif-cli systems slots s3 on                             # conversation slots on disk (llama.cpp, Strata; next launch)
+klif-cli systems slots s3 auto-save on                   # save the active slot when KLIF stops s3 (auto-load: on start)
+klif-cli slots s3                                        # the three slots: tokens, size, saved, active
+klif-cli slots save s3 2                                 # save the running conversation to slot 2 (waits)
+klif-cli slots load s3 2                                 # load it back (only into the command it was saved from)
+klif-cli slots use s3 2                                  # the active slot: where auto-save writes, what auto-load reads
+klif-cli launch s3 --yes --slot 2 --wait                 # launch s3 and load slot 2 once it is up (also with auto-load off)
+klif-cli slots rename s3 2 Hermes                        # name a slot (no name: back to "Slot 2")
 ```
 
 - A launch with conflicts is refused and names them. Stopping another System is the user's call (`--stop-others`).
@@ -80,6 +88,9 @@ klif-cli dismiss s2                                      # leave a fault (back t
 - A `fault` error carries the log tail. For more: `klif-cli --json logs s2 --tail 100` (the engine keeps the last 200
   console lines per System, secrets redacted; `--follow` keeps reading until the System stops).
 - External Systems (a preset with `endpoint`) are only watched: launch and stop are refused.
+- With `slots_auto_save` a stop first saves the active slot, so a stop can take as long as the save; with
+  `slots_auto_load` a launch loads it once the server is up (`launch --wait` waits for that too). `slots clear` deletes files and needs `--yes`; overwriting a slot with `slots save` does
+  not ask: check `klif-cli slots <system>` first when a slot may hold the user's conversation.
 
 ## Using a running System
 
@@ -186,6 +197,7 @@ klif-cli webui cancel                 # close the open pairing
 klif-cli webui forget <id> --yes      # remove a paired device (--all --yes: every device)
 klif-cli settings skin cliff          # [ui] skin: the global skin, which the page follows
 klif-cli systems skin s3 phosphor     # [systems.s3] skin: shown while System 3 is selected (global removes it)
+klif-cli systems skin s3 silicon --mini  # [systems.s3] mini_skin: the small layout's skin (full removes it)
 ```
 
 - Do not turn it on, or point `host` at a LAN address, on your own initiative: the user decides.

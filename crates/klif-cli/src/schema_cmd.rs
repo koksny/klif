@@ -55,6 +55,7 @@ static REGISTRY: &[Entry] = &[
     entry!("systems-add", "The System that was added", SystemsAddDoc),
     entry!("systems-remove", "The System that was removed", SystemsRemoveDoc),
     entry!("systems-update", "A System after rename, move or exclusive", SystemsUpdateDoc),
+    entry!("slots", "A System's conversation slots (after save, load or clear: how it ended)", SlotsDoc),
     entry!("presets-list", "Presets with availability and bench", PresetsListDoc),
     entry!("presets-show", "One preset in full", PresetsShowDoc),
     entry!("presets-use", "A System after presets use", PresetsUseDoc),

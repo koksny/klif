@@ -297,6 +297,43 @@ pub enum OnConflict {
     Stop,
 }
 
+/// `true` / `false`, or a word for it ("on", "manual", "auto", "yes" / "off", "no", "none", ""), so a value written in
+/// an older form does not hide the whole System.
+fn bool_or_word<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrWord {
+        Bool(bool),
+        Word(String),
+    }
+    match BoolOrWord::deserialize(d)? {
+        BoolOrWord::Bool(b) => Ok(b),
+        BoolOrWord::Word(w) => match w.trim().to_ascii_lowercase().as_str() {
+            "on" | "true" | "yes" | "manual" | "auto" => Ok(true),
+            "off" | "false" | "no" | "none" | "" => Ok(false),
+            other => Err(serde::de::Error::custom(format!("slots = \"{other}\": expected true or false"))),
+        },
+    }
+}
+
+/// A change to a System's conversation slots (`[systems.<id>] slots`, `slots_auto_save`, `slots_auto_load`); `None`
+/// leaves a field as it is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SlotsPatch {
+    pub on: Option<bool>,
+    pub auto_save: Option<bool>,
+    pub auto_load: Option<bool>,
+}
+
+impl SlotsPatch {
+    pub fn is_empty(&self) -> bool {
+        self.on.is_none() && self.auto_save.is_none() && self.auto_load.is_none()
+    }
+}
+
+/// How many conversation slots a System has.
+pub const SLOT_COUNT: u8 = 3;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LaunchCfg {
@@ -490,12 +527,27 @@ pub struct SystemCfg {
     /// an id it does not have.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
+    /// The skin of the small layout (panel mode, a landscape window up to 700 px tall) while this System is selected
+    /// (absent = the same as at full size: `skin`, else the global skin).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_skin: Option<String>,
+    /// Conversation slots on disk (llama.cpp and Strata presets): KLIF starts the server with
+    /// `--slot-save-path <data dir>/slots/<id>` and the System gets three slots to save its conversation to and load
+    /// it from. Off by default. Also read as a word ("on", "manual", "auto" = on; "off"), the form a 0.3.6 preview wrote.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not", deserialize_with = "bool_or_word")]
+    pub slots: bool,
+    /// With slots on: save the active slot when KLIF stops the System.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slots_auto_save: bool,
+    /// With slots on: load the active slot when KLIF has started the System.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slots_auto_load: bool,
 }
 
 impl SystemCfg {
     /// A System of a kind with nothing else set.
     pub fn new(kind: SystemKind) -> SystemCfg {
-        SystemCfg { label: None, kind, class: None, preset: None, params: BTreeMap::new(), exclusive: false, skin: None }
+        SystemCfg { label: None, kind, class: None, preset: None, params: BTreeMap::new(), exclusive: false, skin: None, mini_skin: None, slots: false, slots_auto_save: false, slots_auto_load: false }
     }
 
     /// The active preset id (trimmed; None when unset or empty).
@@ -505,7 +557,7 @@ impl SystemCfg {
 }
 
 /// The keys `[systems.<id>]` understands.
-pub const SYSTEM_KEYS: &[&str] = &["label", "kind", "class", "preset", "params", "exclusive", "skin"];
+pub const SYSTEM_KEYS: &[&str] = &["label", "kind", "class", "preset", "params", "exclusive", "skin", "mini_skin", "slots", "slots_auto_save", "slots_auto_load"];
 
 /// `[presets.<id>.params.<NAME>]`: one independent launch option (no Cartesian product of presets).
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1443,7 +1495,7 @@ fn systems_from_tiers(tiers: &toml::Table) -> Vec<(SystemId, SystemCfg)> {
                 .and_then(|v| v.as_table())
                 .map(|p| p.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
                 .unwrap_or_default();
-            Some((SystemId::new(id), SystemCfg { label: Some(label.to_string()), kind, class, preset, params, exclusive: false, skin: None }))
+            Some((SystemId::new(id), SystemCfg { label: Some(label.to_string()), kind, class, preset, params, exclusive: false, skin: None, mini_skin: None, slots: false, slots_auto_save: false, slots_auto_load: false }))
         })
         .collect()
 }

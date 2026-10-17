@@ -61,8 +61,27 @@ pub(crate) struct Found {
 /// The System a preset is resolved for.
 #[derive(Clone, Copy)]
 pub(crate) struct ForSystem<'a> {
+    pub id: &'a str,
     pub label: &'a str,
     pub sys: &'a SystemCfg,
+}
+
+/// The server flag that turns slot save / restore on (llama.cpp's name; Strata's server takes the same).
+pub const SLOT_SAVE_FLAG: &str = "--slot-save-path";
+
+/// The folder of a System's conversation slots: `<data dir>/slots/<id>`.
+pub fn slots_dir(cfg: &Config, system: &str) -> PathBuf {
+    cfg.data_dir.join("slots").join(system)
+}
+
+/// Where KLIF adds `--slot-save-path` for this System: slots on, an adapter that can save them, and the preset
+/// does not name a folder itself.
+fn slot_dir(cfg: &Config, adapter: AdapterId, system: Option<&ForSystem>, args: &[String]) -> Option<PathBuf> {
+    let fs = system?;
+    if !fs.sys.slots || !adapter.can_save_slots() || args.iter().any(|a| a == SLOT_SAVE_FLAG || a.starts_with("--slot-save-path=")) {
+        return None;
+    }
+    Some(slots_dir(cfg, fs.id))
 }
 
 pub(crate) struct Req<'a> {
@@ -844,7 +863,16 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
         None => NetVal::Missing,
     };
     exp.host = NetVal::Val(r.host.clone());
-    let (args, args_disp) = exp.args(spec, &mut out);
+    let (mut args, mut args_disp) = exp.args(spec, &mut out);
+    // Conversation slots on: the server saves and loads them in KLIF's folder for this System (shown in the command,
+    // so the hash covers it). A preset that names its own --slot-save-path keeps it.
+    if let Some(dir) = slot_dir(cfg, spec.adapter, req.system.as_ref(), &args) {
+        let dir = dir.to_string_lossy().into_owned();
+        for a in [SLOT_SAVE_FLAG.to_string(), dir] {
+            args.push(a.clone());
+            args_disp.push(a);
+        }
+    }
     let user_env = exp.env(spec, &mut out);
     let user_env_real: BTreeMap<String, String> = user_env.iter().map(|(n, r, _)| (n.clone(), r.clone())).collect();
     let (cmd_real, cmd_disp) = exp.expand(&spec.command, "command", FULL, &mut out);

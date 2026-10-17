@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use klif_common::config::{
-    default_system_id, line_col, scrub, validate_preset_id, validate_system_id, Config, PresetCfg, SystemCfg, FILE_FIELD,
+    default_system_id, line_col, scrub, validate_preset_id, validate_system_id, Config, PresetCfg, SlotsPatch, SystemCfg, FILE_FIELD,
 };
 use klif_common::secret::{is_secret_flag, MASK};
 use klif_common::vm::{SystemId, SystemKind};
@@ -170,7 +170,8 @@ pub fn remove_system(path: &Path, system: &SystemId) -> Result<()> {
 
 /// Rename (`label`; empty = back to the default label), move to tab index `move_to` (0-based among the local
 /// Systems; reorders the `[systems.*]` tables, comments move with them), set `exclusive`, set `skin` (empty = back
-/// to the global skin). `None` leaves a field unchanged.
+/// to the global skin), set `mini_skin` (empty = the same as `skin`), set the conversation slots (`slots`,
+/// `slots_auto_save`, `slots_auto_load`; off removes the key). `None` leaves a field unchanged.
 pub fn update_system(
     path: &Path,
     system: &SystemId,
@@ -178,9 +179,12 @@ pub fn update_system(
     move_to: Option<u32>,
     exclusive: Option<bool>,
     skin: Option<&str>,
+    mini_skin: Option<&str>,
+    slots: SlotsPatch,
 ) -> Result<()> {
     let skin = skin.map(str::trim);
-    if let Some(s) = skin.filter(|s| !s.is_empty()) {
+    let mini_skin = mini_skin.map(str::trim);
+    for s in [skin, mini_skin].into_iter().flatten().filter(|s| !s.is_empty()) {
         if !valid_skin_id(s) {
             bail!("\"{s}\" is not a skin id (lowercase letters, digits, - and _).");
         }
@@ -209,12 +213,23 @@ pub fn update_system(
                     }
                     None => {}
                 }
-                match skin {
-                    Some("") => {
-                        entry.remove("skin");
+                for (key, value) in [("slots", slots.on), ("slots_auto_save", slots.auto_save), ("slots_auto_load", slots.auto_load)] {
+                    match value {
+                        Some(true) => set_value(entry, key, Value::from(true)),
+                        Some(false) => {
+                            entry.remove(key);
+                        }
+                        None => {}
                     }
-                    Some(s) => set_value(entry, "skin", Value::from(s)),
-                    None => {}
+                }
+                for (key, value) in [("skin", skin), ("mini_skin", mini_skin)] {
+                    match value {
+                        Some("") => {
+                            entry.remove(key);
+                        }
+                        Some(s) => set_value(entry, key, Value::from(s)),
+                        None => {}
+                    }
                 }
             }
             if let Some(to) = move_to {
@@ -237,6 +252,15 @@ pub fn update_system(
             }
             if skin.is_some_and(|x| Some(x).filter(|x| !x.is_empty()) != s.skin.as_deref()) {
                 bail!("The skin of System \"{id}\" does not read back from klif.toml; nothing was written.");
+            }
+            if slots.on.is_some_and(|x| x != s.slots)
+                || slots.auto_save.is_some_and(|x| x != s.slots_auto_save)
+                || slots.auto_load.is_some_and(|x| x != s.slots_auto_load)
+            {
+                bail!("The slots setting of System \"{id}\" does not read back from klif.toml; nothing was written.");
+            }
+            if mini_skin.is_some_and(|x| Some(x).filter(|x| !x.is_empty()) != s.mini_skin.as_deref()) {
+                bail!("The small layout's skin of System \"{id}\" does not read back from klif.toml; nothing was written.");
             }
             if let Some(want) = wanted_order.borrow().as_ref() {
                 let got: Vec<&str> = cfg.systems.iter().map(|(k, _)| k.as_str()).collect();
@@ -855,8 +879,16 @@ fn system_table(sys: &SystemCfg) -> Table {
     if let Some(s) = sys.skin.as_deref() {
         t.insert("skin", toml_edit::value(s));
     }
+    if let Some(s) = sys.mini_skin.as_deref() {
+        t.insert("mini_skin", toml_edit::value(s));
+    }
     if sys.exclusive {
         t.insert("exclusive", toml_edit::value(true));
+    }
+    for (key, on) in [("slots", sys.slots), ("slots_auto_save", sys.slots_auto_save), ("slots_auto_load", sys.slots_auto_load)] {
+        if on {
+            t.insert(key, toml_edit::value(true));
+        }
     }
     t
 }

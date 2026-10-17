@@ -21,6 +21,7 @@ mod records_cmd;
 mod resolve;
 mod schema_cmd;
 mod settings_cmd;
+mod slots_cmd;
 mod suggest_cmd;
 mod watch_cmd;
 mod webui_cmd;
@@ -161,6 +162,7 @@ fn run(mut raw: Vec<String>, out: Out) -> CliResult {
         "settings" => settings_cmd::run(args, &loaded, out),
         "webui" => webui_cmd::run(args, &loaded, out),
         "systems" => cmds::systems(args, &loaded, out),
+        "slots" => slots_cmd::run(args, &loaded, out),
         "nodes" => cmds::nodes(args, &loaded, out),
         "serve" => cmds::serve(args, &loaded, out),
         "presets" => presets::run(args, &loaded, out),

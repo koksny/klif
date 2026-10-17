@@ -42,6 +42,7 @@
   import Icon from '../parts/Icon.svelte';
   import WinCtl from '../parts/WinCtl.svelte';
   import Status from './Status.svelte';
+  import { slotKey, slotKeys } from '../../../lib/shell/slots/slotKeys';
 
   let { vm, actions }: { vm: ViewModel; actions: Actions } = $props();
 
@@ -408,6 +409,13 @@
     <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
       <Icon name="records" size="calc(17 * var(--u))" />
     </button>
+    {#if selSlot?.slots}
+      <span class="slotkeys" role="group" aria-label="Conversation slots of {selSlot.label}: click loads, hold saves">
+        {#each slotKeys(selSlot) as k (k.n)}
+          <button class="btn sk" use:slotKey={{ system: selSlot, key: k }} {...k.attrs} disabled={!k.ready} title={k.title} aria-label="Slot {k.n}"><span class="sk-n">{k.n}</span><i class="sk-fill"></i></button>
+        {/each}
+      </span>
+    {/if}
     <button class="btn op" onclick={() => actions.openEndpoint(selSlot?.id)} disabled={!online} title={kind === 'image' ? 'Open the sd-server web UI' : 'Open the endpoint'}>
       <Icon name="open" size="calc(16 * var(--u))" />{kind === 'image' ? 'Web UI' : 'Endpoint'}
     </button>
@@ -995,5 +1003,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+  }
+  /* The slot keys (lib/shell/slots/slotKeys.ts): three square keys joined into one control; click loads, hold saves */
+  .slotkeys {
+    display: inline-flex;
+    flex: none;
+  }
+  .btn.sk {
+    aspect-ratio: 1;
+    width: auto;
+    min-width: 0;
+    padding: 0;
+  }
+  .btn.sk + .btn.sk {
+    margin-left: -1px;
+  }
+  .btn.sk:hover:not(:disabled),
+  .btn.sk:focus-visible {
+    z-index: 1;
   }
 </style>

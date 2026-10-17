@@ -25,6 +25,8 @@ export interface Params {
   tier: Tier | null;
   seed: number;
   frameless: boolean;
+  /** Mock: turn conversation slots on for every LLM System (?slots=1), to see the slot keys; each gets slots 1 and 3 saved. */
+  slots: boolean;
 }
 
 /** A System id: [a-z0-9][a-z0-9_-]{0,31}, optionally prefixed "<node>/" for a remote System. */
@@ -62,5 +64,6 @@ export function parseParams(search: string): Params {
     tier: TIERS.includes(tier as Tier) ? (tier as Tier) : null,
     seed: num(q.get('seed')) ?? 0,
     frameless: q.get('frameless') === '1' || q.get('frameless') === 'true',
+    slots: q.get('slots') === '1' || q.get('slots') === 'true',
   };
 }

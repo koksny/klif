@@ -33,10 +33,20 @@ class UiState {
 
   /** The global skin ([ui] skin): F2, the tray and Tune's Skin field change it. */
   skinId = $state<SkinId>(DEFAULT_SKIN);
-  /** The selected System's own skin ([systems.<id>] skin), set by skinSync; null = it shows the global one. */
-  systemSkin = $state<{ id: SkinId; label: string } | null>(null);
-  /** What the window shows: the selected System's skin, else the global one (a ?skin= URL pins it). */
-  shownSkin: SkinId = $derived(this.params.skin ? this.skinId : (this.systemSkin?.id ?? this.skinId));
+  /**
+   * The selected System's own skins, set by skinSync: `full` from [systems.<id>] skin, `mini` from mini_skin (null
+   * when it has neither; a missing one falls back as described at `shownSkin`).
+   */
+  systemSkin = $state<{ full: SkinId | null; mini: SkinId | null; label: string } | null>(null);
+  /**
+   * What the window shows (a ?skin= URL pins the global one): at full size the System's skin, else the global one;
+   * in the small layout its mini skin, else what the full size shows.
+   */
+  shownSkin: SkinId = $derived.by(() => {
+    if (this.params.skin) return this.skinId;
+    const own = this.systemSkin;
+    return (this.size === 'mini' ? (own?.mini ?? own?.full) : own?.full) ?? this.skinId;
+  });
   /** auto = decide from the viewport; full/mini = explicit (URL or F3). */
   sizeMode = $state<SizeParam>('auto');
   vw = $state(typeof innerWidth === 'undefined' ? 1024 : innerWidth);
@@ -112,7 +122,8 @@ class UiState {
     const next = SKINS[(i + dir + SKINS.length) % SKINS.length];
     this.setSkin(next.id);
     const own = this.params.skin ? null : this.systemSkin;
-    this.toast(own ? `Skin: ${next.name} (${own.label} keeps ${skinMeta(own.id).name})` : `Skin: ${next.name}`);
+    const kept = own && (this.size === 'mini' ? (own.mini ?? own.full) : own.full);
+    this.toast(kept ? `Skin: ${next.name} (${own.label} keeps ${skinMeta(kept).name})` : `Skin: ${next.name}`);
   }
 
   skinByIndex(n: number) {
