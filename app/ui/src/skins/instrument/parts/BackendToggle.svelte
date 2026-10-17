@@ -21,7 +21,7 @@
 {#if variant === 'full'}
   <div class="tog full">
     {#if onclick}
-      <button class="hit" {onclick} aria-label="Backend {backend ?? 'none'}: open tune">{@render track()}</button>
+      <button class="hit" {onclick} aria-label="Backend {backend ?? 'none'}: open Options">{@render track()}</button>
     {:else}
       <span class="hit">{@render track()}</span>
     {/if}

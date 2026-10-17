@@ -10,7 +10,7 @@
   //   dormant   - (live, vram.dormant set) frozen amber; waking: it thaws as the VRAM comes back
   //   fault     - red glitch, the context dissolves, the hero shows the fault and the log tail
   // Controls keep their places: the primary button (Launch / Cancel / Stop / Restart after a fault), Restart
-  // (Dismiss after a fault), Tune (always), Records (always), Endpoint / Web UI, Console (Full log after a fault).
+  // (Dismiss after a fault), Options (always), Records (always), Endpoint / Web UI, Console (Full log after a fault).
   import type { RequestRecord, ViewModel, Actions, LoadStep } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
   import { strip } from '../../lib/shell/SystemTabs/scroll';
@@ -390,7 +390,7 @@
     {:else}
       <button class="btn" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>↻ restart</button>
     {/if}
-    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>≡ tune</button>
+    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>≡ options</button>
     <button class="btn" onclick={() => actions.openRecords()} title="Records: the best each model reached">▲ records</button>
     {#if sel?.slots}
       <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">

@@ -10,7 +10,7 @@
   //   dormant   - ‖ PAUSE, hero dimmed with the paged-out GiB, battery segments paged out
   //   fault     - ■ ERR, the corner brackets turn red, ERR + fault title, the log tail bottom left
   // Controls keep their places: the primary act (Launch / Cancel / Stop / Restart after a fault), Restart
-  // (Dismiss after a fault), Tune (always), Records, Endpoint / Web UI, Console (Full log after a fault).
+  // (Dismiss after a fault), Options (always), Records, Endpoint / Web UI, Console (Full log after a fault).
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { canLaunch } from '../../lib/model/systems';
   import { strip as scrollStrip } from '../../lib/shell/SystemTabs/scroll';
@@ -261,7 +261,7 @@
     {:else}
       <button class="br w1" onclick={() => actions.restart(o.selSlot?.id)} disabled={!s || o.busy || !o.mine} title="Stop and launch again with the current settings">RESTART</button>
     {/if}
-    <button class="br w2" onclick={() => actions.openTune(o.selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="br w2" onclick={() => actions.openTune(o.selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>OPTIONS</button>
     <button class="br w1 rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">RECORDS</span></button>
     {#if o.selSlot?.slots}
       <span class="slotkeys" role="group" aria-label="Conversation slots of {o.selSlot.label}: click loads, hold saves">
@@ -339,7 +339,7 @@
     color: var(--red);
   }
 
-  /* bracketed OSD buttons: [ TUNE ] drawn as two thin brackets, like the viewfinder corners */
+  /* bracketed OSD buttons: [ OPTIONS ] drawn as two thin brackets, like the viewfinder corners */
   .br {
     position: relative;
     display: inline-flex;
@@ -1098,7 +1098,7 @@
     width: calc(var(--u) * 106px);
   }
   .w2 {
-    width: calc(var(--u) * 78px);
+    width: calc(var(--u) * 96px);
   }
   .w3 {
     width: calc(var(--u) * 116px);
@@ -1246,5 +1246,27 @@
   .br.sk:hover:not(:disabled),
   .br.sk:focus-visible {
     z-index: 1;
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys, Records as its icon, tighter gaps, slimmer Endpoint and Console) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .br.sk {
+      aspect-ratio: 0.66;
+    }
+    .ctrl:has(.slotkeys) {
+      gap: calc(var(--u) * 7px);
+    }
+    .ctrl:has(.slotkeys) .br.rec {
+      width: calc(var(--u) * 32px);
+    }
+    .ctrl:has(.slotkeys) .rec .rl {
+      display: none;
+    }
+    .ctrl:has(.slotkeys) .rec .ri {
+      display: block;
+    }
+    .ctrl:has(.slotkeys) .w3 {
+      width: calc(var(--u) * 100px);
+    }
   }
 </style>

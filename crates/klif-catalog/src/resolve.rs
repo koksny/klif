@@ -1072,7 +1072,7 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
         hash_remove.push(n.to_string());
         view.push(EnvView { name: n.into(), value: None, secret: false, managed: false, removed: true, overridden: false });
     }
-    // api_key = false drops the key row from the child's env, so it changes the hash (Tune then shows "differs
+    // api_key = false drops the key row from the child's env, so it changes the hash (Options then shows "differs
     // from the running session"). The default (key on) adds nothing: existing hashes (bench records, measured VRAM
     // layers, persisted sessions) stay valid. The key itself and whether one is set never count.
     if spec.adapter.api_key_env().is_some() && !spec.api_key {
@@ -1148,7 +1148,7 @@ pub(crate) fn resolve(req: &Req) -> Resolved {
                         Cat::Other,
                         "host",
                         format!(
-                            "host {} is reachable from the network, but {why}: anyone who can reach it can use the server. Set the KLIF API key (Tune → API key, or klif-cli key set), or bind to 127.0.0.1.",
+                            "host {} is reachable from the network, but {why}: anyone who can reach it can use the server. Set the KLIF API key (Options → API key, or klif-cli key set), or bind to 127.0.0.1.",
                             r.host
                         ),
                     );

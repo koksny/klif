@@ -36,7 +36,7 @@
 <style>
   .sec {
     border-top: 1px solid var(--k-line, #2e2e2e);
-    padding-top: 10px;
+    padding-top: 5px;
   }
   .head {
     display: flex;
@@ -51,7 +51,7 @@
     align-items: center;
     gap: 10px;
     border: 1px solid transparent;
-    padding: 6px 4px;
+    padding: 5px 4px;
     text-align: left;
   }
   .toggle:hover:not(:disabled) {

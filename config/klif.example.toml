@@ -14,7 +14,7 @@
 #   [net] [gpu] [ui] [telemetry] [paths] [security] [launch] [hardware] [webui]   machine-wide settings.
 #   [node] / [nodes.<id>]   optional, for several machines (examples at the end, commented out).
 #
-# KLIF edits this file when you change something in the Tune drawer or with klif-cli. It keeps your comments and
+# KLIF edits this file when you change something in the Options drawer or with klif-cli. It keeps your comments and
 # the order of your tables, except for comments inside an array KLIF has to rewrite (an edited `args` list), so
 # put explanations above an array rather than inside it. A comment directly above a [table] header travels with
 # that table; leave a blank line under a section comment if it should stay where it is.
@@ -46,7 +46,7 @@ frameless = true
 # Celebrate a broken record over the skin (the "new record" moment). Records are kept either way.
 # record_moment = false
 # Quitting the window stops this machine's Systems first (waits up to 20 s). Off by default: servers keep running
-# and the next start takes them over. A switch in Tune; klif-cli settings stop-on-exit on|off sets it.
+# and the next start takes them over. A switch in Options; klif-cli settings stop-on-exit on|off sets it.
 # stop_on_exit = true
 # The skin the window shows (cliff, silicon, instrument, phosphor, decode, loom, ether, rings, spirit). The window
 # writes this line when you change skins and follows a change made here; klif-webui follows it too.
@@ -89,8 +89,8 @@ on_conflict = "ask"
 # tflops = { "1002:7550" = 48.7, cpu = 4.4 }          # peak FP32 TFLOPS for a card the built-in table lacks or gets wrong
 
 # klif-webui: a small control page for a phone or a browser on your network (docs/webui.md). Off unless enabled here,
-# in Tune > Web UI, or with klif-cli webui on. The KLIF window app (klif.exe) serves it over plain HTTP, and a device
-# sees or controls nothing until it is paired (Tune > Web UI, or klif-cli webui pair --yes). Use it on a network you
+# in Options > Web UI, or with klif-cli webui on. The KLIF window app (klif.exe) serves it over plain HTTP, and a device
+# sees or controls nothing until it is paired (Options > Web UI, or klif-cli webui pair --yes). Use it on a network you
 # trust and never forward its port to the internet. Windows Defender Firewall asks about klif.exe the first time it
 # listens on a network address: allow Private networks only. KLIF never changes firewall rules.
 #   host  an IP address to listen on: "0.0.0.0" = every network of this machine (default), or the address of one
@@ -149,7 +149,7 @@ preset = "chat-box"
 
 # ------------------------------------------------------------------------------------------------ Presets
 # A preset is a launch command, nothing hidden: the program, the argument list and the environment are exactly
-# what KLIF starts (the Tune drawer and `klif-cli plan <system>` show the final command line).
+# what KLIF starts (the Options drawer and `klif-cli plan <system>` show the final command line).
 #
 # Placeholders in command, args, cwd and env values:
 #   {model} {mmproj} {ctx}    the preset's own fields

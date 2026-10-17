@@ -76,7 +76,7 @@ Run it on the exact change you are about to commit, every time.
    hashes were checked against the hub (a file with its own `repo` and `revision` against that repo).
 6. **Bench output.** GPU class, VRAM, backend and version, numbers. No hostnames, paths or addresses; trim the
    `hardware` block of a pasted record if it names more than the GPU.
-7. **Images.** Look at the pixels (console drawer, tab labels, Tune fields, node names) and at the metadata. Redo
+7. **Images.** Look at the pixels (console drawer, tab labels, Options fields, node names) and at the metadata. Redo
    the screenshot with the mock engine (`?scenario=multi`) rather than blurring a real one.
 8. **Binaries are not committed.** If you publish one anywhere else: scan it for leaked paths
    (`strings -n 8 klif.exe | Select-String 'C:\\Users|\.cargo|<your user name>'`), read its version information, sign it

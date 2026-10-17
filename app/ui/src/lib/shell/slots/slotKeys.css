@@ -80,3 +80,9 @@ button[data-slotkey][data-slotkey] {
     opacity: 0.22;
   }
 }
+/* A window under 1024 px has no room for them in every skin's row: Options keeps Save, Load and Clear. */
+@media (max-width: 1023px) {
+  .slotkeys {
+    display: none !important;
+  }
+}

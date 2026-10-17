@@ -65,7 +65,7 @@ npm run check                      # svelte-check
   port, and so should you. If the port already answers, reuse that server. The Tauri `devUrl` points at it too.
 - In a browser the UI runs against a mock engine with scenarios, so you can work on the front end without any
   model server: `http://127.0.0.1:5193/?skin=cliff&scenario=multi` (also `kinds`, `empty`, `node-down`, `many`,
-  `invalid`, `downloads`, `record`; `size=mini` for the panel layout; `drawer=tune` opens the Tune drawer,
+  `invalid`, `downloads`, `record`; `size=mini` for the panel layout; `drawer=tune` opens the Options drawer,
   `drawer=records` the Records screen, also on the `R` key).
 - To run the real shell against the dev server, start the dev server first, then `cargo run` in `app\src-tauri`.
   A release build needs the `custom-protocol` feature, which `scripts\Build-Release.ps1` sets; use that script.

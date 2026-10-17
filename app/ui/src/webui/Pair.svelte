@@ -30,7 +30,7 @@
   <h1>KLIF</h1>
   <p class="lead">Pair this device to see and control KLIF from here.</p>
   <ol>
-    <li>In KLIF on the computer, open <b>Tune</b>, then <b>Web UI</b>, and choose <b>Pair a device</b>.</li>
+    <li>In KLIF on the computer, open <b>Options</b>, then <b>Web UI</b>, and choose <b>Pair a device</b>.</li>
     <li>Scan the QR code with this device, or type the 6-digit code below.</li>
   </ol>
   <form onsubmit={pair}>

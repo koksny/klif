@@ -1,4 +1,4 @@
-# KLIF model pool, schema 2: the models KLIF suggests per machine (klif-cli suggest, Tune), embedded in klif.exe.
+# KLIF model pool, schema 2: the models KLIF suggests per machine (klif-cli suggest, Options), embedded in klif.exe.
 #
 # Disclaimer: every memory number here and every suggestion made from it is an ESTIMATE. Models, drivers and
 # backends change; your agent should benchmark and calibrate (`klif-cli bench <system>`). Each model keeps its own

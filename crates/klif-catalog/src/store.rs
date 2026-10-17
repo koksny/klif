@@ -517,7 +517,7 @@ pub fn ensure_file(cfg: &Config) -> Result<PathBuf> {
 }
 
 /// The text of a new klif.toml (no Systems yet: KLIF shows its onboarding).
-pub const STARTER: &str = r#"# KLIF configuration (0.3). KLIF edits this file too (Tune, klif-cli) and keeps your comments.
+pub const STARTER: &str = r#"# KLIF configuration (0.3). KLIF edits this file too (Options, klif-cli) and keeps your comments.
 # Each [systems.<id>] is a tab; each [presets.<id>] is one exact server command. A documented example is
 # config/klif.example.toml in the KLIF repository.
 

@@ -646,7 +646,7 @@ export class MockEngine {
     if (s.pending) throw new Error(`${s.label} is about to launch.`);
     if (s.rt && s.rt.phase !== 'fault') throw new Error(`${s.label} is already running.`);
     const r = this.resolve(s);
-    if (!r.spec) throw new Error(`${s.label} has no preset. Choose one in Tune.`);
+    if (!r.spec) throw new Error(`${s.label} has no preset. Choose one in Options.`);
     if (isExternal(r.spec)) throw new Error('External server: start it where it runs.');
     if (r.avail.availability !== 'ready') throw new Error(`${s.label} cannot start: ${r.avail.reason ?? r.avail.availability}`);
     const d = s.slotData;
@@ -783,7 +783,7 @@ export class MockEngine {
     const from = map[opts.secretsFrom ?? id];
     for (const [k, v] of Object.entries(next.env ?? {})) {
       if (v === MOCK_KEY_MASK) {
-        // The mask is not a secret: it means "keep the stored value" (also on a node; Tune refuses clear secrets).
+        // The mask is not a secret: it means "keep the stored value" (also on a node; Options refuses clear secrets).
         if (from?.env?.[k] !== undefined) next.env![k] = from.env[k];
         else delete next.env![k];
       }
@@ -912,7 +912,7 @@ export class MockEngine {
     if (!rec) throw new Error(`There is no recommendation "${id}".`);
     const s = this.sysOrThrow(system);
     this.requireEdit(s.node);
-    if (s.node) throw new Error('Recommendations are for this machine; open Tune on that node.');
+    if (s.node) throw new Error('Recommendations are for this machine; open Options on that node.');
     if (s.kind !== rec.kind) throw new Error(`"${rec.name}" is a ${rec.kind} model and ${s.label} is a ${s.kind} System.`);
     const info = recommendationInfos(this.presets, this.downloaded).find((r) => r.id === id);
     if (!info?.installed) throw new Error('Download it first.');
@@ -1172,7 +1172,7 @@ export class MockEngine {
         .map((x) => x.label);
       return { status: 'starting', reason: left.length ? `Waiting for ${names(left)} to stop.` : 'Starting.' };
     }
-    if (!s.preset || !this.specOf(s)) return { status: 'not-set', reason: 'No preset is set. Choose one in Tune.' };
+    if (!s.preset || !this.specOf(s)) return { status: 'not-set', reason: 'No preset is set. Choose one in Options.' };
     const spec = this.specOf(s)!;
     if (isExternal(spec)) {
       if (!s.ext) return { status: 'offline', reason: 'Not answering.' };
@@ -1222,7 +1222,7 @@ export class MockEngine {
   /** Start a restarted System again (native fire()): ports and exclusive GPUs re-checked, VRAM not, nobody stopped. */
   private fire(s: MSys, opts: LaunchOpts) {
     const r = this.resolve(s);
-    if (!r.spec) throw new Error(`${s.label} has no preset. Choose one in Tune.`);
+    if (!r.spec) throw new Error(`${s.label} has no preset. Choose one in Options.`);
     if (r.avail.availability !== 'ready') throw new Error(`${s.label} cannot start: ${r.avail.reason ?? r.avail.availability}`);
     const hard = this.hardConflicts(s);
     if (hard.size) {
@@ -1339,7 +1339,7 @@ export class MockEngine {
   /** Save or load a conversation slot of a running System (SaveSlot / LoadSlot). */
   slotJob(system: SystemId, op: 'save' | 'load', n: number) {
     const s = this.sysOrThrow(system);
-    if (!s.slots) throw new Error(`${s.label} has slots off; turn them on in Tune.`);
+    if (!s.slots) throw new Error(`${s.label} has slots off; turn them on in Options.`);
     if (!Number.isInteger(n) || n < 1 || n > 3) throw new Error(`There is no slot ${n}; a System has slots 1 to 3.`);
     const rt = s.rt;
     if (!rt || rt.phase !== 'live') throw new Error(`${s.label} is not running; start it to ${op} a slot.`);

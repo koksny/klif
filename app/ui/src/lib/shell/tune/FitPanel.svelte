@@ -130,7 +130,7 @@
   .fit {
     border: 1px solid var(--k-line, #2e2e2e);
     border-radius: var(--k-radius, 6px);
-    padding: 12px;
+    padding: 10px 12px;
     background: var(--k-surface, #141414);
   }
   .gpu {
@@ -176,10 +176,11 @@
   }
   .legend {
     list-style: none;
-    margin: 10px 0 0;
+    margin: 8px 0 0;
     padding: 0;
     display: grid;
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 3px 22px;
     font: 500 12px/1.3 var(--k-font-ui, system-ui, sans-serif);
   }
   .legend li {
@@ -204,12 +205,13 @@
     background: color-mix(in srgb, var(--k-muted, #8a8a8a) var(--shade, 40%), var(--k-surface, #141414));
   }
   .legend .sum {
+    grid-column: 1 / -1;
     border-top: 1px solid var(--k-line, #2e2e2e);
-    padding-top: 6px;
+    padding-top: 5px;
     margin-top: 2px;
   }
   .fitnote {
-    margin: 10px 0 0;
+    margin: 7px 0 0;
     font: 500 12px/1.35 var(--k-font-ui, system-ui, sans-serif);
     color: var(--k-muted, #8a8a8a);
   }
@@ -220,7 +222,7 @@
     margin-top: 0;
   }
   .conflicts {
-    margin: 10px 0 0;
+    margin: 7px 0 0;
     font: 500 12px/1.35 var(--k-font-ui, system-ui, sans-serif);
     color: var(--k-muted, #8a8a8a);
   }

@@ -68,7 +68,7 @@ Details that matter to you are repeated here so you can work from this file.
 | `crates/klif-core` | The engine (`engine.rs`, `engine/`), `state.v3.json`, the control protocol (`wire.rs`, `control.rs`, `link.rs`), nodes (`nodes.rs`), klif-webui (`webui.rs`), `bench.rs`, `download.rs`, `keys.rs` |
 | `crates/klif-cli` | `klif-cli.exe` |
 | `app/src-tauri` | `klif.exe`: Tauri 2 shell, tray, panel mode, IPC commands. Its own Cargo workspace |
-| `app/ui` | Svelte 5 + Vite front end: `src/skins` (nine skins), `src/lib/shell` (Tune drawer in `shell/tune`), `src/lib/mock` (the browser mock engine), `src/webui` (the klif-webui page) |
+| `app/ui` | Svelte 5 + Vite front end: `src/skins` (nine skins), `src/lib/shell` (Options drawer in `shell/tune`), `src/lib/mock` (the browser mock engine), `src/webui` (the klif-webui page) |
 | `config/klif.example.toml` | A complete, parseable configuration template |
 | `docs/`, `scripts/Build-Release.ps1` | Documentation; the release build |
 | `skills/klif/SKILL.md` | The Agent Skill (Agent Skills format) that teaches a coding agent to drive KLIF with `klif-cli`; the release build copies it next to the exes |

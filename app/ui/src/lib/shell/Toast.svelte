@@ -5,7 +5,18 @@
 
 <div class="toasts" aria-live="polite" aria-atomic="false">
   {#each ui.toasts as t (t.id)}
-    <div class="toast" in:fly|global={{ y: 12, duration: 160 }} out:fly|global={{ y: 8, duration: 140 }}>{t.text}</div>
+    {#if t.error}
+      <button
+        type="button"
+        class="toast error"
+        title="Dismiss"
+        onclick={() => ui.dismissToast(t.id)}
+        in:fly|global={{ y: 12, duration: 160 }}
+        out:fly|global={{ y: 8, duration: 140 }}>{t.text}</button
+      >
+    {:else}
+      <div class="toast" in:fly|global={{ y: 12, duration: 160 }} out:fly|global={{ y: 8, duration: 140 }}>{t.text}</div>
+    {/if}
   {/each}
 </div>
 
@@ -34,6 +45,16 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* An error stays longer, wraps instead of losing its end, and can be clicked away. */
+  .toast.error {
+    pointer-events: auto;
+    cursor: pointer;
+    white-space: normal;
+    max-width: min(640px, 100%);
+    text-align: center;
+    border-color: var(--k-danger, #e05a5a);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--k-danger, #e05a5a) inset;
   }
   /* The small screen: a long engine sentence wraps to two lines instead of losing its end. */
   :global(.stage[data-size='mini']) .toast {

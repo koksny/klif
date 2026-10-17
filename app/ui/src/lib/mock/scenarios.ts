@@ -268,7 +268,7 @@ export const SCENARIOS: ScenarioDef[] = [
   {
     name: 'downloads',
     label: 'Downloads running',
-    blurb: 'Two recommendation downloads in progress (the Tune drawer shows percentages).',
+    blurb: 'Two recommendation downloads in progress (the Options drawer shows percentages).',
     world: multiWorld,
     setup: (e) => {
       e.select('s3');

@@ -362,7 +362,7 @@
     {:else}
       <button class="btn w7" onclick={() => actions.restart(selSlot?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>RESTART</button>
     {/if}
-    <button class="btn w4" onclick={() => actions.openTune(selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>TUNE</button>
+    <button class="btn w4" onclick={() => actions.openTune(selSlot?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>OPTIONS</button>
     <button class="btn w7 rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">RECORDS</span></button>
     {#if selSlot?.slots}
       <span class="slotkeys" role="group" aria-label="Conversation slots of {selSlot.label}: click loads, hold saves">
@@ -988,7 +988,7 @@
     padding: 0;
   }
   .btn.w4 {
-    width: 6.4em;
+    width: 8.2em;
   }
   .btn.w7 {
     width: 9em;

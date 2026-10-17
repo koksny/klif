@@ -1,4 +1,4 @@
-// "Will it fit": shared by the Tune drawer preview and the mock loader so both agree.
+// "Will it fit": shared by the Options drawer preview and the mock loader so both agree.
 import type { VramLayer } from '../model/types';
 
 /** Headroom the loader tries to keep free below the edge (llama.cpp style auto-fit). */

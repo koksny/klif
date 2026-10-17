@@ -1,6 +1,6 @@
 //! The embedded model pool, `data/recommendations.toml` (schema 2), and the recommendations it expands to. A pool
 //! model has a ladder of quant rungs; every (model, rung) becomes one concrete [`Recommendation`] with the id
-//! `<model>.<rung>` (download, adopt, Tune's cards), and [`crate::suggest`] picks rungs per machine from the same data.
+//! `<model>.<rung>` (download, adopt, the cards in Options), and [`crate::suggest`] picks rungs per machine from the same data.
 //! Files come only from the official Hugging Face hub and only when the user asks (`klif_core::download`). Models and
 //! rungs with network/model-fetch flags (`-hf --hf-repo -hff --hf-file -hft --hf-token -mu --model-url -dr
 //! --docker-repo`, plus their draft / vocoder / mmproj variants), secret flags or env templates are rejected at load,

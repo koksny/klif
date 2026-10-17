@@ -1,4 +1,4 @@
-// Shared prop shapes of the Tune drawer components.
+// Shared prop shapes of the Options drawer components.
 
 /** One entry of a ⋯ menu. `checked` makes it a check item. */
 export interface MenuItem {

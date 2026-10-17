@@ -156,7 +156,7 @@ impl Default for UiCfg {
 }
 
 /// `[webui]`: klif-webui, the small control page for a phone or a browser on the LAN. Off by default; a device must
-/// be paired (Tune shows a QR code) before it sees or controls anything.
+/// be paired (Options shows a QR code) before it sees or controls anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WebUiCfg {

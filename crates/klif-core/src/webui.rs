@@ -5,7 +5,7 @@
 //! | Request | Auth | |
 //! | --- | --- | --- |
 //! | `GET /`, `GET /assets/<file>` | none | the page and its scripts, styles and fonts |
-//! | `POST /api/pair` `{secret, name}` | none | an open pairing from Tune -> `{token, device}` |
+//! | `POST /api/pair` `{secret, name}` | none | an open pairing from Options -> `{token, device}` |
 //! | `GET /api/state` | Bearer | machines, GPUs and Systems ([`web_state`]) |
 //! | `GET /api/console?system=<id>` | Bearer | the System's last console lines |
 //! | `POST /api/act` `{type, system, ...}` | Bearer | launch, stop, restart, dismiss, usePreset, setParam |
@@ -13,8 +13,8 @@
 //!
 //! - **Devices.** A paired device holds a 32-byte token (the page keeps it in localStorage and sends it as
 //!   `Authorization: Bearer`; no cookie, so nothing ambient for another site to ride on). The engine keeps only the
-//!   token's SHA-256 in `webui-devices.json` (state folder), with a name and dates. Tune lists and removes them.
-//! - **Pairing.** Tune opens one (`PairWebDevice`): a 32-byte secret for the QR code (in the URL's `#` part, so it is
+//!   token's SHA-256 in `webui-devices.json` (state folder), with a name and dates. Options lists and removes them.
+//! - **Pairing.** Options opens one (`PairWebDevice`): a 32-byte secret for the QR code (in the URL's `#` part, so it is
 //!   never sent in a request line or logged) and a 6-digit code for typing. Valid 5 minutes, closed by one success or
 //!   5 wrong attempts; a wrong attempt also costs the caller half a second.
 //! - **Rights.** What a node's `launch` right allows (launch, stop, restart, dismiss, preset, params), on every System
@@ -131,12 +131,12 @@ pub enum PairError {
 impl PairError {
     pub fn sentence(&self) -> String {
         match self {
-            PairError::Closed => "No pairing is open. In KLIF open Tune, then Web UI, and choose Pair a device.".into(),
-            PairError::Wrong { closed: false } => "That code is wrong or has expired. Check it in KLIF (Tune, Web UI).".into(),
+            PairError::Closed => "No pairing is open. In KLIF open Options, then Web UI, and choose Pair a device.".into(),
+            PairError::Wrong { closed: false } => "That code is wrong or has expired. Check it in KLIF (Options, Web UI).".into(),
             PairError::Wrong { closed: true } => {
-                "Too many wrong codes, so KLIF closed this pairing. Open a new one in Tune, Web UI.".into()
+                "Too many wrong codes, so KLIF closed this pairing. Open a new one in Options, Web UI.".into()
             }
-            PairError::Full => format!("{MAX_DEVICES} devices are paired already. Remove one in Tune, Web UI."),
+            PairError::Full => format!("{MAX_DEVICES} devices are paired already. Remove one in Options, Web UI."),
             PairError::Io(e) => format!("KLIF could not save the device: {e}."),
         }
     }
@@ -755,7 +755,7 @@ fn with_device(shared: &Shared, req: &Request, f: impl FnOnce((String, String)) 
     let token = req.header("authorization").and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))).map(str::trim);
     match token.and_then(|t| shared.auth.check(t, unix_now())) {
         Some(dev) => f(dev),
-        None => Response::error(401, "unpaired", "This browser is not paired with KLIF. Pair it from Tune, Web UI."),
+        None => Response::error(401, "unpaired", "This browser is not paired with KLIF. Pair it from Options, Web UI."),
     }
 }
 
@@ -765,7 +765,7 @@ fn pair(shared: &Shared, v: Value, ip: IpAddr) -> Response {
     match shared.auth.pair_complete(given, name, unix_now()) {
         Ok((token, id)) => {
             log::info!("klif-webui: device {id} paired from {ip}");
-            // Tune shows the new device and the closed pairing at once, not at the next tick.
+            // Options shows the new device and the closed pairing at once, not at the next tick.
             shared.handle.refresh();
             Response::json(200, &json!({ "token": token, "device": { "id": id, "name": clean_name(name) } }))
         }

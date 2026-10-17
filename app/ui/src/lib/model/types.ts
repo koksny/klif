@@ -182,7 +182,7 @@ export interface ParamOption {
   label: string;
 }
 
-/** A preset param with the System's current selection (segmented control / select in Tune). */
+/** A preset param with the System's current selection (segmented control / select in Options). */
 export interface ParamView {
   name: string;
   label: string;
@@ -234,7 +234,7 @@ export interface PresetInfo {
   external: boolean;
   /** The node it lives on (absent = this machine). vm.presets are local; remote ones are vm.nodes[n].presets. */
   node?: string;
-  /** = PresetDetail.specHash of the stored spec: a clean Tune draft reloads when it changes. */
+  /** = PresetDetail.specHash of the stored spec: a clean Options draft reloads when it changes. */
   specHash?: string;
 }
 
@@ -293,7 +293,7 @@ export interface PresetSpec {
   params?: Record<string, ParamSpec>;
 }
 
-/** One preset in full, for the Tune editor (klif_preset_get). */
+/** One preset in full, for the Options editor (klif_preset_get). */
 export interface PresetDetail {
   id: string;
   spec: PresetSpec;
@@ -390,7 +390,7 @@ export interface ConfigInfo {
   webui: WebUiInfo;
 }
 
-/** klif-webui as Tune shows it. */
+/** klif-webui as Options shows it. */
 export interface WebUiInfo {
   /** `[webui] enabled`. */
   enabled: boolean;
@@ -1020,7 +1020,7 @@ export interface SettingsPatch {
  */
 /**
  * How the UI reports one engine action. By default a refusal is ALSO shown as a toast (every surface gets it
- * once); `quiet` skips that toast for a caller that shows the sentence itself (Tune, inline). Never sent to the
+ * once); `quiet` skips that toast for a caller that shows the sentence itself (Options, inline). Never sent to the
  * engine.
  */
 export interface CallOpts {
@@ -1097,9 +1097,9 @@ export interface Actions {
   copyEndpoint(system?: SystemId): void;
   copyApiKey(): void;
   toggleConsole(open?: boolean): void;
-  /** Open the Tune drawer on a System, or in add mode ("Add System"). */
+  /** Open the Options drawer on a System, or in add mode ("Add System"). */
   openTune(system?: SystemId, opts?: { add?: boolean }): void;
-  /** Open the Records screen (the best each model reached). Full-size skins put a button for it next to Tune. */
+  /** Open the Records screen (the best each model reached). Full-size skins put a button for it next to Options. */
   openRecords(): void;
   /** Window chrome; only meaningful when vm.host.frameless. Skins mark their header with
    *  data-tauri-drag-region so the window can be dragged by it. */
@@ -1114,7 +1114,7 @@ export interface Actions {
 }
 
 /**
- * Config-level calls for the Tune drawer and the Records screen (`player.config`). Native: klif_preset_get,
+ * Config-level calls for the Options drawer and the Records screen (`player.config`). Native: klif_preset_get,
  * klif_command_preview, klif_set_api_key, klif_open_config, klif_open_logs, klif_records_history, klif_save_image.
  * Mock: computed by the mock catalog. Errors reject with a sentence.
  */
@@ -1132,7 +1132,7 @@ export interface ConfigApi {
    * KLIF, never overwriting; resolves with the full path. Browser (mock): downloads the file; resolves null.
    */
   saveImage(fileName: string, data: Blob): Promise<string | null>;
-  /** The command an unsaved preset spec would run for `system` (debounced preview in Tune). */
+  /** The command an unsaved preset spec would run for `system` (debounced preview in Options). */
   commandPreview(spec: PresetSpec, system?: SystemId): Promise<CommandView>;
   /** Set (string) or clear (null) the API key natively; the key is never echoed back. */
   setApiKey(key: string | null): Promise<void>;

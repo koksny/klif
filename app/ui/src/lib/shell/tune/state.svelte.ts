@@ -1,4 +1,4 @@
-// Local state of one open Tune drawer: preset drafts (keyed by node + preset id, never bound to the 2 Hz view
+// Local state of one open Options drawer: preset drafts (keyed by node + preset id, never bound to the 2 Hz view
 // model), which preset each System tab shows, open sections, and the drawer's confirm prompt. It lives as long
 // as the drawer is mounted; closing with unsaved drafts asks first (ui.tuneCanClose).
 import { getContext, setContext } from 'svelte';

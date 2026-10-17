@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Tune: a side sheet over the skin to configure what each System runs. Tabs = vm.systems (+ add mode); a tab
+  // Options: a side sheet over the skin to configure what each System runs. Tabs = vm.systems (+ add mode); a tab
   // shows the System row, its preset (with a transparent, editable command), params, VRAM fit, bench, model
   // suggestions, the API key and the remote nodes. Preset edits are local drafts (never bound to the 2 Hz view
   // model) applied with SavePreset + baseHash; closing with unapplied drafts asks first (ui.tuneCanClose).
@@ -67,7 +67,7 @@
   class:wide
   role="dialog"
   aria-modal="true"
-  aria-label={adding ? 'Add System' : `Tune ${system?.label ?? ''}`}
+  aria-label={adding ? 'Add System' : `Options ${system?.label ?? ''}`}
   tabindex="-1"
   bind:this={sheet}
   onkeydown={onKey}
@@ -75,7 +75,7 @@
 >
   <header>
     <div class="titles">
-      <h2>{adding ? 'Add System' : 'Tune'}</h2>
+      <h2>{adding ? 'Add System' : 'Options'}</h2>
       {#if adding}
         <div class="sysname">New System</div>
         <div class="sysmodel">{vm.systems.length ? 'Another server KLIF manages, with its own tab.' : 'No Systems yet. Add the first one.'}</div>
@@ -84,7 +84,7 @@
         <div class="sysmodel">{joinParts([system.model.name, system.model.quant, system.model.backend]) || 'No preset'}</div>
       {/if}
     </div>
-    <button type="button" class="ghost" bind:this={closeBtn} aria-label="Close the Tune drawer" onclick={close}>Close</button>
+    <button type="button" class="ghost" bind:this={closeBtn} aria-label="Close the Options drawer" onclick={close}>Close</button>
   </header>
 
   <TabStrip {vm} current={system?.id ?? null} {adding} onpick={pick} onadd={add} />
@@ -176,10 +176,10 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 12px 18px;
+    padding: 10px 18px;
     display: flex;
     flex-direction: column;
-    gap: 11px;
+    gap: 9px;
     overscroll-behavior: contain;
   }
   :global(.tune-sheet .field) {

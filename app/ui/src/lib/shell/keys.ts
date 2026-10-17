@@ -1,9 +1,10 @@
-// Global shortcuts: Ctrl+1..9 / Alt+1..9 (on a Mac also Cmd+1..9) and F2 (Shift+F2 backwards) switch skins, F3 is panel mode (the
+// Global shortcuts: Ctrl+1..9 / Alt+1..9 (on a Mac also Cmd+1..9) and F2 (Shift+F2 backwards) switch the skin on screen (the selected System's own one when it shows, else the global one), F3 is panel mode (the
 // desktop app moves the window onto the small status screen; a browser only switches the layout between
 // mini and full), backquote toggles the dev bar, R toggles the Records screen (full size), Escape closes drawers.
 // Nothing here fires while the user is typing in a field (Escape then only leaves the field).
 import { SKINS } from '../../skins/registry';
 import { player } from '../state/player.svelte';
+import { pickShownSkin } from '../state/skinSync.svelte';
 import { ui } from '../state/ui.svelte';
 
 // Cmd is the Mac's shortcut key; elsewhere the Meta (Windows) key belongs to the system.
@@ -27,7 +28,7 @@ export function installKeys(): () => void {
     }
     if (e.key === 'F2') {
       e.preventDefault();
-      ui.cycleSkin(e.shiftKey ? -1 : 1);
+      pickShownSkin(e.shiftKey ? -1 : 1);
       return;
     }
     if (e.key === 'F3') {
@@ -41,8 +42,7 @@ export function installKeys(): () => void {
       const n = Number(e.code.slice(5)) - 1;
       if (n < SKINS.length) {
         e.preventDefault();
-        ui.skinByIndex(n);
-        ui.toast(`Skin: ${SKINS[n].name}`);
+        pickShownSkin(SKINS[n].id);
       }
       return;
     }

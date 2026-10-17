@@ -3,14 +3,14 @@
   // and height in every phase (idle, loading, live LLM, live image, stopping, fault, dormant); a phase only
   // changes what the panels read:
   //   header        brand, status lamp + phase, uptime / elapsed (version while idle), panel + window keys
-  //   System control  the rotary MODE selector (one detent per System, + adds one) with its state column, the BACKEND toggle (opens Tune)
+  //   System control  the rotary MODE selector (one detent per System, + adds one) with its state column, the BACKEND toggle (opens Options)
   //   model line    the running model, or (idle) the selected tier's
   //   status block  hero plate + two detail rows, or the fault plate over both (see Status)
   //   dial area     the VRAM dial (idle: fit preview of the selected tier) + the context / generation dial
   //   system row    RAM and CPU with their LED meters
   //   timeline      request timeline / recent jobs; idle: empty frame, the last session in the caption
   //   controls      endpoint + API key chips, then Launch / Cancel / Stop / Restart (one place, one width),
-  //                 Restart or Dismiss, Tune (always: a running tier gets "Restart to apply" in the drawer),
+  //                 Restart or Dismiss, Options (always: a running tier gets "Restart to apply" in the drawer),
   //                 Records (icon only), Endpoint / Web UI, Console / Full log; the console line under it
   import { onMount, tick } from 'svelte';
   import type { Actions, SystemId, ViewModel } from '../../../lib/model/types';
@@ -403,7 +403,7 @@
       onclick={() => actions.openTune(selSlot?.id)}
       title={s && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}
     >
-      <Icon name="tune" size="calc(17 * var(--u))" />Tune
+      <Icon name="tune" size="calc(17 * var(--u))" />Options
     </button>
     <!-- Icon only: the row is full (the endpoint and key chips are what gives), so Records takes just its icon. -->
     <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
@@ -449,7 +449,7 @@
     left: calc(18 * var(--u));
     top: calc(14 * var(--u));
   }
-  /* "+" beside the MODE caption: adds a System (opens Tune in add mode) */
+  /* "+" beside the MODE caption: adds a System (opens Options in add mode) */
   .addsys {
     position: absolute;
     left: calc(58 * var(--u));
@@ -1021,5 +1021,12 @@
   .btn.sk:hover:not(:disabled),
   .btn.sk:focus-visible {
     z-index: 1;
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .btn.sk {
+      aspect-ratio: 0.66;
+    }
   }
 </style>

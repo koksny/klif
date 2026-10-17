@@ -606,7 +606,7 @@ pub struct BenchSummary {
     pub stale: bool,
 }
 
-/// A preset as listed (Tune picker, `klif-cli presets list`).
+/// A preset as listed (Options picker, `klif-cli presets list`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
@@ -641,7 +641,7 @@ pub struct PresetInfo {
     pub spec_hash: String,
 }
 
-/// One preset in full, for the Tune editor (`klif_preset_get`). `spec` env values that are secret are MASK.
+/// One preset in full, for the Options editor (`klif_preset_get`). `spec` env values that are secret are MASK.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
@@ -1096,7 +1096,7 @@ pub struct ConfigInfo {
     pub webui: WebUiInfo,
 }
 
-/// klif-webui as Tune shows it.
+/// klif-webui as Options shows it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]

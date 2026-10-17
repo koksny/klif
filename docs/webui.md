@@ -2,7 +2,7 @@
 
 klif-webui is a small page for a phone or a browser on your network. It shows every System with its status, and lets
 you launch, stop, restart and dismiss a System, choose its preset and params, and read its console. It is a remote
-control for the stack, not a second copy of the window: no Tune drawer, no editing, no downloads.
+control for the stack, not a second copy of the window: no Options drawer, no editing, no downloads.
 
 The page wears the skin the KLIF window shows (colours and fonts only), is plain on purpose, and has no animations.
 It is served by KLIF itself, over plain HTTP. **Read the security section before you turn it on.** In short: it is off
@@ -32,7 +32,7 @@ answer it says so and keeps trying.
 
 klif-webui is off until you turn it on. Three ways, all the same setting:
 
-- **Tune > Web UI** in the KLIF window: the switch, the address and port with **Save**, **Pair a device**, and the
+- **Options > Web UI** in the KLIF window: the switch, the address and port with **Save**, **Pair a device**, and the
   paired devices.
 - `[webui]` in `klif.toml` (edits are picked up while KLIF runs):
 
@@ -68,11 +68,11 @@ Details:
 
 A device has to be paired before it sees or controls anything. Pairing proves that someone at the computer allowed it.
 
-1. In Tune > Web UI choose **Pair a device** (or run `klif-cli webui pair --yes`). KLIF shows a QR code and a
+1. In Options > Web UI choose **Pair a device** (or run `klif-cli webui pair --yes`). KLIF shows a QR code and a
    6-digit code, valid for **5 minutes**.
 2. On the phone, scan the QR code: the camera opens the page, which pairs at once. Or open the page's address in the
    browser and type the code.
-3. The device is listed in Tune with the name it chose for itself ("iPhone", "Firefox on Windows"), and the pairing
+3. The device is listed in Options with the name it chose for itself ("iPhone", "Firefox on Windows"), and the pairing
    closes.
 
 A pairing is **closed by one success, by 5 wrong codes, or after 5 minutes**; **Cancel** (`klif-cli webui cancel`)
@@ -87,7 +87,7 @@ browser's local storage. A private window, or a browser that blocks storage, has
 
 ## Devices
 
-Tune lists each paired device with when it paired and when it was last seen. `klif-cli webui` lists the same with an
+Options lists each paired device with when it paired and when it was last seen. `klif-cli webui` lists the same with an
 id. "Last seen" is written to disk at most once a minute, so it can lag.
 
 **Remove** (or `klif-cli webui forget <id> --yes`, `forget --all --yes`) unpairs a device at once: its next request
@@ -103,7 +103,7 @@ A paired device can do what a [node](nodes.md#rights) with the `launch` right ca
 | --- | --- |
 | See every machine, GPU and System with status, model, preset, params and speed | Select a tab, add, remove or edit Systems, presets or `klif.toml` |
 | Launch (with "stop the Systems that conflict"), stop, restart, dismiss a fault | Download models, adopt recommendations, change settings, the API key or node tokens |
-| Choose a System's preset and its params | Open a pairing, or see or remove other devices (Tune and `klif-cli` only) |
+| Choose a System's preset and its params | Open a pairing, or see or remove other devices (Options and `klif-cli` only) |
 | Read a System's console (last 80 lines) | Launch, stop or restart an external server (KLIF only watches those) |
 
 - **Systems on another machine** need that node's `launch` right too. Without it the page shows them and says KLIF
@@ -177,13 +177,13 @@ incoming connections ([platforms.md](platforms.md#firewall)).
 
 | Symptom | Cause and fix |
 | --- | --- |
-| The switch is on, nothing answers | Read the line under the switch (Tune) or the `error` of `klif-cli webui`. "Port 7341 is taken by another program": choose another port. "This machine has no address ...": use `0.0.0.0` or an address of this machine (`ipconfig`). "... runs in the KLIF window app, not in klif-cli": start `klif.exe`. |
+| The switch is on, nothing answers | Read the line under the switch (Options) or the `error` of `klif-cli webui`. "Port 7341 is taken by another program": choose another port. "This machine has no address ...": use `0.0.0.0` or an address of this machine (`ipconfig`). "... runs in the KLIF window app, not in klif-cli": start `klif.exe`. |
 | No address or QR code is shown | KLIF found no route to a network (no cable, no Wi-Fi). Connect, or open `http://<this computer's address>:7341/` by hand and type the code. |
 | The phone cannot open the page | It must be on the same network as the computer: not a guest network, not a Wi-Fi with client isolation (the router calls it AP or client isolation), not through a VPN on the phone. Then check the firewall rule, and that `host` is `0.0.0.0` or the address of the network the phone is on. |
 | 421 "answers only to this machine's address or name" | The address in the browser is a name other than this computer's (a proxy, a DNS alias). Use the IP address or the computer's name. |
-| "This browser is not paired with KLIF" | The device was removed (Tune, `klif-cli webui forget`, or "Unpair this device"), `webui-devices.json` was deleted, or the browser's storage was cleared. Pair it again. |
+| "This browser is not paired with KLIF" | The device was removed (Options, `klif-cli webui forget`, or "Unpair this device"), `webui-devices.json` was deleted, or the browser's storage was cleared. Pair it again. |
 | "No pairing is open", "That code is wrong or has expired" | The pairing ran out (5 minutes), was cancelled, or took a wrong code too often (5 closes it). Open a new one. |
-| "32 devices are paired already" | Remove one in Tune. |
+| "32 devices are paired already" | Remove one in Options. |
 | The page says KLIF is not answering | The computer is asleep, `klif.exe` was closed or the network dropped. The page keeps trying. |
 | The browser calls the page "not secure" | It is plain HTTP, as documented. Do not enter anything else into it. |
 
@@ -213,7 +213,7 @@ POST /api/pair
 {"secret": "123456", "name": "Example phone"}
 
 200 {"token": "<64 hex characters>", "device": {"id": "1a2b3c4d", "name": "Example phone"}}
-403 {"error": {"code": "pair", "message": "That code is wrong or has expired. Check it in KLIF (Tune, Web UI)."}}
+403 {"error": {"code": "pair", "message": "That code is wrong or has expired. Check it in KLIF (Options, Web UI)."}}
 ```
 
 **Actions** (`POST /api/act`). Every action names a System by its id (`s1`, `render-box/s1`):

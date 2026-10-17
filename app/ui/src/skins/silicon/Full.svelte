@@ -11,7 +11,7 @@
   //   dormant   - (live, vram.dormant set) the GPU is asleep or waking: GDDR6 blocks and the section show
   //               the paged-out allocations as hatched dashed outlines, tiles dark, amber status
   // Controls keep their places: the primary button (Launch / Cancel / Stop / Restart after a fault), Restart,
-  // Tune (always: on a running tier the drawer offers "Restart to apply"), Records, Open endpoint / web UI, Console.
+  // Options (always: on a running tier the drawer offers "Restart to apply"), Records, Open endpoint / web UI, Console.
   import type { Actions, ViewModel } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, KIND_LABEL, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem } from '../../lib/model/systems';
   import { strip } from '../../lib/shell/SystemTabs/scroll';
@@ -736,7 +736,7 @@
         </button>
       {/if}
       <button class="btn tune" onclick={() => actions.openTune(sel?.id)} title={s && view !== 'fault' ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /><circle cx="15" cy="6" r="2.2" class="knob" /><circle cx="8" cy="12" r="2.2" class="knob" /><circle cx="14" cy="18" r="2.2" class="knob" /></svg>Tune
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /><circle cx="15" cy="6" r="2.2" class="knob" /><circle cx="8" cy="12" r="2.2" class="knob" /><circle cx="14" cy="18" r="2.2" class="knob" /></svg>Options
       </button>
       <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-8h5v8M9 20V4h6v16M15 20V9h5v11" /></svg><span class="rl">Records</span>
@@ -1983,5 +1983,18 @@
   .btn.sk:hover:not(:disabled),
   .btn.sk:focus-visible {
     z-index: 1;
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys, Records as its icon) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .btn.sk {
+      aspect-ratio: 0.66;
+    }
+    .btnrow:has(.slotkeys) .btn.rec .rl {
+      display: none;
+    }
+    .btnrow:has(.slotkeys) .btn.rec {
+      padding: 0 calc(var(--u) * 8);
+    }
   }
 </style>

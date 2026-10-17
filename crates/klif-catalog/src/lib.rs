@@ -402,7 +402,7 @@ impl Catalog {
         // What is launched is checked against the disk now, not against the view's cached file answers.
         let fresh = probe::FileProbe::fresh();
         let (pid, spec, r) = match self.resolve_with(&fresh, cfg, row, KeyInfo::Value(api_key), true, Some(stamp)) {
-            Active::NotSet => bail!("No preset is selected; choose one in Tune or with `klif-cli presets use {system} <preset>`."),
+            Active::NotSet => bail!("No preset is selected; choose one in Options or with `klif-cli presets use {system} <preset>`."),
             Active::Missing(pid) => bail!("Preset \"{pid}\" does not exist in klif.toml."),
             Active::Bad(_pid, e) => bail!("{}", e.trim_end_matches('.')),
             Active::Ok(pid, spec, r) => (pid, spec, r),
@@ -569,7 +569,7 @@ impl Catalog {
 
     /// A new preset (id, spec) from a recommendation, with the command/cwd/env/env_remove (and the gpu / backend
     /// display that belong to that program) copied from a preset of the same adapter (the target System's current
-    /// one first, else the first by id that has a command). Without one the command stays empty (Invalid: Tune
+    /// one first, else the first by id that has a command). Without one the command stays empty (Invalid: Options
     /// focuses Program). The target System's current preset of the same adapter also gives its `port`. The id is the
     /// recommendation's with '.' as '-' (plus "-2", "-3"... when taken). Context, KV type and fit margin are the
     /// caller's (`suggest::apply_fit`). The caller stores it.

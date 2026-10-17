@@ -3,9 +3,38 @@
 // made elsewhere. A ?skin= URL or a screenshot run (?shot=1) reports nothing.
 import { untrack } from 'svelte';
 import type { SkinId } from '../../skins/contract';
-import { SKINS } from '../../skins/registry';
+import { SKINS, skinMeta } from '../../skins/registry';
 import { player } from './player.svelte';
 import { ui } from './ui.svelte';
+
+/** A System skin F2 just picked, shown at once until the view model reports it (or a few seconds pass). */
+let picked: { system: string; field: 'full' | 'mini'; skin: SkinId; until: number } | null = null;
+
+/**
+ * F2 / Ctrl+digit: change the skin that is on screen. The small layout with the System's own mini skin changes that
+ * one; a layout showing the System's own (full) skin changes that; otherwise the global skin. `to` is a skin, or a
+ * step through the list from the one shown.
+ */
+export function pickShownSkin(to: SkinId | 1 | -1) {
+  const own = ui.params.skin ? null : ui.systemSkin;
+  const field: 'full' | 'mini' | null = !own ? null : ui.size === 'mini' && own.mini ? 'mini' : own.full ? 'full' : null;
+  const cur = ui.shownSkin;
+  const next =
+    typeof to === 'string' ? skinMeta(to) : SKINS[(SKINS.findIndex((s) => s.id === cur) + to + SKINS.length) % SKINS.length];
+  const id = player.vm.selected;
+  if (!field || !own || !id) {
+    ui.setSkin(next.id);
+    ui.toast(`Skin: ${next.name}`);
+    return;
+  }
+  picked = { system: id, field, skin: next.id, until: Date.now() + 4000 };
+  ui.systemSkin = { ...own, [field]: next.id };
+  ui.toast(`Skin: ${next.name} (${own.label}${field === 'mini' ? ', small layout' : ''})`);
+  player.actions.updateSystem(id, field === 'mini' ? { miniSkin: next.id } : { skin: next.id }, { quiet: true }).catch((e) => {
+    picked = null;
+    ui.toast(e instanceof Error ? e.message : String(e), 5000);
+  });
+}
 
 export function installSkinSync() {
   // The selected System's own skins ([systems.<id>] skin and mini_skin) are shown over the global one while it is
@@ -14,8 +43,15 @@ export function installSkinSync() {
     const vm = player.vm;
     const sel = vm.systems.find((s) => s.id === vm.selected);
     const known = (id: string | undefined) => (id && SKINS.some((s) => s.id === id) ? (id as SkinId) : null);
-    const full = known(sel?.skin);
-    const mini = known(sel?.miniSkin);
+    let full = known(sel?.skin);
+    let mini = known(sel?.miniSkin);
+    // A pick on its way to klif.toml stays on screen until the view model has it.
+    if (picked && sel?.id === picked.system && Date.now() < picked.until) {
+      const has = picked.field === 'mini' ? mini : full;
+      if (has === picked.skin) picked = null;
+      else if (picked.field === 'mini') mini = picked.skin;
+      else full = picked.skin;
+    }
     const own = sel && (full || mini) ? { full, mini, label: sel.label } : null;
     untrack(() => {
       const cur = ui.systemSkin;

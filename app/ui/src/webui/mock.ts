@@ -102,7 +102,7 @@ export function installMock() {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     const authed = new Headers(init?.headers).get('Authorization') === 'Bearer mock';
     if (url.pathname === '/api/pair') {
-      return body.secret === '123456' || /^[0-9a-f]{64}$/.test(body.secret) ? json(200, { token: 'mock', device: { id: '3fa1c2d4', name: body.name } }) : fail(403, 'That code is wrong or has expired. Check it in KLIF (Tune, Web UI).');
+      return body.secret === '123456' || /^[0-9a-f]{64}$/.test(body.secret) ? json(200, { token: 'mock', device: { id: '3fa1c2d4', name: body.name } }) : fail(403, 'That code is wrong or has expired. Check it in KLIF (Options, Web UI).');
     }
     if (!authed) return fail(401, 'This browser is not paired with KLIF.');
     if (url.pathname === '/api/state') return json(200, { ...state, now: Date.now() / 1000 });

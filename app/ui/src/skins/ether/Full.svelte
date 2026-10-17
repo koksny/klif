@@ -9,7 +9,7 @@
   //   VRAM        a hairline with the gradient fill (idle: the selected tier's fit)
   //   detail      four cells (LLM: prefill, decode, context, speculative; image: last image, images, size, mode)
   //   timeline    the last 8 requests as capsules / the last 12 jobs as bars
-  //   controls    endpoint + key chips, the primary act (one width), Restart, Tune, Records, Endpoint, Console
+  //   controls    endpoint + key chips, the primary act (one width), Restart, Options, Records, Endpoint, Console
   //   console     the last log line
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canLaunch, canStop, doLaunch, idleState, isPendingLaunch, launchCtl, selectedSystem, systemLabel } from '../../lib/model/systems';
@@ -166,7 +166,7 @@
   const tabTitle = (t: (typeof tabs)[number]) => {
     const ts = t.system;
     const where = t.nodeName ? ` on ${t.nodeName}` : '';
-    if (ts.status === 'not-set') return `${t.label}${where}: no preset. Open Tune to choose one.`;
+    if (ts.status === 'not-set') return `${t.label}${where}: no preset. Open Options to choose one.`;
     if (ts.availability !== 'ready' || ts.status === 'unreachable') return `${t.label}${where}: ${ts.reason ?? availabilityText(ts.availability)}`;
     // The same condition as the double-click handler: a launch with conflicts needs the "Stop X & launch" button.
     const hint = !canLaunch(ts) ? '' : ts.conflicts.length === 0 ? ', double-click to launch' : `, needs ${ts.conflicts.map((id) => systemLabel(vm, id)).join(' and ')} stopped`;
@@ -326,7 +326,7 @@
       {:else}
         <button class="tbtn w1" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>Restart</button>
       {/if}
-      <button class="tbtn w2" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
+      <button class="tbtn w2" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Options</button>
       <button class="tbtn w1" onclick={() => actions.openRecords()} title="Records: the best each model reached">Records</button>
       {#if sel?.slots}
         <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">
@@ -1166,7 +1166,7 @@
     width: calc(var(--u) * 78px);
   }
   .ctrl .tbtn.w2 {
-    width: calc(var(--u) * 48px);
+    width: calc(var(--u) * 70px);
   }
   .ctrl .tbtn.w3 {
     width: calc(var(--u) * 86px);

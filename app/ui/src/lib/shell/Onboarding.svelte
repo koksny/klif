@@ -1,6 +1,6 @@
 <script lang="ts">
   // Shown instead of a skin while the view model has no Systems (a fresh install): one quiet card in the
-  // active skin's --k-* tokens. "Add a System" opens Tune in add mode; the mini layout (no Tune) only explains.
+  // active skin's --k-* tokens. "Add a System" opens Options in add mode; the mini layout (no Options) only explains.
   import type { SizeClass } from '../../skins/contract';
   import type { Actions, ViewModel } from '../model/types';
 

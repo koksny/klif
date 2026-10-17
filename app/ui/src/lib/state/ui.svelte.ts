@@ -2,7 +2,7 @@
 import type { SystemId } from '../model/types';
 import type { Tier } from '../render/scheduler';
 import type { SizeClass, SkinId } from '../../skins/contract';
-import { DEFAULT_SKIN, SKINS, skinMeta } from '../../skins/registry';
+import { DEFAULT_SKIN, skinMeta } from '../../skins/registry';
 import { parseParams, type Params, type SizeParam } from './params';
 
 const SKIN_KEY = 'klif.skin';
@@ -26,12 +26,14 @@ function writeStoredSkin(id: string) {
 export interface ToastItem {
   id: number;
   text: string;
+  /** An error: drawn in the danger colour, wraps instead of being cut, and a click dismisses it. */
+  error?: boolean;
 }
 
 class UiState {
   readonly params: Params = parseParams(typeof location === 'undefined' ? '' : location.search);
 
-  /** The global skin ([ui] skin): F2, the tray and Tune's Skin field change it. */
+  /** The global skin ([ui] skin): the tray and the Skin field in Display change it, and F2 while no System skin shows. */
   skinId = $state<SkinId>(DEFAULT_SKIN);
   /**
    * The selected System's own skins, set by skinSync: `full` from [systems.<id>] skin, `mini` from mini_skin (null
@@ -53,12 +55,12 @@ class UiState {
   vh = $state(typeof innerHeight === 'undefined' ? 1152 : innerHeight);
 
   consoleOpen = $state(false);
-  /** The Records screen (the best each model reached); full size only, like Tune. */
+  /** The Records screen (the best each model reached); full size only, like Options. */
   recordsOpen = $state(false);
   tuneOpen = $state(false);
-  /** The System the Tune drawer shows (null: the selected one). */
+  /** The System the Options drawer shows (null: the selected one). */
   tuneSystem = $state<SystemId | null>(null);
-  /** The Tune drawer is in add mode ("Add System"). Opened by the "+" of every full-size picker. */
+  /** The Options drawer is in add mode ("Add System"). Opened by the "+" of every full-size picker. */
   tuneAdd = $state(false);
   /** Old name of tuneSystem (the drawer used to be keyed by slot). */
   get tuneSlot(): SystemId | null {
@@ -117,20 +119,6 @@ class UiState {
     if (!this.shot) writeStoredSkin(this.skinId);
   }
 
-  cycleSkin(dir: 1 | -1) {
-    const i = SKINS.findIndex((s) => s.id === this.skinId);
-    const next = SKINS[(i + dir + SKINS.length) % SKINS.length];
-    this.setSkin(next.id);
-    const own = this.params.skin ? null : this.systemSkin;
-    const kept = own && (this.size === 'mini' ? (own.mini ?? own.full) : own.full);
-    this.toast(kept ? `Skin: ${next.name} (${own.label} keeps ${skinMeta(kept).name})` : `Skin: ${next.name}`);
-  }
-
-  skinByIndex(n: number) {
-    const s = SKINS[n];
-    if (s) this.setSkin(s.id);
-  }
-
   setSizeMode(mode: SizeParam) {
     this.sizeMode = mode;
   }
@@ -145,20 +133,20 @@ class UiState {
     this.consoleOpen = open ?? !this.consoleOpen;
   }
 
-  /** Open the Tune drawer on a System (add mode: the "Add System" form). */
+  /** Open the Options drawer on a System (add mode: the "Add System" form). */
   openTune(system?: SystemId, opts: { add?: boolean } = {}) {
     if (system) this.tuneSystem = system;
     this.tuneAdd = !!opts.add;
     this.tuneOpen = true;
   }
 
-  /** Open the Tune drawer in add mode (the "+" after the last System tab). */
+  /** Open the Options drawer in add mode (the "+" after the last System tab). */
   openTuneAdd() {
     this.openTune(undefined, { add: true });
   }
 
   /**
-   * Set by the Tune drawer while it holds unsaved edits: returns false to keep the drawer open (it asks the
+   * Set by the Options drawer while it holds unsaved edits: returns false to keep the drawer open (it asks the
    * user first). Not reactive on purpose.
    */
   tuneCanClose: (() => boolean) | null = null;
@@ -183,10 +171,10 @@ class UiState {
     this.recordsOpen = open ?? !this.recordsOpen;
   }
 
-  /** Escape. Drawers are hidden in mini (Tune keeps its drafts there), so mini closes nothing. */
+  /** Escape. Drawers are hidden in mini (Options keeps its drafts there), so mini closes nothing. */
   closeDrawers(): boolean {
     if (this.size !== 'full') return false;
-    // Records covers the window, so it goes first (Tune and the console sit under it).
+    // Records covers the window, so it goes first (Options and the console sit under it).
     if (this.recordsOpen) {
       this.recordsOpen = false;
       return true;
@@ -202,12 +190,14 @@ class UiState {
     return false;
   }
 
-  toast(text: string, ms = 2400) {
+  toast(text: string, ms = 2400, opts: { error?: boolean } = {}) {
     const id = ++this.toastSeq;
-    this.toasts = [...this.toasts.slice(-2), { id, text }];
-    setTimeout(() => {
-      this.toasts = this.toasts.filter((t) => t.id !== id);
-    }, ms);
+    this.toasts = [...this.toasts.slice(-2), { id, text, ...(opts.error ? { error: true } : {}) }];
+    setTimeout(() => this.dismissToast(id), ms);
+  }
+
+  dismissToast(id: number) {
+    this.toasts = this.toasts.filter((t) => t.id !== id);
   }
 }
 

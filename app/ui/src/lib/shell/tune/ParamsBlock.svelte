@@ -88,8 +88,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    line-height: 1.2;
+    gap: 3px;
+    line-height: 1.15;
+    padding-top: 6px;
+    padding-bottom: 6px;
   }
   .seg3 b {
     font-weight: 600;

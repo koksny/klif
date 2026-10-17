@@ -1,7 +1,7 @@
 //! Rendering a program + argument list as ONE command-line string.
 //!
 //! [`render`] is the single source of truth for what KLIF shows AND what it runs: on Windows the supervisor
-//! passes exactly this string (as UTF-16) to `CreateProcessW`, and the Tune drawer / `klif-cli plan` show
+//! passes exactly this string (as UTF-16) to `CreateProcessW`, and the Options drawer / `klif-cli plan` show
 //! the same string (with secret values masked before rendering). So it must follow the parser on the other
 //! side exactly:
 //!

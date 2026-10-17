@@ -65,9 +65,10 @@ the right script. Everything the window does is also in `klif-cli`, so scripts a
 ## Skins
 
 Nine looks over the same data. Every skin has a full window and a 960×640 layout for a small status screen, such as
-a 3.5-inch USB display next to the monitor. Pick one in Tune (Skin, at the bottom), from the tray's Skin menu, or with
+a 3.5-inch USB display next to the monitor. Pick one in Options (Skin, at the bottom), from the tray's Skin menu, or with
 F2 (Shift+F2 back) and Ctrl+1..9. A System can also have its own skin, and another one for the small layout, shown
-while it is selected (Skin and Mini at the top of its Tune tab).
+while it is selected (Skin and Mini at the top of its Options tab); F2 always changes the skin on screen, so while a
+System's own skin shows, F2 changes that one.
 
 **Live decode**, a language model answering requests. Top row: the full window. Bottom row: the 3.5-inch panel.
 Left to right: Cliff, Silicon, Instrument, Phosphor, Decode, Loom, Ether, Rings, Spirit.
@@ -107,7 +108,7 @@ The animations come from the browser mock engine with recorded timings, the same
 - **Other machines and servers you do not start.** A System can be an external server that KLIF only watches, or
   live on another computer running KLIF (a remote node, opt-in, token-authenticated). [docs/nodes.md](docs/nodes.md)
 - **Commands you can read.** A preset is the launch command: program, argument list, working folder, environment.
-  The Tune drawer, `klif-cli plan` and `klif.toml` show the same thing, and what you see is what runs. Presets can
+  The Options drawer, `klif-cli plan` and `klif.toml` show the same thing, and what you see is what runs. Presets can
   declare independent params (reasoning on or off, image size) instead of one preset per combination.
   [docs/presets.md](docs/presets.md)
 - **Adapters, not a fixed list.** `llama.cpp`, `sd.cpp`, `vllm`, `strata`, `audiocpp`, `openai` (any
@@ -183,7 +184,7 @@ The animations come from the browser mock engine with recorded timings, the same
 4. **Launch.** Select a tab and press Launch, or `klif-cli launch s1 --yes --wait`. Closing KLIF does not stop the
    servers; the next KLIF adopts them. Stop them from KLIF or with `klif-cli stop --all --yes`.
 
-5. **Models.** Set `[paths] models_dir`, then use **Recommended** in the Tune drawer, or `klif-cli models list` and
+5. **Models.** Set `[paths] models_dir`, then use **Recommended** in the Options drawer, or `klif-cli models list` and
    `klif-cli models download <id> --yes`.
 
 A second computer running KLIF can offer its Systems to this one. Read [docs/nodes.md](docs/nodes.md) before you

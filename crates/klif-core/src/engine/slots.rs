@@ -545,7 +545,7 @@ impl Inner {
                 bail!("{label}'s server ({}) cannot save conversation slots; llama.cpp and Strata can.", ctx.p.adapter().as_str());
             }
             self.slot_target(&cfg, id, &ctx.p)
-                .ok_or_else(|| anyhow!("{label} was started without slots: turn slots on in Tune (or `klif-cli systems slots <system> on`) and restart it."))?
+                .ok_or_else(|| anyhow!("{label} was started without slots: turn slots on in Options (or `klif-cli systems slots <system> on`) and restart it."))?
         };
         match op {
             SlotOp::Save => spawn_job(self.slot_jobs.clone(), id.clone(), op, n, move || save(&t, n)),

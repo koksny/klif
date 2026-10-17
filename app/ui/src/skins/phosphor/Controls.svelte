@@ -1,9 +1,9 @@
 <script lang="ts">
   // Controls bar: the same buttons in the same places in every phase; a phase only changes what they say
   // and whether they are enabled.
-  //   [:port] [API key] ............ [PRIMARY] [Restart | Dismiss] [Tune] [Records] [Endpoint | Web UI] [Console | Full log]
+  //   [:port] [API key] ............ [PRIMARY] [Restart | Dismiss] [Options] [Records] [Endpoint | Web UI] [Console | Full log]
   // PRIMARY has one fixed width: Launch <TIER> (idle) / Cancel (loading) / Stop (live) / Stopping (disabled) /
-  // Restart <TIER> after a fault. Tune is always enabled: on a running tier the drawer offers "Restart to apply".
+  // Restart <TIER> after a fault. Options is always enabled: on a running tier the drawer offers "Restart to apply".
   import type { Actions, Session, System, ViewModel } from '../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../lib/model/systems';
   import { slotKey, slotKeys } from '../../lib/shell/slots/slotKeys';
@@ -19,7 +19,7 @@
     vm: ViewModel;
     view: 'idle' | 'loading' | 'live' | 'stopping' | 'fault';
     session: Session | null;
-    /** The selected System (Launch, Stop and Tune act on it; the session is always its). */
+    /** The selected System (Launch, Stop and Options act on it; the session is always its). */
     selected: System | undefined;
     actions: Actions;
     /** The session's port, or (idle) the selected System's configured port. */
@@ -88,8 +88,8 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" /><path d="M12.2 1.8v3h-3" /></svg>Restart
     </button>
   {/if}
-  <button class="btn tune w3" onclick={() => actions.openTune(selected?.id)} title={tuneTip}>
-    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" /><circle cx="10" cy="4" r="1.6" class="knob" /><circle cx="5.5" cy="8" r="1.6" class="knob" /><circle cx="9.5" cy="12" r="1.6" class="knob" /></svg>Tune
+  <button class="btn tune w3" onclick={() => actions.openTune(selected?.id)} title={tuneTip} aria-label="Options">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" /><circle cx="10" cy="4" r="1.6" class="knob" /><circle cx="5.5" cy="8" r="1.6" class="knob" /><circle cx="9.5" cy="12" r="1.6" class="knob" /></svg><span class="tl">Options</span>
   </button>
   <button class="btn wr" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">Records</span>
@@ -311,5 +311,23 @@
   .btn.sk:hover:not(:disabled),
   .btn.sk:focus-visible {
     z-index: 1;
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .btn.sk {
+      aspect-ratio: 0.66;
+    }
+  }
+  /* The narrowest windows: Options keeps its icon, its label goes */
+  @media (max-width: 819px) {
+    .btn.tune .tl {
+      display: none;
+    }
+    .btn.tune.w3 {
+      width: max(30px, calc(34px * var(--k)));
+      padding: 0;
+      justify-content: center;
+    }
   }
 </style>

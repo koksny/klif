@@ -191,7 +191,7 @@ impl EngineHandle {
         self.inner.records_history(key, metric, false)
     }
 
-    /// The command an unsaved preset spec would run for `system` (Tune preview), with issues.
+    /// The command an unsaved preset spec would run for `system` (Options preview), with issues.
     pub fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> CommandView {
         self.inner.command_preview(spec, system)
     }

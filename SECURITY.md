@@ -33,8 +33,8 @@ report a problem. The network side has its own page: [docs/nodes.md](docs/nodes.
   or AUTH, and the values after `--api-key` and `--hf-token`, are masked (`••••`) in the window, in `klif-cli`
   output, in logs and in diagnostics. A secret that you write into `args` is visible to every local process and
   KLIF warns about it. Node tokens never cross the network. KLIF refuses to send a clear secret environment value
-  or secret-flag value to a remote node (a preset save or command preview from Tune, `klif-cli` or any other
-  client); the mask and a `{env:NAME}` reference pass. Tune's live preview of a remote preset sends typed secrets
+  or secret-flag value to a remote node (a preset save or command preview from Options, `klif-cli` or any other
+  client); the mask and a `{env:NAME}` reference pass. The live preview of a remote preset in Options sends typed secrets
   masked. `KLIF_LOG=trace` covers KLIF's own records only: dependencies are capped at debug, so request bytes and
   `Authorization` headers are never logged.
 - **Downloads** happen only when you ask. KLIF fetches only from `huggingface.co` (and its own CDN hosts

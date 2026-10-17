@@ -55,7 +55,7 @@ KLIF has started it again (auto-load) ([systems.md](systems.md#conversation-slot
 | `klif-core` | The engine, persistence, control protocol, nodes, bench, downloads, API key |
 | `klif-cli` | The command-line program |
 | `app/src-tauri` | The desktop shell |
-| `app/ui` | The front end: skins, Tune drawer, a mock engine for browser development |
+| `app/ui` | The front end: skins, Options drawer, a mock engine for browser development |
 
 ## Files and folders
 

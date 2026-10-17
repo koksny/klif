@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A System's conversation slots in Tune's Slots section (the skins have the slot keys): auto-save and auto-load, and
+  // A System's conversation slots in the Slots section of Options (the skins have the slot keys): auto-save and auto-load, and
   // the three slots. Clicking a slot makes it the active one (auto-save writes to it, auto-load reads it); its pencil
   // names it; Save, Load and Clear act on it. Replacing or clearing a saved slot asks first, in place.
   import { tick } from 'svelte';

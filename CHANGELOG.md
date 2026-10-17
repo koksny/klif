@@ -7,9 +7,9 @@ were built from source; their notes follow, newest first.
 
 - **Conversation slots.** A llama.cpp or Strata System can save what its server holds (the conversation's KV cache and
   state) to disk and load it back, so a long conversation is not read again after a restart or a switch to another
-  System. The Slots switch in its Tune tab (`[systems.<id>] slots`, `klif-cli systems slots <system> on`) makes KLIF
+  System. The Slots switch in its Options tab (`[systems.<id>] slots`, `klif-cli systems slots <system> on`) makes KLIF
   start the server with `--slot-save-path <data dir>/slots/<id>`. Each System has three slots with Save, Load and
-  Clear, in Tune and in `klif-cli slots save|load|clear`, so different conversations can be kept side by side; a slot
+  Clear, in Options and in `klif-cli slots save|load|clear`, so different conversations can be kept side by side; a slot
   loads only into the command it was saved from. Every skin's control row has three slot keys next to Records: a click
   loads that slot, holding it saves (the key fills while held), and the line under its number marks a saved slot and,
   at full strength, the active one. While the System is stopped, holding a saved key launches it and loads that slot
@@ -17,10 +17,20 @@ were built from source; their notes follow, newest first.
   it first, and quitting with Stop on exit, wait for that save), auto-load loads it when KLIF has started it. The
   active slot is picked by clicking it (`klif-cli slots use`); Save and Load also make theirs active. Slots can be
   named (the pencil, `klif-cli slots rename`).
-- **A small-layout skin per System.** Next to Skin at the top of a System's Tune tab, Mini picks the skin of the small
+- **A small-layout skin per System.** Next to Skin at the top of a System's Options tab, Mini picks the skin of the small
   layout (panel mode, a short landscape window) while that System is selected (`[systems.<id>] mini_skin`,
   `klif-cli systems skin <system> <id|full> --mini`). Like full, the default, shows what the full size shows.
-- **Tune lines up.** Skin and Mini sit in the same label and control columns as the rest of a System's tab, each select
+- **F2 changes the skin you see.** While the selected System shows its own skin (or, in the small layout, its own
+  mini skin), F2 and Ctrl+1..9 change that one in `klif.toml` instead of the global skin hidden behind it.
+- **Slot errors stay.** A slot save or load that fails is shown for 15 s in the danger colour and can be clicked away.
+- **Rows that fit.** The slot keys made some skins' control rows too long for a 1024 px window: below 1240 px those
+  rows get compact (narrower keys, Records as its icon, tighter gaps), below 1024 px the keys step aside (Options keeps
+  the slots), and Cliff and Phosphor drop button labels for their icons in narrow windows.
+- **VRAM that is VRAM.** A llama.cpp server that keeps experts in RAM on purpose (-fit, --n-cpu-moe) no longer has
+  that host memory counted as its VRAM (a bench read 24.8 GiB on a 16 GiB card); only real spill counts.
+- **Tune is now Options.** The drawer every skin opens to set up a System holds settings rather than tuning, so its
+  button, title and every sentence that names it say Options.
+- **Options lines up.** Skin and Mini sit in the same label and control columns as the rest of a System's tab, each select
   half the width; a param choice written as `Name (details)` shows the details as a smaller line under the name; the
   preset list leaves out the quant and backend when the preset's name already says them.
 

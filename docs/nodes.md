@@ -67,7 +67,7 @@ The node's local Systems now appear after yours, as `render-box/s1`, `render-box
   Systems and download models there. Each action is checked by the node on every request.
 - **Selecting a remote tab** asks that node for the System's console and session (the focused node is polled at 2 Hz,
   the others at 1 Hz). Selecting never stops anything.
-- **In Tune** a remote tab hides Recommended and the API key row (those belong to the node's own klif.toml), takes
+- **In Options** a remote tab hides Recommended and the API key row (those belong to the node's own klif.toml), takes
   the GPU list from the node, and sends every preset, download and add action to that node.
 - **Endpoints** of remote Systems are rewritten so they work from here: when the node reports a loopback or wildcard
   host, the node's address is substituted.
@@ -123,12 +123,12 @@ Plainly:
   drop it or show you false answers. Without the token they cannot make the node run anything. Use KLIF nodes
   only on a network you trust, or over a VPN you trust. Do not forward the port to the internet. TLS is future work.
 - **Secrets stay out of it.** The KLIF API key and node tokens are never sent. Presets fetched from a node arrive
-  masked, and Tune refuses to send a secret environment value to a remote node ("Secrets cannot cross plain TCP;
-  set them in that node's klif.toml"). KLIF itself refuses the same for every client (Tune, `klif-cli`, your own
+  masked, and Options refuses to send a secret environment value to a remote node ("Secrets cannot cross plain TCP;
+  set them in that node's klif.toml"). KLIF itself refuses the same for every client (Options, `klif-cli`, your own
   agent): a preset save or command preview for a remote node that carries a clear secret environment value or a
   secret-flag value (`--api-key`, `--hf-token`, `-hft`, also inside params' choices) is refused before it leaves
   this machine. The mask (`••••`, keep the stored value) and a `{env:NAME}` reference (the node's own environment)
-  pass. Tune's live preview of a remote preset sends typed secrets masked.
+  pass. The live preview of a remote preset in Options sends typed secrets masked.
 - **The token file is a password.** It is stored in plain text, on the node (`node-token.txt`) and on every
   machine that connects (the file or variable named by `token`). Keep both inside the user's profile. Rotate
   with `klif-cli node token --create --yes` (the old token stops working for connected peers within about a

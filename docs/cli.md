@@ -404,7 +404,7 @@ watching: s1 offline, s2 offline, waiting for s2=online (Ctrl-C ends it)
   "{model}"]` replaces the list, `args+=--no-mmap` appends one token, `args-=--no-mmap` removes one;
   `env.NAME=VALUE` sets, `env.NAME-` removes; `env_remove+=NAME` and `env_remove-=NAME`. An empty value unsets a
   field. `params` and `recommended` cannot be set this way. Stored secrets stay as they are unless you set them.
-  The write is refused ("changed on disk") when the preset changed between reading and writing it (Tune or another
+  The write is refused ("changed on disk") when the preset changed between reading and writing it (Options or another
   agent saved it meanwhile); run the command again.
 - Changing a preset's `kind` (or `adapter`, which can imply it) is refused while another System uses the preset as
   a different kind: "Preset "fl1" would become an Image preset, but System 1 is using it as an LLM System; pick
@@ -458,7 +458,7 @@ started unless `--keep-running`.
 - It refuses while another local System runs on the same GPU (an unknown GPU counts as the same), because the
   numbers would be shared-GPU numbers. `--allow-shared` overrides that.
 - Records are appended to `<data folder>\bench\<preset id>.json` (50 kept). A record carries the command hash; a
-  later change to the command marks older results `stale` in `presets list` and the Tune drawer.
+  later change to the command marks older results `stale` in `presets list` and the Options drawer.
 
 The JSON result is `{ "file", "summary", "record" }`; `record` has `at`, `presetId`, `presetHash`, `system`, `kind`,
 `adapter`, `model`, `hardware` (`gpu`, `vramGiB`, `driver`), `backendBuild`, `promptTokens`, `genTokens`, `loadS`,

@@ -1,4 +1,4 @@
-// The System tab strip data, shared by every skin's picker and by the Tune drawer (frozen seam, SPEC 16.24).
+// The System tab strip data, shared by every skin's picker and by the Options drawer (frozen seam, SPEC 16.24).
 // A strip renders EXACTLY vm.systems in order: no fixed four, no id special cases.
 import type { System, SystemId, SystemStatus, ViewModel } from '../../model/types';
 import { nodeName, STATUS_TEXT } from '../../model/systems';

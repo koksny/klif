@@ -18,7 +18,7 @@
 //                                                         overwriting ("-2", "-3"...); name is reduced to
 //                                                         [A-Za-z0-9._-] and must end in .png or .gif; resolves
 //                                                         with the full path of the file)
-//   invoke  klif_command_preview { spec, system? } -> CommandView      (an unsaved preset; Tune's debounced preview)
+//   invoke  klif_command_preview { spec, system? } -> CommandView      (an unsaved preset; the debounced preview in Options)
 //   invoke  klif_set_api_key { key: string | null }                    (native; never echoed back)
 //   invoke  klif_open_config | klif_open_logs
 //   invoke  klif_toggle_panel                            (panel mode: the window moves onto the small status

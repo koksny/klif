@@ -1,7 +1,7 @@
 # Presets
 
 A preset is a launch command with a name. Nothing is hidden: the program, the argument list, the working folder and
-the environment in `klif.toml` are exactly what KLIF starts, and the Tune drawer, `klif-cli plan <system>` and the
+the environment in `klif.toml` are exactly what KLIF starts, and the Options drawer, `klif-cli plan <system>` and the
 file show the same final command line. A System points at one preset.
 
 ```toml
@@ -126,7 +126,7 @@ activity, so a chatty server looks busy.
    Only `{identifier}` patterns count, so JSON braces in an argument stay as they are. An unknown placeholder or
    a missing value is an error. `{env:NAME}` is shown as `%NAME%` (macOS: `$NAME`) and hashed as that text, not as its value, so
    `klif.exe` and `klif-cli` (which may have different environments) agree on the hash. `{stamp}` is shown and
-   hashed as the text `{stamp}` in the Tune drawer and in `klif-cli plan`: it has no value until a launch starts,
+   hashed as the text `{stamp}` in the Options drawer and in `klif-cli plan`: it has no value until a launch starts,
    and a hash that changed with every launch would mark every bench result stale.
 3. **Program:** an absolute `.exe`/`.com`, or a bare name searched on the preset's own `PATH` first, then on KLIF's.
    A `.bat`/`.cmd` file is an error with the way out (`command = "cmd.exe"`, `args = ["/c", "<the .bat file>", ...]`);
@@ -137,7 +137,7 @@ activity, so a chatty server looks busy.
 4. **Working folder:** `cwd`, else the program's folder.
 5. **Environment:** KLIF's own environment, minus `env_remove` and the key variables, plus the managed rows, the
    API key and your `env` (yours wins per key and is shown as "overridden").
-6. **Command line:** rendered with Windows quoting rules; that string is what the Tune drawer's header shows.
+6. **Command line:** rendered with Windows quoting rules; that string is what the Options drawer's header shows.
 
 ### Port and host
 
@@ -185,12 +185,12 @@ choices.1024 = { label = "1024 x 1024", args = ["-W", "1024", "-H", "1024"] }
 
 A choice has `label`, `vars = { k = "v" }` (read with `{p.NAME.k}`), `args = [..]` (what `{p.NAME}` expands to) and
 `env = { K = "V" }` (merged into the preset's environment). The System's selection lives in
-`[systems.<id>] params = { size = "512" }` and changes with the Params block in Tune or `klif-cli presets param
+`[systems.<id>] params = { size = "512" }` and changes with the Params block in Options or `klif-cli presets param
 <system> <name> <value>`. A selection that is not a choice falls back to the default with a warning. Without
-`default`, the first choice in the file is the default. Choices keep their file order everywhere (Tune, `klif-cli`,
+`default`, the first choice in the file is the default. Choices keep their file order everywhere (Options, `klif-cli`,
 and when KLIF writes the preset). Changes apply on the next launch.
 
-Choosing another preset for a System (Use in Tune, `klif-cli presets use`, Save as new with the System selected,
+Choosing another preset for a System (Use in Options, `klif-cli presets use`, Save as new with the System selected,
 Use on a recommendation) keeps only the selections the new preset can honour: the param must exist in the new
 preset and the value must be one of its choices. Every other entry is removed from `[systems.<id>] params` in the
 same edit, so a stale `reasoning = "off"` does not stay in the file. Params the new preset declares that the
@@ -231,15 +231,15 @@ same in the window, in `klif-cli plan` and in the launch plan. It decides when a
 running session "differs from" its System's current command. The preset's `api_key = false` opt-out counts (it
 changes the server's environment), so turning it off on a running System shows "differs from the running session".
 
-A second hash, `specHash` (in `klif-cli --json presets show` and in Tune), covers every stored field of the preset,
-also name, notes, health and gpu. Apply in Tune and `klif-cli presets set` send it back as `baseHash`: when the
-preset changed on disk meanwhile, the write is refused ("changed on disk") and Tune offers Reload.
+A second hash, `specHash` (in `klif-cli --json presets show` and in Options), covers every stored field of the preset,
+also name, notes, health and gpu. Apply in Options and `klif-cli presets set` send it back as `baseHash`: when the
+preset changed on disk meanwhile, the write is refused ("changed on disk") and Options offers Reload.
 
 ## Editing presets
 
 | Where | How |
 | --- | --- |
-| Tune drawer | Preset row (Use, Save as new, Delete) and the Command section: adapter, program, working folder, endpoint toggle, one input per argument (never re-tokenized), environment rows, grid for port, host, health, model, mmproj, ctx, GPU, managed, API key. Live preview 250 ms after the last edit. Revert / Save as new / Apply. "Used by System 1, System 3" is shown before you change a shared preset |
+| Options drawer | Preset row (Use, Save as new, Delete) and the Command section: adapter, program, working folder, endpoint toggle, one input per argument (never re-tokenized), environment rows, grid for port, host, health, model, mmproj, ctx, GPU, managed, API key. Live preview 250 ms after the last edit. Revert / Save as new / Apply. "Used by System 1, System 3" is shown before you change a shared preset |
 | `klif-cli` | `presets list`, `show <id>`, `use <system> <id>`, `param`, `save <id> --file F.toml [--use <system>]`, `set <id> key=value...`, `delete <id> --yes`. [cli.md](cli.md) |
 | The file | Any editor. KLIF reloads it |
 
@@ -285,7 +285,7 @@ hub about that file's repo and commit, for its size and LFS hash, and stores the
 `<models_dir>\<owner>--<repo>\<file>` of its own repo, or under its `save_as` path there (GLM-5.3-Flash's rewritten
 first shard replaces the original one this way). The argument template names other files as `{file:<key>}`.
 
-- **List:** the Recommended section of Tune (the System's kind and class first), or `klif-cli models list [--kind K]`.
+- **List:** the Recommended section of Options (the System's kind and class first), or `klif-cli models list [--kind K]`.
 - **Download:** the Download button or `klif-cli models download <id> --yes`, only after you ask and only with
   `[paths] models_dir` set. Files go to `<models_dir>\<owner>--<repo>\<file>`. KLIF reads the file list and LFS
   hashes from the hub's API for that commit, fetches over https from `huggingface.co` and its own CDN hosts
@@ -293,7 +293,7 @@ first shard replaces the original one this way). The argument template names oth
   file, checks the SHA-256 and free disk space, and only then renames it. Cancel keeps the `.part`. An existing
   file is never overwritten. A `HF_TOKEN` in KLIF's environment (for gated models) is sent to `huggingface.co`
   only.
-- **Use:** `klif-cli models adopt <id> [--system S] [--ctx N] [--kv TYPE]` or Use in Tune makes a preset from the
+- **Use:** `klif-cli models adopt <id> [--system S] [--ctx N] [--kv TYPE]` or Use in Options makes a preset from the
   recommendation. It does not know where your server program is: the program, working folder and environment are
   copied from the target System's current preset with the same adapter, else from another preset with that adapter
   whose program exists, and the target System's preset also keeps its `port`. With none, the new preset is empty

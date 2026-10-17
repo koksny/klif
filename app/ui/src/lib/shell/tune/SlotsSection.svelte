@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A System's conversation slots in Tune ([systems.<id>] slots): on or off (it changes the launch command, so it
+  // A System's conversation slots in Options ([systems.<id>] slots): on or off (it changes the launch command, so it
   // applies on the next launch), then auto-save, auto-load and the three slots.
   import type { System } from '../../model/types';
   import { player } from '../../state/player.svelte';

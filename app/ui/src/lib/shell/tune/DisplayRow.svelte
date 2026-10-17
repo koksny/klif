@@ -35,13 +35,13 @@
     <select aria-labelledby="tune-skin-lbl" title={skin.blurb} value={skin.id} onchange={(e) => ui.setSkin(e.currentTarget.value)}>
       {#each SKINS as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
     </select>
-    <span class="hint">F2 cycles · a System can have its own</span>
+    <span class="hint">F2 changes the skin on screen</span>
   </div>
 </div>
 <div class="field">
   <span id="tune-rec-lbl">Record moment</span>
   <div class="line">
-    <!-- Tune's shared switch (TuneDrawer :global .switch): the same control as External and the params -->
+    <!-- Options' shared switch (TuneDrawer :global .switch): the same control as External and the params -->
     <button
       type="button"
       class="switch"

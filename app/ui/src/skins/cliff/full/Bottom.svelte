@@ -1,7 +1,7 @@
 <script lang="ts">
   // Controls: the same buttons in the same places in every phase; a phase only changes what they say and
   // whether they are enabled. [endpoint :port] [API key] ... [primary: Launch / Cancel / Stop / Stopping /
-  // Restart after a fault, one fixed width] [Restart, or Dismiss after a fault] [Tune, always] [Records, icon only,
+  // Restart after a fault, one fixed width] [Restart, or Dismiss after a fault] [Options, always] [Records, icon only,
   // always] [Endpoint or Web UI] [Console, or Full log after a fault]. The last console line under it.
   import type { Actions, ViewModel } from '../../../lib/model/types';
   import { EXTERNAL_NOTE, EXTERNAL_TITLE, canStop, doLaunch, isPendingLaunch, launchCtl } from '../../../lib/model/systems';
@@ -106,11 +106,11 @@
         <span>Restart</span>
       </button>
     {/if}
-    <button class="btn tune" onclick={() => actions.openTune(sel?.id)} title={tuneTip}>
+    <button class="btn tune" onclick={() => actions.openTune(sel?.id)} title={tuneTip} aria-label="Options">
       <svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M3.5 6h13M3.5 14h13" class="ln" /><circle cx="7.5" cy="6" r="2" class="knob" /><circle cx="12.5" cy="14" r="2" class="knob" /></svg
       >
-      <span>Tune</span>
+      <span>Options</span>
     </button>
     <!-- Icon only: this row is exactly full at every width, so Records takes the space of its icon. -->
     <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records">
@@ -123,13 +123,13 @@
         {/each}
       </span>
     {/if}
-    <button class="btn w-ep" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={online ? '' : 'The endpoint is not up'}>
+    <button class="btn w-ep" onclick={() => actions.openEndpoint(sel?.id)} disabled={!online} title={online ? '' : 'The endpoint is not up'} aria-label={kind === 'image' ? 'Web UI' : 'Endpoint'}>
       <svg viewBox="0 0 20 20" aria-hidden="true"
         ><path d="M9 3.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V11" class="ln" /><path d="M11.5 3.5h5v5M16.5 3.5 9 11" class="ln" /></svg
       >
       <span>{kind === 'image' ? 'Web UI' : 'Endpoint'}</span>
     </button>
-    <button class="btn w-cn" onclick={() => actions.toggleConsole(view === 'fault' ? true : undefined)}>
+    <button class="btn w-cn" onclick={() => actions.toggleConsole(view === 'fault' ? true : undefined)} aria-label={view === 'fault' ? 'Full log' : 'Console'}>
       {#if view === 'fault'}
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 3.5h11v13h-11z" class="ln" /><path d="M7.5 7.5h5M7.5 10.5h5M7.5 13.5h3" class="ln" /></svg>
         <span>Full log</span>
@@ -350,5 +350,32 @@
   .btn.sk:hover:not(:disabled),
   .btn.sk:focus-visible {
     z-index: 1;
+  }
+  /* A narrow window: Options, Endpoint and Console keep their icons, their labels go (the row has pixel floors) */
+  @media (max-width: 1099px) {
+    .btn.tune span,
+    .btn.w-ep span,
+    .btn.w-cn span {
+      display: none;
+    }
+    .btn.tune,
+    .btn.w-ep,
+    .btn.w-cn {
+      width: auto;
+      padding: 0 max(9px, calc(var(--u) * 10));
+    }
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys, tighter gaps, a narrower primary button) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .btn.sk {
+      aspect-ratio: 0.66;
+    }
+    .bar:has(.slotkeys) {
+      gap: max(4px, calc(var(--u) * 5));
+    }
+    .bar:has(.slotkeys) .btn.act {
+      width: max(156px, calc(var(--u) * 176));
+    }
   }
 </style>

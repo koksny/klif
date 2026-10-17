@@ -199,7 +199,7 @@ struct Servers {
     webui: Option<WebServer>,
     webui_error: Option<String>,
     last_webui_try: f64,
-    /// The page's address(es) for Tune and the QR code, and when they were worked out.
+    /// The page's address(es) for Options and the QR code, and when they were worked out.
     webui_urls: (f64, Vec<String>),
 }
 
@@ -392,7 +392,7 @@ pub(crate) fn start(loaded: LoadedConfig, host: HostInfo) -> Result<Arc<Inner>, 
     }
     let errors = loaded.issues.iter().filter(|i| i.is_error()).count();
     if errors > 0 {
-        notes.push(format!("[KLIF] klif.toml: {errors} error(s), see Tune or `klif-cli diag`"));
+        notes.push(format!("[KLIF] klif.toml: {errors} error(s), see Options or `klif-cli diag`"));
     }
     if let Some(w) = klif_supervisor::parent_job_warning() {
         log::warn!("{w}");
@@ -733,7 +733,7 @@ impl Inner {
 
     pub(crate) fn command_preview(&self, spec: &PresetCfg, system: Option<&SystemId>) -> CommandView {
         if let Some(node) = system.and_then(|s| s.node()) {
-            // A clear secret never crosses plain TCP (SPEC 7 / 16.10), whichever frontend asks (Tune's live preview,
+            // A clear secret never crosses plain TCP (SPEC 7 / 16.10), whichever frontend asks (the live preview in Options,
             // klif-cli, any control client). MASK passes: the node keeps its stored value.
             let clear = actions::clear_secrets(spec);
             if !clear.is_empty() {

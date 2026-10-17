@@ -15,14 +15,15 @@ exclusive = false             # true = needs the whole GPU
 skin = "phosphor"             # optional: the skin shown while this System is selected
 ```
 
-**Skin.** The window shows the global skin (`[ui] skin`: Display in Tune, F2, the tray's Skin menu) unless the
-selected System has its own: `skin` here, the Skin field at the top of its Tune tab, or `klif-cli systems skin
+**Skin.** The window shows the global skin (`[ui] skin`: Display in Options, F2, the tray's Skin menu) unless the
+selected System has its own: `skin` here, the Skin field at the top of its Options tab, or `klif-cli systems skin
 <system> <id|global>`. A heavy System can get a lighter skin, and the skin tells at a glance which System is
-selected. F2 and the tray still change the global skin. An id the window does not have shows the global one, and
-klif-webui follows the global skin.
+selected. F2 and Ctrl+1..9 change the skin that is on screen: the System's mini skin in the small layout when it
+has one, else the System's own skin when that shows, else the global one. The tray changes the global skin. An id the
+window does not have shows the global one, and klif-webui follows the global skin.
 
 The small layout (panel mode, or a landscape window up to 700 px tall) can have a skin of its own: `mini_skin` here,
-the Mini field next to Skin in Tune, or `klif-cli systems skin <system> <id|full> --mini`. Absent (Like full), the
+the Mini field next to Skin in Options, or `klif-cli systems skin <system> <id|full> --mini`. Absent (Like full), the
 small layout shows what the full size shows for that System.
 
 **Slots.** `slots = true` keeps conversations on disk for llama.cpp and Strata Systems: see
@@ -88,7 +89,7 @@ and the reason. A System of another machine carries a muted ` · <node name>` af
   has no session.
 - **Quitting KLIF leaves servers running.** The next start adopts every session it recorded (found again by job
   name), so a restart of the window costs nothing. A server that died meanwhile shows as a fault. **Stop on exit**
-  in Tune (`[ui] stop_on_exit`, `klif-cli settings stop-on-exit on`) makes quitting the window stop this machine's
+  in Options (`[ui] stop_on_exit`, `klif-cli settings stop-on-exit on`) makes quitting the window stop this machine's
   Systems first, waiting up to 20 s for them; external Systems and other nodes are never touched.
 - **Stop all Systems** (tray, `klif-cli stop --all --yes`) stops every local session. External Systems are never
   affected.
@@ -113,7 +114,7 @@ warns "Does not fit even with everything stopped" and lists no VRAM conflicts.
 A preset that keeps weights in system RAM (`--cpu-moe`, `-ncmoe N`, `-ot ...=CPU`, `-ngl 0`, sd.cpp
 `--offload-to-cpu`, vLLM `--cpu-offload-gb`; `ramOffload` on the System) never gets that warning: the server makes
 do with the VRAM it finds, so it always fits, only slower with less of the card. The VRAM rule still stops the
-Systems on its GPU when its measured need does not fit beside them, and Tune says "It keeps weights in system RAM
+Systems on its GPU when its measured need does not fit beside them, and Options says "It keeps weights in system RAM
 and takes the VRAM it finds". A System whose preset names no `gpu`, with no
 `[gpu] inference` set, counts as sharing an unknown GPU with every other such System, which is the cautious
 reading.
@@ -158,7 +159,7 @@ network (the preset's `host`) and that machine's firewall lets the client in.
 
 A llama.cpp or Strata System can keep what its server holds (the conversation's KV cache and state) on disk, so a
 long conversation is not read again after a restart or a switch to another System. `slots = true` in
-`[systems.<id>]` (the Slots switch in its Tune tab, `klif-cli systems slots <system> on`) adds
+`[systems.<id>]` (the Slots switch in its Options tab, `klif-cli systems slots <system> on`) adds
 `--slot-save-path <data dir>/slots/<id>` to the command; it applies on the next launch, and a preset that names its own
 `--slot-save-path` keeps it.
 
@@ -166,14 +167,14 @@ long conversation is not read again after a restart or a switch to another Syste
   `slots.json`), replacing what that slot had; Load puts it back. Every skin's full window shows three slot keys (1, 2,
   3) next to Records while the selected System has slots on: a click loads that slot, holding it about a second saves
   to it (the key fills while held, and letting go early saves nothing). A thin line under the number marks a saved
-  slot, a full-strength one the active slot, a dashed one an active slot that is still empty. Tune's Slots section
+  slot, a full-strength one the active slot, a dashed one an active slot that is still empty. The Slots section of Options
   has Save, Load and Clear per slot. While the System is stopped, holding a saved key launches it (stopping the
   Systems that conflict, as "Stop X & launch" does) and loads that slot once it is up, whatever auto-load says
   (`klif-cli launch <system> --yes --slot N`); `klif-cli slots <system>`, `slots save|load <system> [1-3]` and `slots clear <system> <1-3>
   --yes` do it from a script.
 - A slot loads only into the command it was saved from (the same model, context and KV type: KLIF compares the
   command hash). One saved with another command is kept and marked as such.
-- **The active slot** is the one auto-save writes to and auto-load reads: click a slot in Tune, or
+- **The active slot** is the one auto-save writes to and auto-load reads: click a slot in Options, or
   `klif-cli slots use <system> <1-3>`, also while the System is stopped. Save and Load make
   the slot they used the active one, so after loading a conversation, auto-save keeps writing it back there.
 - **Auto-save** (`slots_auto_save = true`, `klif-cli systems slots <system> auto-save on`) saves the active slot
@@ -202,7 +203,7 @@ when its process is gone.
 | To | Window | Command | File |
 | --- | --- | --- | --- |
 | Add | `+` at the end of the tabs: kind, class, label, then Recommended / existing preset / blank | `systems add --kind llm --class fast --label "System 1"` | a `[systems.<id>]` table |
-| Rename | Inline in the Tune drawer | `systems rename s1 "Daily"` | `label` |
+| Rename | Inline in the Options drawer | `systems rename s1 "Daily"` | `label` |
 | Reorder | Move left / right | `systems move s1 0` (0-based index among local Systems) | table order |
 | Exclusive | Exclusive GPU | `systems exclusive s3 on` | `exclusive` |
 | Choose preset | Preset row, **Use** | `presets use s1 fast-8b` | `preset` |

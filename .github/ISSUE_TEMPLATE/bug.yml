@@ -50,7 +50,7 @@ body:
       label: Where
       multiple: true
       options:
-        - The window (a skin, Tune, records)
+        - The window (a skin, Options, records)
         - klif-cli
         - klif-webui
         - Remote nodes

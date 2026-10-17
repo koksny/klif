@@ -290,10 +290,23 @@ fn attribute(
             found |= r.per[i].3;
         }
         let (ded, sh, com) = (ded / GIB, sh / GIB, com / GIB);
-        // Shared memory is VRAM spill only for a server that spills (an LLM server out of VRAM); for the others
-        // (sd.cpp's offloaded weights, Strata's pinned experts) it is host memory and not part of what they hold
-        // on the card: their committed figure (shown, and charged against the card) leaves it out.
-        let host = if r.spill { 0.0 } else { sh };
+        // Shared memory is VRAM spill only for a server that spills (an LLM server out of VRAM), and only the part
+        // `spill_gib` finds; the rest is host memory it keeps on purpose (sd.cpp's offloaded weights, Strata's pinned
+        // experts, llama.cpp's experts left in RAM by -fit or --n-cpu-moe). The committed figure (shown, and
+        // charged against the card) leaves that host memory out.
+        let spill = if r.spill {
+            let logged = r.log_layers.as_ref().map(|l| l.iter().map(|x| x.gib).sum::<f64>()).filter(|v| *v > 0.0);
+            let full = r.mine.iter().any(|&i| {
+                let total = s.gpus[i].adapter.dedicated_bytes as f64;
+                total > 0.0 && total - used_bytes[i] < full_margin(total)
+            });
+            spill_gib(sh, (com - sh).max(0.0), logged, r.ready, full)
+        } else {
+            0.0
+        };
+        let host = (sh - spill).max(0.0);
+        // The same share of each GPU's shared memory is host memory.
+        let host_frac = if sh > 0.0 { host / sh } else { 0.0 };
         let com_card = (com - host).max(0.0);
         let claim = if found {
             Some(ded.max(com - sh))
@@ -326,7 +339,7 @@ fn attribute(
         let per_gpu: Vec<SessionGpu> = (0..n)
             .filter(|&i| r.per[i].3 && (r.per[i].0 > 0.0 || r.per[i].2 > 0.0 || r.per[i].1 > 0.0))
             .map(|i| {
-                let host = if r.spill { 0.0 } else { r.per[i].1 };
+                let host = r.per[i].1 * host_frac;
                 SessionGpu {
                     id: ids[i].clone(),
                     resident_gib: round_to(r.per[i].0 / GIB, 3),
@@ -335,16 +348,6 @@ fn attribute(
                 }
             })
             .collect();
-        let spill = if r.spill {
-            let logged = r.log_layers.as_ref().map(|l| l.iter().map(|x| x.gib).sum::<f64>()).filter(|v| *v > 0.0);
-            let full = r.mine.iter().any(|&i| {
-                let total = s.gpus[i].adapter.dedicated_bytes as f64;
-                total > 0.0 && total - used_bytes[i] < full_margin(total)
-            });
-            spill_gib(sh, (com - sh).max(0.0), logged, r.ready, full)
-        } else {
-            0.0
-        };
         row_spill.push((spill, sh));
         let v = SessionVram {
             resident_gib: ded,

@@ -9,7 +9,7 @@
   //   strip       four glass cells (LLM: prefill, decode, context, speculative; CGI: last image, images, size, mode)
   //   timeline    8 request capsules (cyan prefill, mint decode) / 12 job bars (height = time, edits hatched)
   //   controls    endpoint + API key chips; the primary pill (one width: Launch / Cancel / Stop / Restart after a
-  //               fault); Restart (Dismiss after a fault), Tune (always), Records, Endpoint / Web UI, Console (Full log)
+  //               fault); Restart (Dismiss after a fault), Options (always), Records, Endpoint / Web UI, Console (Full log)
   //   console     the last log line
   import type { Actions, RequestRecord, ViewModel } from '../../lib/model/types';
   import { fmtClock, fmtInt, fmtSeconds } from '../../lib/model/format';
@@ -329,7 +329,7 @@
     {:else}
       <button class="btn w1" onclick={() => actions.restart(sel?.id)} disabled={!s || busy || !mine} title={heldWhy || 'Stop and launch again with the current settings'}>Restart</button>
     {/if}
-    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Tune</button>
+    <button class="btn" onclick={() => actions.openTune(sel?.id)} title={s && !faulted ? 'Change the settings; Restart to apply them' : 'Change what this System launches'}>Options</button>
     <button class="btn rec" onclick={() => actions.openRecords()} title="Records: the best each model reached" aria-label="Records"><svg class="ri" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5V8h3v5.5M5.5 13.5V2.5h4v11M9.5 13.5V6h4v7.5" /></svg><span class="rl">Records</span></button>
     {#if sel?.slots}
       <span class="slotkeys" role="group" aria-label="Conversation slots of {sel.label}: click loads, hold saves">
@@ -1116,5 +1116,18 @@
   .btn.sk:hover:not(:disabled),
   .btn.sk:focus-visible {
     z-index: 1;
+  }
+  /* With the slot keys in it the row is longer: below 1240 px it gets compact (narrow keys, tighter gaps, slimmer Endpoint and Console) so it fits a
+     1024 px window */
+  @media (max-width: 1239px) {
+    .btn.sk {
+      aspect-ratio: 0.66;
+    }
+    .ctrl:has(.slotkeys) {
+      gap: calc(var(--u) * 5);
+    }
+    .ctrl:has(.slotkeys) .btn.w2 {
+      width: calc(var(--u) * 88);
+    }
   }
 </style>

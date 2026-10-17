@@ -15,7 +15,7 @@
       for (const [id, at, n] of notices) {
         const before = seen.get(id);
         seen.set(id, at);
-        if (n && before !== undefined && at !== before) ui.toast(n.text, n.ok ? 3200 : 5000);
+        if (n && before !== undefined && at !== before) ui.toast(n.text, n.ok ? 3200 : 15000, { error: !n.ok });
       }
     });
   });

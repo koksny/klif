@@ -55,7 +55,7 @@ fn target(system: Option<SystemId>) -> Result<SystemId> {
     system.ok_or_else(|| anyhow!("Select a System first."))
 }
 
-/// The sentence for a clear secret on its way to a remote node (the same as Tune's `REMOTE_SECRET_REFUSAL`).
+/// The sentence for a clear secret on its way to a remote node (the same as Options' `REMOTE_SECRET_REFUSAL`).
 pub(crate) const REMOTE_SECRET_REFUSAL: &str = "Secrets cannot cross plain TCP; set them in that node's klif.toml";
 
 /// A value that only names a variable of the node's own environment (`{env:NAME}`) carries no secret.
@@ -92,7 +92,7 @@ fn clear_args(args: &[String], at: &str, out: &mut Vec<String>) {
 
 /// The secret values a preset would send in clear (anything but MASK, empty or a `{env:NAME}` reference), named
 /// for the message: secret env values (`is_secret_env`) and secret-flag args (`SECRET_ARG_FLAGS`), also inside
-/// params' choices ("NAME.choice: HF_TOKEN"). Empty = safe to send to a remote node. Tune's `clearSecrets`
+/// params' choices ("NAME.choice: HF_TOKEN"). Empty = safe to send to a remote node. Options' `clearSecrets`
 /// (tune/secret.ts) applies the same rule before the engine sees the spec.
 pub(crate) fn clear_secrets(spec: &PresetCfg) -> Vec<String> {
     let mut out = Vec::new();
@@ -145,7 +145,7 @@ impl Inner {
             if self.cfg().remote_node(&node).is_none() {
                 bail!("There is no node \"{node}\" in klif.toml.");
             }
-            // A clear secret never crosses plain TCP (SPEC 7 / 16.10), whichever frontend sends it (Tune, klif-cli
+            // A clear secret never crosses plain TCP (SPEC 7 / 16.10), whichever frontend sends it (Options, klif-cli
             // `presets set/save --node`, any control client). MASK passes: the node keeps its stored value.
             if let Action::SavePreset { preset, .. } = &action {
                 let clear = clear_secrets(preset);
@@ -363,7 +363,7 @@ impl Inner {
             let sys = view.ok_or_else(|| anyhow!("{label} is not ready yet; try again in a moment."))?;
             if !wait_self {
                 match sys.status {
-                    SystemStatus::NotSet => bail!("{label} has no preset; pick one in Tune or with `klif-cli presets use`."),
+                    SystemStatus::NotSet => bail!("{label} has no preset; pick one in Options or with `klif-cli presets use`."),
                     SystemStatus::Invalid => {
                         bail!("{label} cannot start: {}.", trim_dot(sys.reason.as_deref().unwrap_or("its preset has errors")))
                     }

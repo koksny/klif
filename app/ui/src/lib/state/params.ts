@@ -18,9 +18,9 @@ export interface Params {
   t: number | null;
   run: boolean;
   drawer: 'console' | 'tune' | 'records' | null;
-  /** The System the Tune drawer opens on. */
+  /** The System the Options drawer opens on. */
   system: SystemId | null;
-  /** The Tune drawer opens in add mode ("Add System"). */
+  /** The Options drawer opens in add mode ("Add System"). */
   add: boolean;
   tier: Tier | null;
   seed: number;

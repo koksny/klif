@@ -100,7 +100,7 @@ async function act(f: () => Promise<void>) {
   try {
     await f();
   } catch (e) {
-    ui.toast(e instanceof Error ? e.message : String(e), 4000);
+    ui.toast(e instanceof Error ? e.message : String(e), 15000, { error: true });
   }
 }
 

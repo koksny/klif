@@ -306,7 +306,7 @@ impl Inner {
         lock(&self.servers).webui.is_some()
     }
 
-    /// klif-webui as Tune shows it: settings, whether it serves and where, devices, the open pairing.
+    /// klif-webui as Options shows it: settings, whether it serves and where, devices, the open pairing.
     pub(crate) fn webui_info(&self, cfg: &Config, now: f64) -> klif_common::vm::WebUiInfo {
         let (listening, error, urls) = {
             let mut s = lock(&self.servers);

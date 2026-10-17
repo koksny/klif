@@ -1,4 +1,4 @@
-// Small pure helpers of the Tune drawer: error sentences, names, ids, sizes, spec cleaning and comparison.
+// Small pure helpers of the Options drawer: error sentences, names, ids, sizes, spec cleaning and comparison.
 import type { LlmClass, PresetSpec, System, SystemKind, ViewModel } from '../../model/types';
 import { systemLabel } from '../../model/systems';
 
@@ -14,7 +14,7 @@ export function errorText(e: unknown): string {
 }
 
 /**
- * Passed to every engine action Tune sends: the player then skips its toast, because Tune shows the refusal
+ * Passed to every engine action Options sends: the player then skips its toast, because Options shows the refusal
  * inline next to the control (one place, not two).
  */
 export const QUIET = { quiet: true } as const;

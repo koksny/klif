@@ -5,7 +5,7 @@
 //
 // Engine actions return a Promise that rejects with the engine's sentence. The failure is ALSO shown as a toast
 // here (once, for every surface), and the returned promise is pre-handled, so a caller that does not care can
-// ignore it without an unhandled-rejection report; a caller that shows it inline (Tune) passes { quiet: true }
+// ignore it without an unhandled-rejection report; a caller that shows it inline (Options) passes { quiet: true }
 // and gets no toast.
 import { MockEngine, type EngineHooks } from '../mock/engine';
 import { browserHost } from '../mock/host';
@@ -148,7 +148,7 @@ class Player {
 
   /** Actions handed to every skin. Always safe to call. */
   readonly actions: Actions = IN_TAURI ? this.nativeActions() : this.mockActions();
-  /** Config-level calls for the Tune drawer (preset detail, command preview, API key, open klif.toml / logs). */
+  /** Config-level calls for the Options drawer (preset detail, command preview, API key, open klif.toml / logs). */
   readonly config: ConfigApi = IN_TAURI ? this.nativeConfig() : this.mockConfig();
 
   /** Call once at startup. */
@@ -432,7 +432,7 @@ class Player {
         }
       },
       commandPreview: (spec: PresetSpec, system?: SystemId): Promise<CommandView> => later(() => read().commandPreview(spec, system)),
-      // Tune shows the outcome inline (the native setApiKey does not toast either).
+      // Options shows the outcome inline (the native setApiKey does not toast either).
       setApiKey: (key) => this.mock((e) => e.setApiKey(key), { quiet: true }),
       openConfig: () => {
         ui.toast('Opens klif.toml in the desktop app.');

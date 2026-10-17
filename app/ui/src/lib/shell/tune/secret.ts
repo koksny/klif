@@ -1,4 +1,4 @@
-// The secret rules of klif-common (crates/klif-common/src/secret.rs) as the Tune editor needs them: which env
+// The secret rules of klif-common (crates/klif-common/src/secret.rs) as the Options editor needs them: which env
 // names and which argument values are secret, so the editor masks them and refuses to send a clear value to a
 // remote node (SPEC 16.10: the payload crosses plain TCP). Keep in step with secret.rs; the core stays the
 // authority (it masks everything it sends and resolves MASK on save).
@@ -111,5 +111,5 @@ export function maskClearSecrets(spec: PresetSpec): PresetSpec {
   return out;
 }
 
-/** The sentence Tune shows when a remote preset carries a clear secret (SPEC 16.10). */
+/** The sentence Options shows when a remote preset carries a clear secret (SPEC 16.10). */
 export const REMOTE_SECRET_REFUSAL = "Secrets cannot cross plain TCP; set them in that node's klif.toml";

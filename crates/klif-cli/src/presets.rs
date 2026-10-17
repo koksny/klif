@@ -403,7 +403,7 @@ fn set(mut args: Args, loaded: &LoadedConfig, out: Out) -> CliResult {
     let conn = conn::connect(loaded)?;
     let existing = conn.link().preset(&id, node.as_deref()).map_err(refused)?;
     let created = existing.is_none();
-    // Refuse the write if the preset changes on disk meanwhile (Tune or another agent saving at the same time).
+    // Refuse the write if the preset changes on disk meanwhile (Options or another agent saving at the same time).
     let base_hash = existing.as_ref().map(|d| d.spec_hash.clone()).filter(|h| !h.is_empty());
     let mut spec = existing.map(|d| d.spec).unwrap_or_default();
     for kv in &kvs {

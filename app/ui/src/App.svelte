@@ -60,10 +60,10 @@
     <div class="frame" style={ui.miniFramed ? `transform: translate(-50%, -50%) scale(${scale})` : ''}>
       <SkinHost skinId={ui.shownSkin} vm={player.vm} actions={player.actions} size={ui.size} />
       {#if ui.consoleOpen && ui.size === 'full'}<ConsoleDrawer />{/if}
-      <!-- Mini/panel never shows Tune, but an open drawer stays mounted (hidden) so its unapplied drafts survive a
+      <!-- Mini/panel never shows Options, but an open drawer stays mounted (hidden) so its unapplied drafts survive a
            switch to mini and back; they are only ever dropped through the drawer's discard confirm. -->
       {#if ui.tuneOpen}<div class="tune-host" class:off={ui.size !== 'full'}><TuneDrawer /></div>{/if}
-      <!-- Records is a full-window screen over the skin (and over Tune and the console): full size only, and not
+      <!-- Records is a full-window screen over the skin (and over Options and the console): full size only, and not
            mounted in mini, so closing it by switching layout loses nothing but its view state. -->
       {#if ui.recordsOpen && ui.size === 'full'}<RecordsView />{/if}
     </div>

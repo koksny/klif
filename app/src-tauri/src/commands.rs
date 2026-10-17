@@ -82,7 +82,7 @@ pub async fn klif_act(shell: ShellState<'_>, action: Action) -> Result<(), Strin
 }
 
 /// One preset in full for the editor (secrets masked); `node` = a preset of a remote node. `null` = no such preset;
-/// a node that cannot answer rejects with its sentence (Tune shows it instead of "not in klif.toml").
+/// a node that cannot answer rejects with its sentence (Options shows it instead of "not in klif.toml").
 #[tauri::command]
 pub async fn klif_preset_get(shell: ShellState<'_>, id: String, node: Option<String>) -> Result<Option<PresetDetail>, String> {
     let e = engine(&shell)?;
@@ -111,7 +111,7 @@ pub async fn klif_save_image(name: String, data: String) -> Result<String, Strin
     r
 }
 
-/// The command an unsaved preset would run for `system` (the Tune drawer's live preview), with its issues.
+/// The command an unsaved preset would run for `system` (the Options drawer's live preview), with its issues.
 /// The spec can carry secret env values: it is neither logged nor printed.
 #[tauri::command]
 pub async fn klif_command_preview(shell: ShellState<'_>, spec: PresetCfg, system: Option<SystemId>) -> Result<CommandView, String> {
